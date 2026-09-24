@@ -9,6 +9,7 @@ import { Share } from '@capacitor/share';
 import { Storage } from '../../src/storage.js';
 import { PROVIDERS, normalizeMessages } from '../../src/providers.js';
 import * as local from './on-device.js';
+import * as native from './native-engine.js';
 
 const ROOT = 'pal-data';
 const isNative = Capacitor.isNativePlatform();
@@ -59,7 +60,7 @@ const MOBILE_DEFAULTS = {
   defaultModel: { provider: 'onDevice', model: '' },
   historyLimit: 0,
   providers: {
-    onDevice: { enabled: true, contextSize: 4096, useGpu: false },
+    onDevice: { enabled: true, contextSize: 4096, useGpu: false, nativeGpu: true },
     ollama: { enabled: false, baseUrl: 'http://192.168.1.10:11434' },
     openaiCompatible: { enabled: false, baseUrl: 'http://192.168.1.10:1234/v1', apiKey: '' }
   }
@@ -67,8 +68,22 @@ const MOBILE_DEFAULTS = {
 
 const ready = Storage.open(fsBackend, { defaults: MOBILE_DEFAULTS });
 
+// On-device engine: native llama.cpp (CPU + Adreno GPU) when the Android app
+// has it, otherwise llama.cpp compiled to WebAssembly.
+const nativeInfo = isNative && Capacitor.isPluginAvailable('PalLlama')
+  ? native.probe()
+  : Promise.resolve({ available: false, devices: [] });
+const engine = async () => ((await nativeInfo).available ? native : local);
+const chatEngine = async () => ((await nativeInfo).available ? native.nativeEngine : local.onDevice);
+
 const providers = {
-  onDevice: { label: 'On this device (offline)', impl: local.onDevice },
+  onDevice: {
+    label: 'On this device (offline)',
+    impl: {
+      listModels: async (cfg) => (await chatEngine()).listModels(cfg),
+      streamChat: async (...args) => (await chatEngine()).streamChat(...args)
+    }
+  },
   ...PROVIDERS
 };
 
@@ -233,14 +248,43 @@ window.pal = {
     }
   },
   onDevice: {
-    catalog: async () => local.CATALOG,
-    list: () => local.listDownloaded(),
-    download: (url) => local.download(url),
-    cancel: async (url) => local.cancelDownload(url),
-    remove: (url) => local.remove(url),
-    downloads: async () => local.downloadState(),
-    modelName: (url) => local.modelName(url),
-    onProgress: (cb) => local.onDownloadProgress(cb)
+    async engine() {
+      const info = await nativeInfo;
+      const gpu = (info.devices || []).find((d) => d.type === 'gpu');
+      return {
+        kind: info.available ? 'native' : 'wasm',
+        gpu: gpu ? gpu.description || gpu.name : null,
+        error: info.error || null
+      };
+    },
+    catalog: async () => (await engine()).CATALOG,
+    list: async () => (await engine()).listDownloaded(),
+    download: async (url) => (await engine()).download(url),
+    cancel: async (url) => (await engine()).cancelDownload(url),
+    remove: async (url) => (await engine()).remove(url),
+    downloads: async () => (await engine()).downloadState(),
+    onProgress(cb) {
+      let off = null;
+      let cancelled = false;
+      engine().then((e) => {
+        if (!cancelled) off = e.onDownloadProgress(cb);
+      });
+      return () => {
+        cancelled = true;
+        if (off) off();
+      };
+    },
+    // Models downloaded by the older WebAssembly engine (not usable by the
+    // native one) so they can be deleted to free space.
+    async legacy() {
+      if (!(await nativeInfo).available) return [];
+      try {
+        return await local.listDownloaded();
+      } catch {
+        return [];
+      }
+    },
+    removeLegacy: (url) => local.remove(url)
   },
   onMenu(cb) {
     menuListeners.add(cb);

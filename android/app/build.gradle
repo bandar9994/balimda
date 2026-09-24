@@ -11,6 +11,15 @@ android {
         versionCode Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1")
         versionName "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // The native llama.cpp engine is built for 64-bit ARM phones.
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_shared", "-DCMAKE_BUILD_TYPE=Release"
+            }
+        }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -45,6 +54,20 @@ android {
             signingConfig signingConfigs.pal
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+    ndkVersion "27.2.12479018"
+    packaging {
+        jniLibs {
+            // Link-time stub only: the phone's own OpenCL driver is used at runtime.
+            excludes += ["**/libOpenCL.so"]
+            useLegacyPackaging = false
         }
     }
 }

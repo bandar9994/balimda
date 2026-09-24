@@ -1103,10 +1103,51 @@ function formatBytes(n) {
 function onDeviceCard(p, changed, bind, field, onCleanup) {
   const od = api.onDevice;
   const list = h('div', { class: 'od-list' });
-  const custom = h('input', { class: 'input', placeholder: 'https://huggingface.co/…/model-Q4_K_M.gguf' });
+  const legacyBox = h('div');
+  const engineLine = h('p', { class: 'help' });
+  const gpuBox = h('div');
+  const customHelp = h('div', { class: 'help' });
+  const custom = h('input', { class: 'input', placeholder: 'https://huggingface.co/…/model-Q4_0.gguf' });
+
+  // Which engine runs the models, and the matching GPU switch.
+  od.engine().then((eng) => {
+    if (eng.kind === 'native') {
+      engineLine.textContent = eng.gpu
+        ? `Engine: llama.cpp (native) · GPU: ${eng.gpu}`
+        : 'Engine: llama.cpp (native) · no supported GPU found, using the CPU';
+      customHelp.textContent = 'Q4_0 files run fastest on the GPU. Q4_K_M files work too (partly on the CPU).';
+      gpuBox.replaceChildren(
+        h('label', { class: 'check' }, bind(h('input', { type: 'checkbox', checked: p.nativeGpu !== false, disabled: !eng.gpu }), p, 'nativeGpu'),
+          'Use the GPU'),
+        h('div', { class: 'help', text: 'Runs the model on the phone\'s graphics chip (Adreno) for faster replies. Turn off to use the CPU only.' }));
+    } else {
+      engineLine.textContent = 'Engine: WebAssembly (works everywhere, slower)';
+      customHelp.textContent = 'Q4_K_M files between 0.3 and 2 GB work best.';
+      gpuBox.replaceChildren(
+        h('label', { class: 'check' }, bind(h('input', { type: 'checkbox', checked: !!p.useGpu }), p, 'useGpu'),
+          'Use the phone\'s GPU (experimental)'),
+        h('div', { class: 'help', text: 'Can be much faster, but on many phones the GPU gives garbled answers. If replies look like random words, turn this off.' }));
+    }
+  });
 
   const draw = async () => {
-    const [catalog, downloaded, downloads] = await Promise.all([od.catalog(), od.list(), od.downloads()]);
+    const [catalog, downloaded, downloads, legacy] = await Promise.all([od.catalog(), od.list(), od.downloads(), od.legacy ? od.legacy() : []]);
+    legacyBox.replaceChildren(...(legacy.length ? [
+      h('p', { class: 'help', text: 'Downloaded by the previous engine. The new engine can\'t use these files, so you can delete them to free space.' }),
+      ...legacy.map((m) => h('div', { class: 'od-row' },
+        h('div', { class: 'grow' },
+          h('div', { class: 'od-name', text: displayModel(m.name) }),
+          h('div', { class: 'sub', text: `Old download · ${formatBytes(m.size)}` })),
+        h('div', { class: 'od-actions' },
+          h('button', {
+            class: 'btn danger',
+            text: 'Delete',
+            onclick: async () => {
+              await od.removeLegacy(m.url);
+              draw();
+            }
+          }))))
+    ] : []));
     const have = new Map(downloaded.map((m) => [m.url, m]));
     const rows = [...catalog];
     for (const m of downloaded) if (!catalog.some((c) => c.url === m.url)) rows.push({ name: displayModel(m.name), note: 'Custom model', url: m.url, size: m.size });
@@ -1168,7 +1209,9 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
   return h('div', { class: 'provider-card' },
     h('h4', {}, providerLabel('onDevice')),
     h('p', { class: 'help', text: 'These models run entirely on your phone: private, free and offline. Download one once over Wi-Fi. Smaller models answer faster; bigger ones are smarter.' }),
+    engineLine,
     list,
+    legacyBox,
     field('Add any GGUF model by link', h('div', { class: 'field-row' },
       custom,
       h('button', {
@@ -1178,12 +1221,11 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
           od.download(custom.value.trim()).catch((err) => toast(errorText(err)));
           custom.value = '';
         }
-      })), 'Q4_K_M files between 0.3 and 2 GB work best.'),
+      })), null),
+    customHelp,
     field('Memory for the conversation (context)', bind(ctx, p, 'contextSize', Number),
       'Larger remembers more of a long chat but uses more RAM and is slower.'),
-    h('label', { class: 'check' }, bind(h('input', { type: 'checkbox', checked: !!p.useGpu }), p, 'useGpu'),
-      'Use the phone\'s GPU (experimental)'),
-    h('div', { class: 'help', text: 'Can be much faster, but on many phones the GPU gives garbled answers. If replies look like random words, turn this off.' }));
+    gpuBox);
 }
 
 function editPal(pal, onSaved) {

@@ -31,14 +31,19 @@ Open **Settings → Models & providers**. Under **On this device (offline)**, ta
 
 | Model | Size | Good for |
 |---|---|---|
-| Qwen 2.5 · 0.5B | 0.5 GB | Fastest, quick questions |
+| Qwen 2.5 · 0.5B | 0.4 GB | Fastest, quick questions |
 | Llama 3.2 · 1B | 0.8 GB | Fast all-rounder |
-| Gemma 3 · 1B | 0.8 GB | Friendly writing |
+| Gemma 3 · 1B | 0.7 GB | Friendly writing |
 | Qwen 2.5 · 1.5B | 1.1 GB | Smarter, multilingual (incl. Arabic) |
-| Qwen 3 · 1.7B | 1.1 GB | Thinks before answering (slower) |
-| SmolLM2 · 1.7B | 1.1 GB | English |
+| Qwen 3 · 1.7B | 1.1 GB | Thinks before answering |
+| Llama 3.2 · 3B | 1.9 GB | Noticeably smarter (6 GB+ RAM) |
+| Qwen 2.5 · 3B | 2.0 GB | Strong multilingual (6 GB+ RAM) |
+| Gemma 3 · 4B | 2.4 GB | Best quality here (8 GB+ RAM) |
+| Qwen 3 · 4B | 2.4 GB | Thinks before answering (8 GB+ RAM) |
 
-You can also paste a link to any `.gguf` file (Q4_K_M, under 2 GB). Models run on the phone's CPU, so smaller ones are faster. On a recent phone, a 0.5B–1B model replies at a comfortable reading speed.
+You can also paste a link to any `.gguf` file.
+
+**GPU acceleration.** The Android app runs models with native [llama.cpp](https://github.com/ggml-org/llama.cpp). On Snapdragon phones it uses the **Adreno GPU** through llama.cpp's OpenCL backend, which Qualcomm tunes for Adreno. This is the same approach PocketPal uses. The GPU is on by default, and Settings shows which GPU was detected. `Q4_0` models, which the list above uses, run fastest on Adreno. On other phones it runs natively on the CPU, which is still much faster than the WebAssembly fallback.
 
 ### Using the models on your PC from your phone
 
@@ -133,5 +138,6 @@ npm run icons         # redraw the app icon, Android launcher icons and splash s
 - `renderer/`: the UI, in plain HTML/CSS/JS with no build step. Desktop and mobile share it.
 - `src/backends/node-fs.js`: desktop file storage.
 - `mobile/src/bridge.js`: the mobile version of the desktop bridge. It covers storage through the Capacitor Filesystem, sharing, and the Android back button.
-- `mobile/src/on-device.js`: on-device models, using llama.cpp compiled to WebAssembly via [wllama](https://github.com/ngxson/wllama).
+- `mobile/src/native-engine.js` + `android/app/src/main/java/com/bandar9994/pal/PalLlamaPlugin.java` + `android/app/src/main/cpp/`: the native llama.cpp engine for Android (CPU, plus Adreno GPU through OpenCL). The Android build downloads llama.cpp and compiles it; see `LLAMA_CPP_TAG` in `CMakeLists.txt`.
+- `mobile/src/on-device.js`: the fallback engine, llama.cpp compiled to WebAssembly via [wllama](https://github.com/ngxson/wllama). It's used where the native engine isn't available.
 - `android/`: the Capacitor Android project.
