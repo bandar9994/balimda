@@ -1,0 +1,220 @@
+// Native on-device engine (Android): llama.cpp compiled for the phone, running
+// on the CPU or, on Snapdragon phones, the Adreno GPU via OpenCL. Talks to
+// PalLlamaPlugin.java. Same interface as the WebAssembly engine in on-device.js.
+
+import { registerPlugin } from '@capacitor/core';
+
+const PalLlama = registerPlugin('PalLlama');
+
+// Q4_0 files run fastest on Adreno GPUs (llama.cpp's OpenCL kernels are tuned
+// for them) and also do well on the CPU. No 2 GB limit here, so bigger
+// models are listed too.
+export const CATALOG = [
+  {
+    name: 'Qwen 2.5 · 0.5B',
+    note: 'Fastest · good for quick questions',
+    size: 0.43e9,
+    url: 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_0.gguf'
+  },
+  {
+    name: 'Llama 3.2 · 1B',
+    note: 'Fast all-rounder from Meta',
+    size: 0.77e9,
+    url: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_0.gguf'
+  },
+  {
+    name: 'Gemma 3 · 1B',
+    note: 'Google, friendly writing style',
+    size: 0.72e9,
+    url: 'https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q4_0.gguf'
+  },
+  {
+    name: 'Qwen 2.5 · 1.5B',
+    note: 'Smarter, multilingual (incl. Arabic)',
+    size: 1.07e9,
+    url: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_0.gguf'
+  },
+  {
+    name: 'Qwen 3 · 1.7B',
+    note: 'Thinks before answering',
+    size: 1.05e9,
+    url: 'https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_0.gguf'
+  },
+  {
+    name: 'Llama 3.2 · 3B',
+    note: 'Noticeably smarter · needs 6 GB+ RAM',
+    size: 1.92e9,
+    url: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_0.gguf'
+  },
+  {
+    name: 'Qwen 2.5 · 3B',
+    note: 'Strong multilingual (incl. Arabic) · 6 GB+ RAM',
+    size: 2.0e9,
+    url: 'https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_0.gguf'
+  },
+  {
+    name: 'Gemma 3 · 4B',
+    note: 'Best quality here · needs 8 GB+ RAM',
+    size: 2.37e9,
+    url: 'https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/main/google_gemma-3-4b-it-Q4_0.gguf'
+  },
+  {
+    name: 'Qwen 3 · 4B',
+    note: 'Thinks before answering · 8 GB+ RAM',
+    size: 2.38e9,
+    url: 'https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_0.gguf'
+  }
+];
+
+const DEFAULT_REPLY_TOKENS = 2048;
+
+export function modelName(url) {
+  return decodeURIComponent(String(url).split('?')[0].split('/').pop()).replace(/[^A-Za-z0-9._-]/g, '_');
+}
+
+// Returns { available, error, devices: [{type, name, description}] } and
+// starts listening for engine events when the native engine is present.
+let listening = false;
+export async function probe() {
+  let info;
+  try {
+    info = await PalLlama.info();
+  } catch (err) {
+    return { available: false, error: err.message || String(err), devices: [] };
+  }
+  if (info.available && !listening) {
+    listening = true;
+    PalLlama.addListener('download', onDownloadEvent);
+    PalLlama.addListener('token', onTokenEvent);
+  }
+  return info;
+}
+
+// ---- downloads -------------------------------------------------------------
+
+const downloads = new Map(); // url -> { loaded, total, error }
+const progressListeners = new Set();
+const namesByUrl = new Map();
+
+function emitProgress() {
+  for (const cb of progressListeners) cb(downloadState());
+}
+
+function onDownloadEvent(evt) {
+  const d = downloads.get(evt.url) || {};
+  if (evt.done) {
+    if (evt.error && evt.error !== 'cancelled') downloads.set(evt.url, { ...d, error: evt.error });
+    else downloads.delete(evt.url);
+  } else {
+    downloads.set(evt.url, { loaded: evt.loaded, total: evt.total });
+  }
+  emitProgress();
+}
+
+export function onDownloadProgress(cb) {
+  progressListeners.add(cb);
+  return () => progressListeners.delete(cb);
+}
+
+export function downloadState() {
+  const out = {};
+  for (const [url, d] of downloads) out[url] = { loaded: d.loaded || 0, total: d.total || 0, error: d.error || null };
+  return out;
+}
+
+export async function listDownloaded() {
+  const { models } = await PalLlama.listModels();
+  const byName = new Map();
+  for (const c of CATALOG) byName.set(modelName(c.url), c.url);
+  for (const [url, name] of namesByUrl) byName.set(name, url);
+  return models.map((m) => ({ name: m.name, size: m.size, url: byName.get(m.name) || `local:${m.name}` }));
+}
+
+export async function download(url) {
+  if (!/^https?:\/\/.+\.gguf(\?.*)?$/i.test(url)) throw new Error('The link must point to a .gguf file');
+  if (downloads.has(url) && !downloads.get(url).error) return;
+  downloads.set(url, { loaded: 0, total: 0 });
+  emitProgress();
+  try {
+    const { name } = await PalLlama.download({ url });
+    namesByUrl.set(url, name);
+  } catch (err) {
+    downloads.set(url, { error: err.message || String(err) });
+    emitProgress();
+  }
+}
+
+export async function cancelDownload(url) {
+  await PalLlama.cancelDownload({ url });
+  downloads.delete(url);
+  emitProgress();
+}
+
+export async function remove(url) {
+  const name = url.startsWith('local:') ? url.slice(6) : modelName(url);
+  await PalLlama.deleteModel({ name });
+}
+
+// ---- chat ------------------------------------------------------------------
+
+const tokenListeners = new Map(); // requestId -> fn
+function onTokenEvent(evt) {
+  const fn = tokenListeners.get(evt.requestId);
+  if (fn) fn(evt.text);
+}
+
+let counter = 0;
+
+export const nativeEngine = {
+  async listModels() {
+    return (await listDownloaded()).map((m) => m.name);
+  },
+
+  async streamChat(cfg, req, onDelta, signal) {
+    const ctx = Number(cfg.contextSize) || 4096;
+    const replyTokens = req.maxTokens > 0 ? req.maxTokens : Math.min(DEFAULT_REPLY_TOKENS, Math.floor(ctx / 2));
+    const history = fitToContext(req.messages, req.system, ctx, replyTokens);
+    const messages = req.system ? [{ role: 'system', content: req.system }, ...history] : history;
+
+    const requestId = `r${Date.now()}-${counter++}`;
+    let text = '';
+    tokenListeners.set(requestId, (piece) => {
+      text += piece;
+      onDelta(piece);
+    });
+    const onAbort = () => PalLlama.stop({ requestId });
+    if (signal) signal.addEventListener('abort', onAbort);
+    try {
+      const temperature = req.temperature != null && !Number.isNaN(req.temperature) ? req.temperature : 0.7;
+      const { stopReason } = await PalLlama.generate({
+        requestId,
+        model: req.model,
+        messages,
+        contextSize: ctx,
+        gpu: cfg.nativeGpu !== false,
+        maxTokens: replyTokens,
+        temperature
+      });
+      if (stopReason === 'aborted') throw new DOMException('Aborted', 'AbortError');
+      return { text, stopReason };
+    } finally {
+      tokenListeners.delete(requestId);
+      if (signal) signal.removeEventListener('abort', onAbort);
+    }
+  }
+};
+
+// Keep the newest messages that fit the context window (rough estimate:
+// ~3 characters per token), always leaving room for the reply.
+export function fitToContext(messages, system, ctx, replyTokens) {
+  const budget = Math.max(256, ctx - replyTokens - 64) * 3;
+  let used = (system || '').length;
+  const kept = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    used += messages[i].content.length + 16;
+    if (used > budget && kept.length) break;
+    kept.unshift(messages[i]);
+  }
+  while (kept.length && kept[0].role !== 'user') kept.shift();
+  return kept;
+}
