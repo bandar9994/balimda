@@ -1,0 +1,58 @@
+{
+  "name": "pal-desktop",
+  "productName": "Pal Desktop",
+  "version": "1.0.0",
+  "description": "A desktop AI chat app that remembers every session and chat. Works with local models (Ollama, LM Studio, llama.cpp) and cloud APIs (Claude, OpenAI).",
+  "main": "main.js",
+  "author": "bandar9994",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/**/*.test.js\"",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "dompurify": "^3.2.0",
+    "marked": "^18.0.0"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.bandar9994.paldesktop",
+    "productName": "Pal Desktop",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "icon": "build/icon.png",
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Utility"
+    }
+  }
+}

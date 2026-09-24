@@ -1,0 +1,1199 @@
+/* global marked, DOMPurify */
+'use strict';
+
+const api = window.pal;
+
+const S = {
+  settings: null,
+  info: null,
+  state: {},
+  chats: [],            // sidebar list (metadata)
+  query: '',
+  current: null,        // open chat object, or null for a fresh "new chat" screen
+  cache: new Map(),     // chat id -> chat object
+  requests: new Map(),  // requestId -> { chat, msg }
+  models: {},           // provider id -> [model names]
+  modelErrors: {},
+  newChatPalId: null,
+  newChatModel: null
+};
+
+const $ = (sel) => document.querySelector(sel);
+const el = {
+  app: $('#app'),
+  chatList: $('#chatList'),
+  search: $('#searchInput'),
+  title: $('#chatTitle'),
+  palSelect: $('#palSelect'),
+  modelSelect: $('#modelSelect'),
+  messages: $('#messages'),
+  input: $('#input'),
+  sendBtn: $('#sendBtn'),
+  hint: $('#composerHint'),
+  chatMenu: $('#chatMenu'),
+  modalRoot: $('#modalRoot'),
+  toast: $('#toast')
+};
+
+marked.setOptions({ gfm: true, breaks: true });
+
+// ---------------------------------------------------------------------------
+// helpers
+
+function h(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') node.className = v;
+    else if (k === 'text') node.textContent = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+    else if (k === 'value') node.value = v;
+    else if (k === 'checked') node.checked = !!v;
+    else node.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of children.flat()) {
+    if (c == null || c === false) continue;
+    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+
+function uid() {
+  return crypto.randomUUID();
+}
+
+function debounce(fn, ms) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+
+let toastTimer;
+function toast(msg, ms = 2600) {
+  el.toast.textContent = msg;
+  el.toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.toast.hidden = true; }, ms);
+}
+
+function modelKey(m) {
+  return m && m.provider && m.model ? `${m.provider}::${m.model}` : '';
+}
+
+function parseModelKey(key) {
+  const i = key.indexOf('::');
+  return i < 0 ? null : { provider: key.slice(0, i), model: key.slice(i + 2) };
+}
+
+function providerLabel(id) {
+  return (S.info && S.info.providers[id]) || id;
+}
+
+function splitThinking(text) {
+  const m = String(text || '').match(/^\s*<think>([\s\S]*?)(<\/think>|$)/);
+  if (!m) return { thinking: null, answer: text || '' };
+  return { thinking: m[1].trim(), done: !!m[2], answer: text.slice(m[0].length) };
+}
+
+function renderMarkdown(text) {
+  const html = DOMPurify.sanitize(marked.parse(text || ''));
+  const wrap = h('div');
+  wrap.innerHTML = html;
+  for (const pre of wrap.querySelectorAll('pre')) {
+    const btn = h('button', { class: 'copy-code', text: 'Copy' });
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(pre.querySelector('code')?.innerText ?? pre.innerText.replace(/Copy$/, ''));
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+    });
+    pre.append(btn);
+  }
+  return wrap;
+}
+
+function getPal(id) {
+  const pals = S.settings.pals;
+  return pals.find((p) => p.id === id) || pals[0] || { id: 'none', name: 'Assistant', emoji: '🤖', systemPrompt: '' };
+}
+
+function isStreaming(chat) {
+  if (!chat) return false;
+  for (const r of S.requests.values()) if (r.chat === chat) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// modal helpers
+
+function openModal({ title, body, buttons = [], wide = false, onClose }) {
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onKey, true);
+    if (onClose) onClose();
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape' && el.modalRoot.lastElementChild === backdrop) {
+      e.stopPropagation();
+      close();
+    }
+  };
+  const foot = buttons.length
+    ? h('div', { class: 'modal-foot' }, buttons.map((b) =>
+      h('button', {
+        class: `btn ${b.primary ? 'primary' : ''} ${b.danger ? 'danger' : ''}`,
+        text: b.label,
+        onclick: async () => {
+          const keep = b.onClick ? await b.onClick() : undefined;
+          if (keep !== false) close();
+        }
+      })))
+    : null;
+  const modal = h('div', { class: `modal ${wide ? 'wide' : ''}`, role: 'dialog' },
+    h('div', { class: 'modal-head' },
+      h('h3', { text: title }),
+      h('button', { class: 'icon-btn', title: 'Close', text: '✕', onclick: close })),
+    h('div', { class: 'modal-body' }, body),
+    foot);
+  const backdrop = h('div', { class: 'modal-backdrop', onmousedown: (e) => { if (e.target === backdrop) close(); } }, modal);
+  el.modalRoot.append(backdrop);
+  document.addEventListener('keydown', onKey, true);
+  const first = modal.querySelector('input, textarea, select');
+  if (first) setTimeout(() => first.focus(), 0);
+  return close;
+}
+
+function askText({ title, label, value = '', multiline = false, placeholder = '' }) {
+  return new Promise((resolve) => {
+    let result = null;
+    const input = multiline
+      ? h('textarea', { class: 'input', rows: 8, value, placeholder })
+      : h('input', { class: 'input', value, placeholder });
+    const submit = () => { result = input.value; close(); };
+    if (!multiline) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    const close = openModal({
+      title,
+      body: h('div', { class: 'field' }, label ? h('label', { text: label }) : null, input),
+      buttons: [
+        { label: 'Cancel' },
+        { label: 'Save', primary: true, onClick: () => { result = input.value; } }
+      ],
+      onClose: () => resolve(result)
+    });
+    setTimeout(() => { input.focus(); input.select?.(); }, 0);
+  });
+}
+
+function confirmBox(message, okLabel = 'Delete') {
+  return new Promise((resolve) => {
+    let ok = false;
+    openModal({
+      title: 'Are you sure?',
+      body: h('p', { text: message }),
+      buttons: [
+        { label: 'Cancel' },
+        { label: okLabel, danger: true, onClick: () => { ok = true; } }
+      ],
+      onClose: () => resolve(ok)
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// persistence
+
+const saveTimers = new Map();
+
+async function saveChatNow(chat) {
+  clearTimeout(saveTimers.get(chat.id));
+  saveTimers.delete(chat.id);
+  await api.chats.save(chat);
+  await refreshList();
+}
+
+function saveChatSoon(chat, ms = 1200) {
+  if (saveTimers.has(chat.id)) return;
+  saveTimers.set(chat.id, setTimeout(() => {
+    saveTimers.delete(chat.id);
+    saveChatNow(chat);
+  }, ms));
+}
+
+const persistDrafts = debounce(() => api.state.save({ drafts: S.state.drafts }), 400);
+
+// Unsent text is kept per chat, in memory right away and on disk shortly after.
+function saveDraft(key, text) {
+  const drafts = { ...(S.state.drafts || {}) };
+  if (text) drafts[key] = text;
+  else delete drafts[key];
+  S.state.drafts = drafts;
+  persistDrafts();
+}
+
+function draftKey() {
+  return S.current ? S.current.id : '__new__';
+}
+
+const saveSettings = debounce(async () => {
+  await api.settings.save(S.settings);
+}, 300);
+
+// ---------------------------------------------------------------------------
+// sidebar
+
+async function refreshList() {
+  S.chats = S.query ? await api.chats.search(S.query) : await api.chats.list();
+  renderSidebar();
+}
+
+function groupLabel(ts) {
+  const day = 86400000;
+  const startOfToday = new Date().setHours(0, 0, 0, 0);
+  if (ts >= startOfToday) return 'Today';
+  if (ts >= startOfToday - day) return 'Yesterday';
+  if (ts >= startOfToday - 7 * day) return 'Previous 7 days';
+  if (ts >= startOfToday - 30 * day) return 'Previous 30 days';
+  return new Date(ts).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
+function renderSidebar() {
+  el.chatList.replaceChildren();
+  if (!S.chats.length) {
+    el.chatList.append(h('div', { class: 'empty-list', text: S.query ? 'No chats match your search.' : 'No chats yet. Start one!' }));
+    return;
+  }
+  let lastGroup = null;
+  for (const c of S.chats) {
+    const group = c.pinned ? '📌 Pinned' : groupLabel(c.updatedAt || 0);
+    if (group !== lastGroup) {
+      el.chatList.append(h('div', { class: 'group-label', text: group }));
+      lastGroup = group;
+    }
+    const cached = S.cache.get(c.id);
+    const item = h('div', {
+      class: `chat-item ${S.current && S.current.id === c.id ? 'active' : ''}`,
+      role: 'button',
+      tabindex: 0,
+      title: c.title,
+      onclick: () => openChat(c.id),
+      onkeydown: (e) => { if (e.key === 'Enter') openChat(c.id); }
+    },
+    h('div', { class: 'ci-body' },
+      h('div', { class: 'ci-title', text: c.title }),
+      c.preview ? h('div', { class: 'ci-preview', text: c.preview }) : null),
+    cached && isStreaming(cached) ? h('span', { class: 'ci-dot', title: 'Replying…' }) : null,
+    h('button', {
+      class: 'ci-del',
+      title: 'Delete chat',
+      text: '🗑',
+      onclick: (e) => { e.stopPropagation(); deleteChat(c.id); }
+    }));
+    el.chatList.append(item);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// models & pals selectors
+
+async function loadModels() {
+  const providers = S.settings.providers;
+  const ids = Object.keys(providers).filter((id) => {
+    const p = providers[id];
+    if (!p.enabled) return false;
+    if ((id === 'anthropic' || id === 'openai') && !p.apiKey) return false;
+    return true;
+  });
+  S.models = {};
+  S.modelErrors = {};
+  await Promise.all(ids.map(async (id) => {
+    try {
+      S.models[id] = await api.ai.models(id);
+    } catch (err) {
+      S.modelErrors[id] = String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+    }
+  }));
+  ensureDefaultModel();
+  renderSelectors();
+  if (!S.current) renderChat();
+}
+
+function allModels() {
+  const out = [];
+  for (const [provider, list] of Object.entries(S.models)) for (const model of list) out.push({ provider, model });
+  return out;
+}
+
+function ensureDefaultModel() {
+  const def = S.settings.defaultModel;
+  const available = allModels();
+  if (def && def.model) return;
+  const preferred = available.find((m) => m.model === 'claude-opus-5') || available[0];
+  if (preferred) {
+    S.settings.defaultModel = preferred;
+    saveSettings();
+  }
+}
+
+function currentModel() {
+  if (S.current && S.current.model) return S.current.model;
+  if (S.newChatModel) return S.newChatModel;
+  const pal = getPal(currentPalId());
+  if (pal.model && pal.model.model) return pal.model;
+  return S.settings.defaultModel && S.settings.defaultModel.model ? S.settings.defaultModel : null;
+}
+
+function currentPalId() {
+  if (S.current) return S.current.palId || 'default';
+  return S.newChatPalId || S.state.lastPalId || S.settings.pals[0]?.id || 'default';
+}
+
+function modelOptions(selected, { includeCustom = true } = {}) {
+  const frag = document.createDocumentFragment();
+  const selKey = modelKey(selected);
+  let found = false;
+  for (const [provider, list] of Object.entries(S.models)) {
+    if (!list.length) continue;
+    const group = h('optgroup', { label: providerLabel(provider) });
+    for (const model of list) {
+      const key = `${provider}::${model}`;
+      if (key === selKey) found = true;
+      group.append(h('option', { value: key, text: model }));
+    }
+    frag.append(group);
+  }
+  if (selKey && !found) {
+    frag.prepend(h('option', { value: selKey, text: `${selected.model} (${providerLabel(selected.provider)})` }));
+  }
+  if (!selKey) frag.prepend(h('option', { value: '', text: 'Choose a model…' }));
+  if (includeCustom) frag.append(h('option', { value: '__custom__', text: '✎ Enter a model name…' }));
+  return frag;
+}
+
+function renderSelectors() {
+  const model = currentModel();
+  el.modelSelect.replaceChildren(modelOptions(model));
+  el.modelSelect.value = modelKey(model);
+
+  el.palSelect.replaceChildren(...S.settings.pals.map((p) => h('option', { value: p.id, text: `${p.emoji || '🤖'} ${p.name}` })));
+  el.palSelect.value = currentPalId();
+}
+
+async function pickCustomModel() {
+  return new Promise((resolve) => {
+    let result = null;
+    const provider = h('select', { class: 'select' },
+      Object.keys(S.settings.providers).map((id) => h('option', { value: id, text: providerLabel(id) })));
+    const name = h('input', { class: 'input', placeholder: 'e.g. llama3.2, qwen3:8b, claude-opus-5' });
+    openModal({
+      title: 'Use a model by name',
+      body: h('div', {},
+        h('div', { class: 'field' }, h('label', { text: 'Provider' }), provider),
+        h('div', { class: 'field' }, h('label', { text: 'Model name' }), name,
+          h('div', { class: 'help', text: 'Useful when a model is not listed yet, or the server is offline right now.' }))),
+      buttons: [
+        { label: 'Cancel' },
+        {
+          label: 'Use model',
+          primary: true,
+          onClick: () => {
+            if (!name.value.trim()) return false;
+            result = { provider: provider.value, model: name.value.trim() };
+          }
+        }
+      ],
+      onClose: () => resolve(result)
+    });
+  });
+}
+
+async function onModelChange() {
+  let chosen;
+  if (el.modelSelect.value === '__custom__') {
+    chosen = await pickCustomModel();
+    if (!chosen) {
+      renderSelectors();
+      return;
+    }
+  } else {
+    chosen = parseModelKey(el.modelSelect.value);
+  }
+  if (!chosen) return;
+  if (S.current) {
+    S.current.model = chosen;
+    saveChatNow(S.current);
+  } else {
+    S.newChatModel = chosen;
+  }
+  // The last model you picked becomes the default for new chats.
+  S.settings.defaultModel = chosen;
+  saveSettings();
+  renderSelectors();
+}
+
+function onPalChange() {
+  const palId = el.palSelect.value;
+  S.state.lastPalId = palId;
+  api.state.save({ lastPalId: palId });
+  if (S.current) {
+    S.current.palId = palId;
+    saveChatNow(S.current);
+  } else {
+    S.newChatPalId = palId;
+    const pal = getPal(palId);
+    if (pal.model && pal.model.model) S.newChatModel = pal.model;
+  }
+  renderSelectors();
+  renderChat();
+}
+
+// ---------------------------------------------------------------------------
+// chat view
+
+function renderChat() {
+  const chat = S.current;
+  el.title.textContent = chat ? chat.title : 'New chat';
+  document.title = chat ? `${chat.title} — Pal Desktop` : 'Pal Desktop';
+  renderSelectors();
+  updateComposer();
+  el.messages.replaceChildren();
+
+  if (!chat || !chat.messages.length) {
+    el.messages.append(renderWelcome());
+    return;
+  }
+  const wrap = h('div', { class: 'msg-wrap' });
+  chat.messages.forEach((m, i) => wrap.append(renderMessage(chat, m, i)));
+  el.messages.append(wrap);
+}
+
+function renderWelcome() {
+  const palId = currentPalId();
+  const cards = h('div', { class: 'pal-cards' }, S.settings.pals.map((p) =>
+    h('div', {
+      class: `pal-card ${p.id === palId ? 'selected' : ''}`,
+      onclick: () => { el.palSelect.value = p.id; onPalChange(); el.input.focus(); }
+    },
+    h('div', { class: 'pc-name', text: `${p.emoji || '🤖'} ${p.name}` }),
+    h('div', { class: 'pc-desc', text: p.systemPrompt || 'No instructions' }))));
+
+  const hasModels = allModels().length > 0;
+  const errors = Object.entries(S.modelErrors);
+  const notice = hasModels ? null : h('div', { class: 'notice' },
+    h('strong', { text: 'No models found yet.' }),
+    h('p', { text: 'Pal Desktop talks to AI models running on your computer or in the cloud:' }),
+    h('ul', {},
+      h('li', { text: 'Local & private: install Ollama (ollama.com), then run "ollama pull llama3.2" in a terminal.' }),
+      h('li', { text: 'Local with a GUI: start LM Studio\'s local server (port 1234).' }),
+      h('li', { text: 'Cloud: add an Anthropic (Claude) or OpenAI API key in Settings → Providers.' })),
+    errors.length ? h('p', { class: 'mono', text: errors.map(([p, e]) => `${providerLabel(p)}: ${e}`).join('\n') }) : null,
+    h('div', { class: 'field-row' },
+      h('button', { class: 'btn primary', text: 'Open settings', onclick: () => openSettings('providers') }),
+      h('button', { class: 'btn', text: 'Retry', onclick: loadModels })));
+
+  return h('div', { class: 'welcome' },
+    h('h2', { text: 'Who would you like to talk to?' }),
+    h('p', { text: 'Pick a Pal, choose a model at the top, and start typing. Every chat is saved and remembered.' }),
+    cards,
+    notice);
+}
+
+function renderMessage(chat, msg, index) {
+  const isUser = msg.role === 'user';
+  const pal = getPal(chat.palId);
+  const content = h('div', { class: 'content' });
+  fillContent(content, msg);
+
+  const actions = h('div', { class: 'actions' });
+  actions.append(h('button', {
+    text: 'Copy',
+    onclick: () => { navigator.clipboard.writeText(splitThinking(msg.content).answer.trim()); toast('Copied'); }
+  }));
+  if (isUser) {
+    actions.append(h('button', { text: 'Edit', onclick: () => startEdit(chat, msg, node) }));
+    actions.append(h('button', { text: 'Remember', title: 'Add this to memory', onclick: () => rememberText(msg.content) }));
+  } else {
+    const isLast = index === chat.messages.length - 1;
+    if (isLast) actions.append(h('button', { text: 'Regenerate', onclick: () => regenerate(chat) }));
+    actions.append(h('button', { text: 'Delete', onclick: () => deleteMessage(chat, msg) }));
+  }
+
+  const when = msg.createdAt ? new Date(msg.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  const node = h('div', { class: `msg ${msg.role}`, 'data-id': msg.id },
+    h('div', { class: 'avatar', text: isUser ? 'You' : (pal.emoji || '🤖') }),
+    h('div', { class: 'body' },
+      h('div', { class: 'meta' },
+        h('span', { text: isUser ? 'You' : pal.name }),
+        !isUser && msg.model ? h('span', { text: `· ${msg.model.model}` }) : null,
+        when ? h('span', { text: `· ${when}` }) : null),
+      content,
+      msg.error ? h('div', { class: 'error', text: msg.error }) : null,
+      msg.pending ? null : actions));
+  return node;
+}
+
+function fillContent(container, msg) {
+  container.replaceChildren();
+  if (msg.role === 'user') {
+    container.textContent = msg.content;
+    return;
+  }
+  const { thinking, done, answer } = splitThinking(msg.content);
+  if (thinking != null) {
+    const details = h('details', { class: 'thinking' },
+      h('summary', { text: done ? 'Thought process' : 'Thinking…' }),
+      h('div', { style: 'white-space: pre-wrap', text: thinking }));
+    if (!done) details.open = true;
+    container.append(details);
+  }
+  const body = renderMarkdown(answer);
+  if (msg.pending) body.classList.add('typing');
+  container.append(...body.childNodes.length ? [body] : []);
+  if (msg.pending && !answer && thinking == null) container.append(h('span', { class: 'typing' }));
+}
+
+function nearBottom() {
+  const m = el.messages;
+  return m.scrollHeight - m.scrollTop - m.clientHeight < 120;
+}
+
+function scrollToBottom() {
+  el.messages.scrollTop = el.messages.scrollHeight;
+}
+
+const pendingRender = new Set();
+function scheduleMessageRender(chat, msg) {
+  if (!S.current || S.current !== chat) return;
+  pendingRender.add(msg);
+  if (pendingRender.size > 1) return;
+  requestAnimationFrame(() => {
+    const stick = nearBottom();
+    for (const m of pendingRender) {
+      const node = el.messages.querySelector(`.msg[data-id="${m.id}"] .content`);
+      if (node) fillContent(node, m);
+    }
+    pendingRender.clear();
+    if (stick) scrollToBottom();
+  });
+}
+
+function updateComposer() {
+  const streaming = isStreaming(S.current);
+  el.sendBtn.textContent = streaming ? 'Stop' : 'Send';
+  el.sendBtn.classList.toggle('danger', streaming);
+  el.hint.textContent = S.settings.sendOnEnter
+    ? 'Enter to send · Shift+Enter for a new line · every chat is saved automatically'
+    : 'Ctrl+Enter to send · every chat is saved automatically';
+}
+
+function autoGrow() {
+  el.input.style.height = 'auto';
+  el.input.style.height = `${Math.min(el.input.scrollHeight, 240)}px`;
+}
+
+// ---------------------------------------------------------------------------
+// actions
+
+async function openChat(id) {
+  let chat = S.cache.get(id);
+  if (!chat) {
+    chat = await api.chats.get(id);
+    if (!chat) {
+      toast('That chat could not be found.');
+      await refreshList();
+      return;
+    }
+    // A reply that was cut off when the app closed.
+    for (const m of chat.messages) {
+      if (m.pending) {
+        m.pending = false;
+        if (!m.content) m.error = 'This reply was interrupted.';
+      }
+    }
+    S.cache.set(id, chat);
+  }
+  S.current = chat;
+  S.state.lastChatId = id;
+  api.state.save({ lastChatId: id });
+  renderChat();
+  renderSidebar();
+  el.input.value = (S.state.drafts || {})[id] || '';
+  autoGrow();
+  scrollToBottom();
+  el.input.focus();
+}
+
+function newChat() {
+  S.current = null;
+  S.newChatModel = null;
+  S.newChatPalId = null;
+  S.state.lastChatId = null;
+  api.state.save({ lastChatId: null });
+  renderChat();
+  renderSidebar();
+  el.input.value = (S.state.drafts || {}).__new__ || '';
+  autoGrow();
+  el.input.focus();
+}
+
+async function deleteChat(id) {
+  const meta = S.chats.find((c) => c.id === id);
+  if (!(await confirmBox(`Delete "${meta ? meta.title : 'this chat'}"? This cannot be undone.`))) return;
+  const cached = S.cache.get(id);
+  for (const [rid, r] of S.requests) if (r.chat === cached) api.ai.abort(rid);
+  clearTimeout(saveTimers.get(id));
+  saveTimers.delete(id);
+  await api.chats.remove(id);
+  S.cache.delete(id);
+  if (S.current && S.current.id === id) newChat();
+  await refreshList();
+}
+
+async function renameChat() {
+  if (!S.current) return;
+  const title = await askText({ title: 'Rename chat', label: 'Title', value: S.current.title });
+  if (title == null || !title.trim()) return;
+  S.current.title = title.trim();
+  S.current.titleAuto = false;
+  el.title.textContent = S.current.title;
+  await saveChatNow(S.current);
+}
+
+async function editCustomInstructions() {
+  if (!S.current) return;
+  const text = await askText({
+    title: 'Custom instructions for this chat',
+    label: 'Added to the Pal\'s instructions for this chat only',
+    value: S.current.systemPrompt || '',
+    multiline: true
+  });
+  if (text == null) return;
+  S.current.systemPrompt = text.trim();
+  await saveChatNow(S.current);
+  toast('Instructions saved');
+}
+
+function rememberText(text) {
+  const line = String(text).trim().replace(/\s+/g, ' ').slice(0, 500);
+  S.settings.memory = [S.settings.memory.trim(), `- ${line}`].filter(Boolean).join('\n');
+  saveSettings();
+  toast('Added to memory');
+}
+
+function buildSystemPrompt(chat) {
+  const parts = [];
+  const pal = getPal(chat.palId);
+  if (pal.systemPrompt) parts.push(pal.systemPrompt.trim());
+  if (chat.systemPrompt) parts.push(chat.systemPrompt.trim());
+  if (S.settings.memoryEnabled && S.settings.memory.trim()) {
+    parts.push(`Things to remember about the user (from previous sessions):\n${S.settings.memory.trim()}`);
+  }
+  return parts.join('\n\n');
+}
+
+function historyFor(chat, uptoIndex) {
+  let msgs = chat.messages.slice(0, uptoIndex)
+    .filter((m) => !m.error && m.content)
+    .map((m) => ({ role: m.role, content: m.role === 'assistant' ? splitThinking(m.content).answer.trim() : m.content }));
+  const limit = Number(S.settings.historyLimit) || 0;
+  if (limit > 0 && msgs.length > limit) msgs = msgs.slice(-limit);
+  return msgs;
+}
+
+async function send() {
+  if (isStreaming(S.current)) {
+    stopCurrent();
+    return;
+  }
+  const text = el.input.value.trim();
+  if (!text) return;
+  const model = currentModel();
+  if (!model) {
+    toast('Choose a model first (top right).');
+    return;
+  }
+
+  let chat = S.current;
+  if (!chat) {
+    chat = await api.chats.create({ palId: currentPalId(), model });
+    chat.titleAuto = true;
+    S.cache.set(chat.id, chat);
+    S.current = chat;
+    S.state.lastChatId = chat.id;
+    api.state.save({ lastChatId: chat.id });
+    saveDraft('__new__', '');
+  }
+  if (!chat.model) chat.model = model;
+
+  if (!chat.messages.length) chat.title = text.replace(/\s+/g, ' ').slice(0, 60);
+  chat.messages.push({ id: uid(), role: 'user', content: text, createdAt: Date.now() });
+  el.input.value = '';
+  autoGrow();
+  saveDraft(chat.id, '');
+  await runCompletion(chat);
+}
+
+async function runCompletion(chat) {
+  const model = chat.model;
+  const msg = { id: uid(), role: 'assistant', content: '', createdAt: Date.now(), model, pending: true };
+  const system = buildSystemPrompt(chat);
+  const history = historyFor(chat, chat.messages.length);
+  chat.messages.push(msg);
+  chat.updatedAt = Date.now();
+  if (S.current === chat) {
+    renderChat();
+    scrollToBottom();
+  }
+  await saveChatNow(chat);
+
+  const requestId = uid();
+  S.requests.set(requestId, { chat, msg });
+  updateComposer();
+  renderSidebar();
+
+  const res = await api.ai.chat({
+    requestId,
+    provider: model.provider,
+    model: model.model,
+    system,
+    messages: history,
+    temperature: S.settings.temperature === '' ? undefined : Number(S.settings.temperature),
+    maxTokens: Number(S.settings.maxTokens) || 0
+  });
+
+  S.requests.delete(requestId);
+  msg.pending = false;
+  if (!res.ok) msg.error = `Error: ${res.error}`;
+  if (res.stopReason === 'max_tokens') msg.error = 'The reply was cut off because it reached the max length. Increase "Max tokens" in Settings.';
+  chat.updatedAt = Date.now();
+  await saveChatNow(chat);
+  if (S.current === chat) {
+    const stick = nearBottom();
+    renderChat();
+    if (stick) scrollToBottom();
+  }
+  updateComposer();
+
+  if (res.ok && !res.aborted && chat.titleAuto && S.settings.autoTitle && chat.messages.filter((m) => m.role === 'assistant').length === 1) {
+    generateTitle(chat);
+  }
+}
+
+async function generateTitle(chat) {
+  const first = chat.messages.find((m) => m.role === 'user');
+  const provisional = chat.title;
+  if (!first) return;
+  const res = await api.ai.chat({
+    requestId: uid(),
+    provider: chat.model.provider,
+    model: chat.model.model,
+    system: '',
+    messages: [{
+      role: 'user',
+      content: `Write a short title (3 to 6 words) for a conversation that starts with the message below. Reply with only the title, no quotes or punctuation at the end.\n\nMessage:\n${first.content.slice(0, 1500)}`
+    }],
+    temperature: 0.3,
+    maxTokens: 0
+  });
+  if (!res.ok || !res.text) return;
+  const title = splitThinking(res.text).answer
+    .split('\n').map((s) => s.trim()).find(Boolean)
+    ?.replace(/^(title:\s*)/i, '')
+    .replace(/^["'*#\s]+|["'*.\s]+$/g, '')
+    .slice(0, 60);
+  if (!title || chat.title !== provisional) return;
+  chat.title = title;
+  await saveChatNow(chat);
+  if (S.current === chat) {
+    el.title.textContent = title;
+    document.title = `${title} — Pal Desktop`;
+  }
+}
+
+function stopCurrent() {
+  for (const [rid, r] of S.requests) if (r.chat === S.current) api.ai.abort(rid);
+}
+
+async function regenerate(chat) {
+  if (isStreaming(chat)) return;
+  const last = chat.messages[chat.messages.length - 1];
+  if (last && last.role === 'assistant') chat.messages.pop();
+  if (!chat.messages.length) return;
+  await runCompletion(chat);
+}
+
+async function deleteMessage(chat, msg) {
+  if (isStreaming(chat)) return;
+  chat.messages = chat.messages.filter((m) => m !== msg);
+  await saveChatNow(chat);
+  renderChat();
+}
+
+function startEdit(chat, msg, node) {
+  if (isStreaming(chat)) return;
+  const body = node.querySelector('.body');
+  const area = h('textarea', { class: 'input', value: msg.content });
+  const box = h('div', { class: 'edit-box' }, area,
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', text: 'Cancel', onclick: () => renderChat() }),
+      h('button', {
+        class: 'btn primary',
+        text: 'Save & resend',
+        onclick: async () => {
+          const text = area.value.trim();
+          if (!text) return;
+          const i = chat.messages.indexOf(msg);
+          msg.content = text;
+          chat.messages = chat.messages.slice(0, i + 1);
+          await runCompletion(chat);
+        }
+      })));
+  body.replaceChildren(box);
+  area.style.height = `${Math.min(400, area.scrollHeight + 10)}px`;
+  area.focus();
+}
+
+// ---------------------------------------------------------------------------
+// settings
+
+function openSettings(tab = 'general') {
+  const s = S.settings;
+  const changed = () => { saveSettings(); };
+  const pane = h('div', { class: 'settings-pane' });
+  const tabs = [
+    ['general', 'General'],
+    ['providers', 'Models & providers'],
+    ['pals', 'Pals'],
+    ['memory', 'Memory'],
+    ['data', 'Data & backup']
+  ];
+  const tabBar = h('div', { class: 'settings-tabs' });
+
+  const bind = (input, obj, key, transform = (v) => v) => {
+    const evt = input.type === 'checkbox' || input.tagName === 'SELECT' ? 'change' : 'input';
+    input.addEventListener(evt, () => {
+      obj[key] = transform(input.type === 'checkbox' ? input.checked : input.value);
+      changed();
+      if (key === 'theme') applyTheme();
+      if (key === 'sendOnEnter') updateComposer();
+    });
+    return input;
+  };
+
+  const field = (label, control, help) =>
+    h('div', { class: 'field' }, h('label', { text: label }), control, help ? h('div', { class: 'help', text: help }) : null);
+  const check = (label, obj, key) =>
+    h('label', { class: 'check' }, bind(h('input', { type: 'checkbox', checked: obj[key] }), obj, key), label);
+
+  const views = {
+    general() {
+      const theme = bind(h('select', { class: 'select' },
+        h('option', { value: 'system', text: 'Match system' }),
+        h('option', { value: 'light', text: 'Light' }),
+        h('option', { value: 'dark', text: 'Dark' })), s, 'theme');
+      theme.value = s.theme;
+      return [
+        field('Theme', theme),
+        check('Press Enter to send (Shift+Enter for a new line)', s, 'sendOnEnter'),
+        check('Name new chats automatically with AI', s, 'autoTitle'),
+        field('Temperature', bind(h('input', { class: 'input', type: 'number', step: '0.1', min: '0', max: '2', value: s.temperature }), s, 'temperature'),
+          'Creativity for local models (0 = focused, 1+ = creative). Leave empty to use the model default.'),
+        field('Max tokens per reply', bind(h('input', { class: 'input', type: 'number', min: '0', value: s.maxTokens }), s, 'maxTokens', Number),
+          '0 = automatic.'),
+        field('History sent to the model', bind(h('input', { class: 'input', type: 'number', min: '0', value: s.historyLimit }), s, 'historyLimit', Number),
+          'How many previous messages to include. 0 = the whole chat. Lower this for small local models with short context.')
+      ];
+    },
+
+    providers() {
+      const cards = [];
+      const help = {
+        ollama: 'Runs models on your own computer, offline. Install from ollama.com, then run e.g. "ollama pull llama3.2".',
+        openaiCompatible: 'LM Studio, llama.cpp server, Jan, vLLM or any OpenAI-compatible server. LM Studio default: http://127.0.0.1:1234/v1',
+        anthropic: 'Claude models. Create an API key at console.anthropic.com.',
+        openai: 'OpenAI models. Create an API key at platform.openai.com.'
+      };
+      for (const [id, p] of Object.entries(s.providers)) {
+        const status = h('span', { class: 'status' });
+        const models = S.models[id];
+        if (models) { status.textContent = `${models.length} models`; status.className = 'status ok'; }
+        else if (S.modelErrors[id]) { status.textContent = 'not connected'; status.className = 'status bad'; }
+        const test = h('button', {
+          class: 'btn',
+          text: 'Test connection',
+          onclick: async () => {
+            status.textContent = 'Testing…';
+            status.className = 'status';
+            await api.settings.save(S.settings);
+            try {
+              const list = await api.ai.models(id);
+              status.textContent = `Connected · ${list.length} models`;
+              status.className = 'status ok';
+            } catch (err) {
+              status.textContent = String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+              status.className = 'status bad';
+            }
+            loadModels();
+          }
+        });
+        cards.push(h('div', { class: 'provider-card' },
+          h('h4', {}, providerLabel(id), status),
+          check('Enabled', p, 'enabled'),
+          'baseUrl' in p ? field('Server URL', bind(h('input', { class: 'input', value: p.baseUrl }), p, 'baseUrl')) : null,
+          'apiKey' in p ? field('API key', bind(h('input', { class: 'input', type: 'password', value: p.apiKey, placeholder: id === 'openaiCompatible' ? 'Optional' : 'Paste your key' }), p, 'apiKey', (v) => v.trim())) : null,
+          h('div', { class: 'help', text: help[id] || '' }),
+          h('div', { style: 'margin-top:8px' }, test)));
+      }
+      cards.push(h('p', { class: 'help', text: 'API keys are stored on this computer only, encrypted with your system keychain when available.' }));
+      return cards;
+    },
+
+    pals() {
+      const list = h('div');
+      const draw = () => {
+        list.replaceChildren(...s.pals.map((p, i) => h('div', { class: 'pal-row' },
+          h('div', { style: 'font-size:20px', text: p.emoji || '🤖' }),
+          h('div', { class: 'grow' },
+            h('div', { text: p.name }),
+            h('div', { class: 'sub', text: p.systemPrompt || 'No instructions' })),
+          h('button', { class: 'btn', text: 'Edit', onclick: () => editPal(p, draw) }),
+          s.pals.length > 1 ? h('button', {
+            class: 'btn danger',
+            text: 'Delete',
+            onclick: async () => {
+              if (!(await confirmBox(`Delete the Pal "${p.name}"? Existing chats keep their messages.`))) return;
+              s.pals.splice(i, 1);
+              changed();
+              draw();
+              renderSelectors();
+            }
+          }) : null)));
+      };
+      draw();
+      return [
+        h('p', { class: 'help', text: 'Pals are personalities with their own instructions (and optionally their own model). Pick one when starting a chat.' }),
+        list,
+        h('button', {
+          class: 'btn primary',
+          text: '＋ Add a Pal',
+          onclick: () => {
+            const pal = { id: uid(), name: 'New Pal', emoji: '🙂', systemPrompt: '' };
+            editPal(pal, () => {
+              if (!s.pals.includes(pal)) s.pals.push(pal);
+              changed();
+              draw();
+            });
+          }
+        })
+      ];
+    },
+
+    memory() {
+      return [
+        check('Use memory in every chat', s, 'memoryEnabled'),
+        field('What should your Pals always remember about you?',
+          bind(h('textarea', { class: 'input', rows: 12, value: s.memory, placeholder: '- My name is …\n- I work as …\n- I prefer short answers' }), s, 'memory'),
+          'This is shared with the model at the start of every chat. Tip: use "Remember" under any of your messages to add it here.')
+      ];
+    },
+
+    data() {
+      return [
+        field('Where your chats are stored', h('div', {},
+          h('div', { class: 'mono', text: S.info.dataDir }),
+          h('button', { class: 'btn', style: 'margin-top:8px', text: 'Open data folder', onclick: () => api.app.openDataDir() }))),
+        field('Backup', h('div', { class: 'field-row' },
+          h('button', { class: 'btn', text: 'Export all chats…', onclick: exportAll }),
+          h('button', { class: 'btn', text: 'Import chats…', onclick: importAll })),
+        'Export makes a single JSON file with every chat. Importing merges chats into this app.'),
+        h('p', { class: 'help', text: `Pal Desktop ${S.info.version} · ${S.chats.length} chats` })
+      ];
+    }
+  };
+
+  const show = (name) => {
+    for (const b of tabBar.children) b.classList.toggle('active', b.dataset.tab === name);
+    pane.replaceChildren(...views[name]().filter(Boolean));
+  };
+  for (const [id, label] of tabs) tabBar.append(h('button', { 'data-tab': id, text: label, onclick: () => show(id) }));
+
+  openModal({
+    title: 'Settings',
+    wide: true,
+    body: h('div', { class: 'settings' }, tabBar, pane),
+    onClose: async () => {
+      await api.settings.save(S.settings);
+      renderSelectors();
+      loadModels();
+      renderChat();
+    }
+  });
+  const body = el.modalRoot.lastElementChild.querySelector('.modal-body');
+  body.style.padding = '0';
+  show(tab);
+}
+
+function editPal(pal, onSaved) {
+  const name = h('input', { class: 'input', value: pal.name });
+  const emoji = h('input', { class: 'input', value: pal.emoji || '', style: 'width:70px' });
+  const prompt = h('textarea', { class: 'input', rows: 8, value: pal.systemPrompt || '', placeholder: 'e.g. You are a patient math tutor who explains step by step.' });
+  const model = h('select', { class: 'select' },
+    h('option', { value: '', text: 'Use the model picked at the top' }),
+    modelOptions(pal.model, { includeCustom: false }));
+  model.value = modelKey(pal.model);
+  if (!pal.model) model.value = '';
+  openModal({
+    title: 'Edit Pal',
+    body: h('div', {},
+      h('div', { class: 'field' }, h('label', { text: 'Name' }), h('div', { class: 'field-row' }, emoji, name)),
+      h('div', { class: 'field' }, h('label', { text: 'Instructions (system prompt)' }), prompt),
+      h('div', { class: 'field' }, h('label', { text: 'Preferred model' }), model)),
+    buttons: [
+      { label: 'Cancel' },
+      {
+        label: 'Save',
+        primary: true,
+        onClick: () => {
+          pal.name = name.value.trim() || 'Pal';
+          pal.emoji = emoji.value.trim() || '🤖';
+          pal.systemPrompt = prompt.value.trim();
+          pal.model = model.value ? parseModelKey(model.value) : null;
+          onSaved();
+          renderSelectors();
+        }
+      }
+    ]
+  });
+}
+
+async function exportAll() {
+  const r = await api.backup.exportAll();
+  if (r) toast(`Exported ${r.count} chats`);
+}
+
+async function importAll() {
+  try {
+    const r = await api.backup.importAll();
+    if (r) {
+      S.cache.clear();
+      if (S.current) S.current = await api.chats.get(S.current.id);
+      if (S.current) S.cache.set(S.current.id, S.current);
+      await refreshList();
+      renderChat();
+      toast(`Imported ${r.count} chats`);
+    }
+  } catch (err) {
+    toast(`Import failed: ${err.message}`);
+  }
+}
+
+function exportCurrent() {
+  if (S.current) api.chats.exportMarkdown(S.current.id).then((r) => r && toast('Chat exported'));
+}
+
+function applyTheme() {
+  const t = S.settings.theme;
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  else delete document.documentElement.dataset.theme;
+}
+
+function toggleSidebar() {
+  const collapsed = !el.app.classList.contains('sidebar-collapsed');
+  el.app.classList.toggle('sidebar-collapsed', collapsed);
+  api.state.save({ sidebarCollapsed: collapsed });
+}
+
+// ---------------------------------------------------------------------------
+// events
+
+function bindEvents() {
+  $('#newChatBtn').addEventListener('click', newChat);
+  $('#settingsBtn').addEventListener('click', () => openSettings());
+  $('#toggleSidebarBtn').addEventListener('click', toggleSidebar);
+  $('#refreshModelsBtn').addEventListener('click', async () => { await loadModels(); toast('Model list refreshed'); });
+  el.title.addEventListener('click', renameChat);
+  el.modelSelect.addEventListener('change', onModelChange);
+  el.palSelect.addEventListener('change', onPalChange);
+  el.sendBtn.addEventListener('click', send);
+
+  el.search.addEventListener('input', debounce(() => {
+    S.query = el.search.value;
+    refreshList();
+  }, 200));
+
+  el.input.addEventListener('input', () => {
+    autoGrow();
+    saveDraft(draftKey(), el.input.value);
+  });
+  el.input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) {
+      const wantsSend = S.settings.sendOnEnter ? !e.shiftKey : (e.ctrlKey || e.metaKey);
+      if (wantsSend) {
+        e.preventDefault();
+        if (!isStreaming(S.current)) send();
+      }
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !el.modalRoot.children.length && isStreaming(S.current)) stopCurrent();
+  });
+
+  $('#chatMenuBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!S.current) {
+      toast('Send a message first to create the chat.');
+      return;
+    }
+    el.chatMenu.querySelector('[data-action="pin"]').textContent = S.current.pinned ? 'Unpin' : 'Pin to top';
+    el.chatMenu.hidden = !el.chatMenu.hidden;
+  });
+  document.addEventListener('click', () => { el.chatMenu.hidden = true; });
+  el.chatMenu.addEventListener('click', async (e) => {
+    const action = e.target.dataset.action;
+    el.chatMenu.hidden = true;
+    if (!S.current) return;
+    if (action === 'rename') renameChat();
+    if (action === 'pin') { S.current.pinned = !S.current.pinned; await saveChatNow(S.current); }
+    if (action === 'system') editCustomInstructions();
+    if (action === 'export') exportCurrent();
+    if (action === 'delete') deleteChat(S.current.id);
+  });
+
+  api.ai.onEvent((evt) => {
+    const r = S.requests.get(evt.requestId);
+    if (!r || evt.type !== 'delta') return;
+    r.msg.content += evt.text;
+    scheduleMessageRender(r.chat, r.msg);
+    saveChatSoon(r.chat, 1500);
+  });
+
+  api.onMenu((action) => {
+    if (action === 'new-chat') newChat();
+    if (action === 'search') { if (el.app.classList.contains('sidebar-collapsed')) toggleSidebar(); el.search.focus(); el.search.select(); }
+    if (action === 'settings') openSettings();
+    if (action === 'export') exportAll();
+    if (action === 'import') importAll();
+    if (action === 'toggle-sidebar') toggleSidebar();
+  });
+
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+}
+
+// ---------------------------------------------------------------------------
+// start
+
+async function init() {
+  [S.settings, S.info, S.state] = await Promise.all([api.settings.get(), api.app.info(), api.state.get()]);
+  applyTheme();
+  if (S.state.sidebarCollapsed) el.app.classList.add('sidebar-collapsed');
+  bindEvents();
+  await refreshList();
+
+  const last = S.state.lastChatId && S.chats.find((c) => c.id === S.state.lastChatId);
+  if (last) await openChat(last.id);
+  else newChat();
+
+  loadModels();
+}
+
+init();
