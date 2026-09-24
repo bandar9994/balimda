@@ -87,6 +87,14 @@ function parseModelKey(key) {
   return i < 0 ? null : { provider: key.slice(0, i), model: key.slice(i + 2) };
 }
 
+function displayModel(name) {
+  return String(name).replace(/\.gguf$/i, '');
+}
+
+function appName() {
+  return (S.info && S.info.appName) || 'Pal';
+}
+
 function providerLabel(id) {
   return (S.info && S.info.providers[id]) || id;
 }
@@ -296,23 +304,35 @@ function renderSidebar() {
 // ---------------------------------------------------------------------------
 // models & pals selectors
 
+function errorText(err) {
+  return String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+}
+
+// Providers this platform supports, in display order.
+function providerIds() {
+  return Object.keys(S.info.providers).filter((id) => S.settings.providers[id]);
+}
+
 async function loadModels() {
   const providers = S.settings.providers;
-  const ids = Object.keys(providers).filter((id) => {
+  const ids = providerIds().filter((id) => {
     const p = providers[id];
     if (!p.enabled) return false;
     if ((id === 'anthropic' || id === 'openai') && !p.apiKey) return false;
     return true;
   });
-  S.models = {};
-  S.modelErrors = {};
+  const models = {};
+  const errors = {};
   await Promise.all(ids.map(async (id) => {
     try {
-      S.models[id] = await api.ai.models(id);
+      models[id] = await api.ai.models(id);
     } catch (err) {
-      S.modelErrors[id] = String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+      errors[id] = errorText(err);
     }
   }));
+  S.models = {};
+  for (const id of ids) if (models[id]) S.models[id] = models[id];
+  S.modelErrors = errors;
   ensureDefaultModel();
   renderSelectors();
   if (!S.current) renderChat();
@@ -327,8 +347,9 @@ function allModels() {
 function ensureDefaultModel() {
   const def = S.settings.defaultModel;
   const available = allModels();
-  if (def && def.model) return;
-  const preferred = available.find((m) => m.model === 'claude-opus-5') || available[0];
+  if (def && def.model && (!S.models[def.provider] || S.models[def.provider].includes(def.model))) return;
+  const preferred = available.find((m) => m.provider === 'onDevice') ||
+    available.find((m) => m.model === 'claude-opus-5') || available[0];
   if (preferred) {
     S.settings.defaultModel = preferred;
     saveSettings();
@@ -358,12 +379,12 @@ function modelOptions(selected, { includeCustom = true } = {}) {
     for (const model of list) {
       const key = `${provider}::${model}`;
       if (key === selKey) found = true;
-      group.append(h('option', { value: key, text: model }));
+      group.append(h('option', { value: key, text: displayModel(model) }));
     }
     frag.append(group);
   }
   if (selKey && !found) {
-    frag.prepend(h('option', { value: selKey, text: `${selected.model} (${providerLabel(selected.provider)})` }));
+    frag.prepend(h('option', { value: selKey, text: `${displayModel(selected.model)} (${providerLabel(selected.provider)})` }));
   }
   if (!selKey) frag.prepend(h('option', { value: '', text: 'Choose a model…' }));
   if (includeCustom) frag.append(h('option', { value: '__custom__', text: '✎ Enter a model name…' }));
@@ -453,7 +474,7 @@ function onPalChange() {
 function renderChat() {
   const chat = S.current;
   el.title.textContent = chat ? chat.title : 'New chat';
-  document.title = chat ? `${chat.title} — Pal Desktop` : 'Pal Desktop';
+  document.title = chat ? `${chat.title} — ${appName()}` : appName();
   renderSelectors();
   updateComposer();
   el.messages.replaceChildren();
@@ -472,16 +493,22 @@ function renderWelcome() {
   const cards = h('div', { class: 'pal-cards' }, S.settings.pals.map((p) =>
     h('div', {
       class: `pal-card ${p.id === palId ? 'selected' : ''}`,
-      onclick: () => { el.palSelect.value = p.id; onPalChange(); el.input.focus(); }
+      onclick: () => { el.palSelect.value = p.id; onPalChange(); focusInput(); }
     },
     h('div', { class: 'pc-name', text: `${p.emoji || '🤖'} ${p.name}` }),
     h('div', { class: 'pc-desc', text: p.systemPrompt || 'No instructions' }))));
 
   const hasModels = allModels().length > 0;
   const errors = Object.entries(S.modelErrors);
-  const notice = hasModels ? null : h('div', { class: 'notice' },
+  const notice = hasModels ? null : S.info.mobile ? h('div', { class: 'notice' },
+    h('strong', { text: 'Get your first model' }),
+    h('p', { text: 'Download a small model to chat privately and offline, right on this phone. Or connect to Claude, OpenAI, or Ollama / LM Studio on your computer.' }),
+    errors.length ? h('p', { class: 'mono', text: errors.map(([p, e]) => `${providerLabel(p)}: ${e}`).join('\n') }) : null,
+    h('div', { class: 'field-row' },
+      h('button', { class: 'btn primary', text: 'Download a model', onclick: () => openSettings('providers') }),
+      h('button', { class: 'btn', text: 'Retry', onclick: loadModels }))) : h('div', { class: 'notice' },
     h('strong', { text: 'No models found yet.' }),
-    h('p', { text: 'Pal Desktop talks to AI models running on your computer or in the cloud:' }),
+    h('p', { text: `${appName()} talks to AI models running on your computer or in the cloud:` }),
     h('ul', {},
       h('li', { text: 'Local & private: install Ollama (ollama.com), then run "ollama pull llama3.2" in a terminal.' }),
       h('li', { text: 'Local with a GUI: start LM Studio\'s local server (port 1234).' }),
@@ -528,6 +555,7 @@ function renderMessage(chat, msg, index) {
         when ? h('span', { text: `· ${when}` }) : null),
       content,
       msg.error ? h('div', { class: 'error', text: msg.error }) : null,
+      msg.notice ? h('div', { class: 'msg-notice', text: msg.notice }) : null,
       msg.pending ? null : actions));
   return node;
 }
@@ -581,9 +609,12 @@ function updateComposer() {
   const streaming = isStreaming(S.current);
   el.sendBtn.textContent = streaming ? 'Stop' : 'Send';
   el.sendBtn.classList.toggle('danger', streaming);
-  el.hint.textContent = S.settings.sendOnEnter
-    ? 'Enter to send · Shift+Enter for a new line · every chat is saved automatically'
-    : 'Ctrl+Enter to send · every chat is saved automatically';
+  if (S.info.mobile) el.hint.textContent = 'Every chat is saved on this phone';
+  else {
+    el.hint.textContent = S.settings.sendOnEnter
+      ? 'Enter to send · Shift+Enter for a new line · every chat is saved automatically'
+      : 'Ctrl+Enter to send · every chat is saved automatically';
+  }
 }
 
 function autoGrow() {
@@ -620,7 +651,8 @@ async function openChat(id) {
   el.input.value = (S.state.drafts || {})[id] || '';
   autoGrow();
   scrollToBottom();
-  el.input.focus();
+  closeDrawer();
+  focusInput();
 }
 
 function newChat() {
@@ -633,7 +665,13 @@ function newChat() {
   renderSidebar();
   el.input.value = (S.state.drafts || {}).__new__ || '';
   autoGrow();
-  el.input.focus();
+  closeDrawer();
+  focusInput();
+}
+
+// On phones, don't pop the keyboard up every time a chat opens.
+function focusInput() {
+  if (!S.info.mobile) el.input.focus();
 }
 
 async function deleteChat(id) {
@@ -764,7 +802,7 @@ async function runCompletion(chat) {
   S.requests.delete(requestId);
   msg.pending = false;
   if (!res.ok) msg.error = `Error: ${res.error}`;
-  if (res.stopReason === 'max_tokens') msg.error = 'The reply was cut off because it reached the max length. Increase "Max tokens" in Settings.';
+  if (res.ok && res.stopReason === 'max_tokens') msg.notice = 'The reply was cut off at the length limit. Ask it to continue, or raise "Max tokens" in Settings.';
   chat.updatedAt = Date.now();
   await saveChatNow(chat);
   if (S.current === chat) {
@@ -774,7 +812,7 @@ async function runCompletion(chat) {
   }
   updateComposer();
 
-  if (res.ok && !res.aborted && chat.titleAuto && S.settings.autoTitle && chat.messages.filter((m) => m.role === 'assistant').length === 1) {
+  if (res.ok && !res.aborted && chat.titleAuto && S.settings.autoTitle && model.provider !== 'onDevice' && chat.messages.filter((m) => m.role === 'assistant').length === 1) {
     generateTitle(chat);
   }
 }
@@ -806,7 +844,7 @@ async function generateTitle(chat) {
   await saveChatNow(chat);
   if (S.current === chat) {
     el.title.textContent = title;
-    document.title = `${title} — Pal Desktop`;
+    document.title = `${title} — ${appName()}`;
   }
 }
 
@@ -868,6 +906,12 @@ function openSettings(tab = 'general') {
     ['data', 'Data & backup']
   ];
   const tabBar = h('div', { class: 'settings-tabs' });
+  let cleanups = [];
+  const onCleanup = (fn) => cleanups.push(fn);
+  const runCleanups = () => {
+    for (const fn of cleanups) fn();
+    cleanups = [];
+  };
 
   const bind = (input, obj, key, transform = (v) => v) => {
     const evt = input.type === 'checkbox' || input.tagName === 'SELECT' ? 'change' : 'input';
@@ -907,13 +951,23 @@ function openSettings(tab = 'general') {
 
     providers() {
       const cards = [];
-      const help = {
+      const help = S.info.mobile ? {
+        ollama: 'Use Ollama running on your computer over Wi-Fi. On the computer, set OLLAMA_HOST=0.0.0.0 and OLLAMA_ORIGINS=*, restart Ollama, then enter http://<computer IP>:11434 here.',
+        openaiCompatible: 'LM Studio (or llama.cpp, Jan…) on your computer. In LM Studio turn on "Serve on local network" and "Enable CORS", then enter http://<computer IP>:1234/v1 here.'
+      } : {
         ollama: 'Runs models on your own computer, offline. Install from ollama.com, then run e.g. "ollama pull llama3.2".',
-        openaiCompatible: 'LM Studio, llama.cpp server, Jan, vLLM or any OpenAI-compatible server. LM Studio default: http://127.0.0.1:1234/v1',
+        openaiCompatible: 'LM Studio, llama.cpp server, Jan, vLLM or any OpenAI-compatible server. LM Studio default: http://127.0.0.1:1234/v1'
+      };
+      Object.assign(help, {
         anthropic: 'Claude models. Create an API key at console.anthropic.com.',
         openai: 'OpenAI models. Create an API key at platform.openai.com.'
-      };
-      for (const [id, p] of Object.entries(s.providers)) {
+      });
+      for (const id of providerIds()) {
+        const p = s.providers[id];
+        if (id === 'onDevice') {
+          cards.push(onDeviceCard(p, changed, bind, field, onCleanup));
+          continue;
+        }
         const status = h('span', { class: 'status' });
         const models = S.models[id];
         if (models) { status.textContent = `${models.length} models`; status.className = 'status ok'; }
@@ -930,7 +984,7 @@ function openSettings(tab = 'general') {
               status.textContent = `Connected · ${list.length} models`;
               status.className = 'status ok';
             } catch (err) {
-              status.textContent = String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+              status.textContent = errorText(err);
               status.className = 'status bad';
             }
             loadModels();
@@ -944,7 +998,12 @@ function openSettings(tab = 'general') {
           h('div', { class: 'help', text: help[id] || '' }),
           h('div', { style: 'margin-top:8px' }, test)));
       }
-      cards.push(h('p', { class: 'help', text: 'API keys are stored on this computer only, encrypted with your system keychain when available.' }));
+      cards.push(h('p', {
+        class: 'help',
+        text: S.info.mobile
+          ? 'API keys are stored only in this app\'s private storage on your phone.'
+          : 'API keys are stored on this computer only, encrypted with your system keychain when available.'
+      }));
       return cards;
     },
 
@@ -1001,17 +1060,18 @@ function openSettings(tab = 'general') {
       return [
         field('Where your chats are stored', h('div', {},
           h('div', { class: 'mono', text: S.info.dataDir }),
-          h('button', { class: 'btn', style: 'margin-top:8px', text: 'Open data folder', onclick: () => api.app.openDataDir() }))),
+          S.info.mobile ? null : h('button', { class: 'btn', style: 'margin-top:8px', text: 'Open data folder', onclick: () => api.app.openDataDir() }))),
         field('Backup', h('div', { class: 'field-row' },
           h('button', { class: 'btn', text: 'Export all chats…', onclick: exportAll }),
           h('button', { class: 'btn', text: 'Import chats…', onclick: importAll })),
         'Export makes a single JSON file with every chat. Importing merges chats into this app.'),
-        h('p', { class: 'help', text: `Pal Desktop ${S.info.version} · ${S.chats.length} chats` })
+        h('p', { class: 'help', text: `${appName()} ${S.info.version} · ${S.chats.length} chats` })
       ];
     }
   };
 
   const show = (name) => {
+    runCleanups();
     for (const b of tabBar.children) b.classList.toggle('active', b.dataset.tab === name);
     pane.replaceChildren(...views[name]().filter(Boolean));
   };
@@ -1022,6 +1082,7 @@ function openSettings(tab = 'general') {
     wide: true,
     body: h('div', { class: 'settings' }, tabBar, pane),
     onClose: async () => {
+      runCleanups();
       await api.settings.save(S.settings);
       renderSelectors();
       loadModels();
@@ -1031,6 +1092,95 @@ function openSettings(tab = 'general') {
   const body = el.modalRoot.lastElementChild.querySelector('.modal-body');
   body.style.padding = '0';
   show(tab);
+}
+
+function formatBytes(n) {
+  if (!n) return '';
+  return n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`;
+}
+
+// Settings card for models that run on the phone itself.
+function onDeviceCard(p, changed, bind, field, onCleanup) {
+  const od = api.onDevice;
+  const list = h('div', { class: 'od-list' });
+  const custom = h('input', { class: 'input', placeholder: 'https://huggingface.co/…/model-Q4_K_M.gguf' });
+
+  const draw = async () => {
+    const [catalog, downloaded, downloads] = await Promise.all([od.catalog(), od.list(), od.downloads()]);
+    const have = new Map(downloaded.map((m) => [m.url, m]));
+    const rows = [...catalog];
+    for (const m of downloaded) if (!catalog.some((c) => c.url === m.url)) rows.push({ name: displayModel(m.name), note: 'Custom model', url: m.url, size: m.size });
+    for (const url of Object.keys(downloads)) if (!rows.some((r) => r.url === url)) rows.push({ name: displayModel(url.split('/').pop()), note: 'Custom model', url });
+
+    list.replaceChildren(...rows.map((m) => {
+      const dl = downloads[m.url];
+      const got = have.get(m.url);
+      let right;
+      if (got) {
+        right = h('div', { class: 'od-actions' },
+          h('span', { class: 'status ok', text: '✓ Ready' }),
+          h('button', {
+            class: 'btn danger',
+            text: 'Delete',
+            onclick: async () => {
+              if (!(await confirmBox(`Delete ${m.name} from this phone? You can download it again later.`))) return;
+              await od.remove(m.url);
+              await draw();
+              loadModels();
+            }
+          }));
+      } else if (dl && !dl.error) {
+        const pct = dl.total ? Math.floor((dl.loaded / dl.total) * 100) : 0;
+        right = h('div', { class: 'od-actions' },
+          h('div', { class: 'progress' }, h('div', { class: 'bar', style: `width:${pct}%` })),
+          h('span', { class: 'status', text: dl.total ? `${pct}%` : 'Starting…' }),
+          h('button', { class: 'btn', text: 'Cancel', onclick: () => od.cancel(m.url) }));
+      } else {
+        right = h('div', { class: 'od-actions' },
+          dl && dl.error ? h('span', { class: 'status bad', title: dl.error, text: 'Failed' }) : null,
+          h('button', { class: 'btn primary', text: dl && dl.error ? 'Retry' : 'Download', onclick: () => od.download(m.url) }));
+      }
+      return h('div', { class: 'od-row' },
+        h('div', { class: 'grow' },
+          h('div', { class: 'od-name', text: m.name }),
+          h('div', { class: 'sub', text: [m.note, formatBytes(got ? got.size : m.size)].filter(Boolean).join(' · ') }),
+          dl && dl.error ? h('div', { class: 'sub bad', text: dl.error }) : null),
+        right);
+    }));
+  };
+
+  // Progress events arrive many times a second; redraw at most ~3 times a second.
+  let wasDownloading = 0;
+  let redraw = null;
+  onCleanup(od.onProgress((state) => {
+    const n = Object.keys(state).length;
+    if (n < wasDownloading) loadModels(); // a download finished
+    wasDownloading = n;
+    if (!redraw) redraw = setTimeout(() => { redraw = null; draw(); }, 300);
+  }));
+  onCleanup(() => clearTimeout(redraw));
+  draw();
+
+  const ctx = h('select', { class: 'select' },
+    [2048, 4096, 8192].map((n) => h('option', { value: n, text: `${n} tokens${n === 4096 ? ' (recommended)' : ''}` })));
+  ctx.value = String(p.contextSize || 4096);
+
+  return h('div', { class: 'provider-card' },
+    h('h4', {}, providerLabel('onDevice')),
+    h('p', { class: 'help', text: 'These models run entirely on your phone: private, free and offline. Download one once over Wi-Fi. Smaller models answer faster; bigger ones are smarter.' }),
+    list,
+    field('Add any GGUF model by link', h('div', { class: 'field-row' },
+      custom,
+      h('button', {
+        class: 'btn',
+        text: 'Download',
+        onclick: () => {
+          od.download(custom.value.trim()).catch((err) => toast(errorText(err)));
+          custom.value = '';
+        }
+      })), 'Q4_K_M files between 0.3 and 2 GB work best.'),
+    field('Memory for the conversation (context)', bind(ctx, p, 'contextSize', Number),
+      'Larger remembers more of a long chat but uses more RAM and is slower.'));
 }
 
 function editPal(pal, onSaved) {
@@ -1097,10 +1247,39 @@ function applyTheme() {
   else delete document.documentElement.dataset.theme;
 }
 
+// Narrow screens (phones) show the chat list as a slide-over drawer.
+const narrow = window.matchMedia('(max-width: 700px)');
+
 function toggleSidebar() {
+  if (narrow.matches) {
+    el.app.classList.toggle('drawer-open');
+    return;
+  }
   const collapsed = !el.app.classList.contains('sidebar-collapsed');
   el.app.classList.toggle('sidebar-collapsed', collapsed);
   api.state.save({ sidebarCollapsed: collapsed });
+}
+
+function closeDrawer() {
+  el.app.classList.remove('drawer-open');
+}
+
+// Android back button: close whatever is on top, else leave the app.
+function goBack() {
+  const top = el.modalRoot.lastElementChild;
+  if (top) {
+    top.querySelector('.modal-head .icon-btn').click();
+    return;
+  }
+  if (!el.chatMenu.hidden) {
+    el.chatMenu.hidden = true;
+    return;
+  }
+  if (el.app.classList.contains('drawer-open')) {
+    closeDrawer();
+    return;
+  }
+  if (api.app.exit) api.app.exit();
 }
 
 // ---------------------------------------------------------------------------
@@ -1174,7 +1353,9 @@ function bindEvents() {
     if (action === 'export') exportAll();
     if (action === 'import') importAll();
     if (action === 'toggle-sidebar') toggleSidebar();
+    if (action === 'back') goBack();
   });
+  $('#drawerBackdrop').addEventListener('click', closeDrawer);
 
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 }
@@ -1184,6 +1365,9 @@ function bindEvents() {
 
 async function init() {
   [S.settings, S.info, S.state] = await Promise.all([api.settings.get(), api.app.info(), api.state.get()]);
+  $('#brandName').textContent = appName();
+  if (S.info.mobile) el.search.placeholder = 'Search all chats';
+  document.body.classList.toggle('is-mobile', !!S.info.mobile);
   applyTheme();
   if (S.state.sidebarCollapsed) el.app.classList.add('sidebar-collapsed');
   bindEvents();

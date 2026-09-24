@@ -1,0 +1,48 @@
+name: Android app
+
+on:
+  push:
+    branches: ['main', 'claude/**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      # Optional: your own signing key (see README). Without it the shared
+      # key in android/app is used, which still lets updates install cleanly.
+      PAL_KEYSTORE_BASE64: ${{ secrets.PAL_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:web
+      - run: npx cap sync android
+      - name: Use your own signing key
+        if: env.PAL_KEYSTORE_BASE64 != ''
+        run: |
+          echo "$PAL_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pal.keystore"
+          echo "PAL_KEYSTORE_FILE=$RUNNER_TEMP/pal.keystore" >> "$GITHUB_ENV"
+      - name: Build APK
+        working-directory: android
+        env:
+          PAL_KEYSTORE_PASSWORD: ${{ secrets.PAL_KEYSTORE_PASSWORD }}
+          PAL_KEY_ALIAS: ${{ secrets.PAL_KEY_ALIAS }}
+          PAL_KEY_PASSWORD: ${{ secrets.PAL_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+      - run: cp android/app/build/outputs/apk/release/app-release.apk Pal-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pal-android-apk
+          path: Pal-android.apk
+          if-no-files-found: error
