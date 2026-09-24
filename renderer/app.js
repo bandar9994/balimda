@@ -1180,7 +1180,10 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
         }
       })), 'Q4_K_M files between 0.3 and 2 GB work best.'),
     field('Memory for the conversation (context)', bind(ctx, p, 'contextSize', Number),
-      'Larger remembers more of a long chat but uses more RAM and is slower.'));
+      'Larger remembers more of a long chat but uses more RAM and is slower.'),
+    h('label', { class: 'check' }, bind(h('input', { type: 'checkbox', checked: !!p.useGpu }), p, 'useGpu'),
+      'Use the phone\'s GPU (experimental)'),
+    h('div', { class: 'help', text: 'Can be much faster, but on many phones the GPU gives garbled answers. If replies look like random words, turn this off.' }));
 }
 
 function editPal(pal, onSaved) {

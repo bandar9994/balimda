@@ -54,7 +54,7 @@ export function modelName(url) {
 
 let manager = null;   // Wllama used only for its model cache
 let engine = null;    // Wllama with a model loaded
-let loaded = null;    // { url, ctx }
+let loaded = null;    // { url, ctx, gpu }
 let queue = Promise.resolve();
 const downloads = new Map(); // url -> { loaded, total, controller, error }
 const listeners = new Set();
@@ -149,18 +149,22 @@ async function unload() {
   loaded = null;
 }
 
-async function ensureLoaded(name, ctx) {
+async function ensureLoaded(name, ctx, gpu) {
   const list = await models().getModels();
   const model = list.find((m) => modelName(m.url) === name);
   if (!model) throw new Error(`"${name}" isn't downloaded on this phone. Download it in Settings → Models.`);
-  if (loaded && loaded.url === model.url && loaded.ctx === ctx) return engine;
+  if (loaded && loaded.url === model.url && loaded.ctx === ctx && loaded.gpu === gpu) return engine;
   await unload();
   engine = newWllama();
   // Stream raw text: the UI already understands <think> blocks, and skipping
   // llama.cpp's template-specific output parser avoids failures on models
   // whose chat format it doesn't recognise.
-  await engine.loadModel(model, { n_ctx: ctx, n_parallel: 1, skip_chat_parsing: true });
-  loaded = { url: model.url, ctx };
+  const params = { n_ctx: ctx, n_parallel: 1, skip_chat_parsing: true };
+  // Run on the CPU unless the user opts in: many phone GPUs lack the
+  // precision llama.cpp's WebGPU kernels need and produce garbled text.
+  if (!gpu) params.n_gpu_layers = 0;
+  await engine.loadModel(model, params);
+  loaded = { url: model.url, ctx, gpu };
   return engine;
 }
 
@@ -188,7 +192,7 @@ export const onDevice = {
     return serial(async () => {
       const ctx = Number(cfg.contextSize) || 4096;
       const replyTokens = req.maxTokens > 0 ? req.maxTokens : Math.min(DEFAULT_REPLY_TOKENS, Math.floor(ctx / 2));
-      const w = await ensureLoaded(req.model, ctx);
+      const w = await ensureLoaded(req.model, ctx, !!cfg.useGpu);
       if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
       const history = fitToContext(req.messages, req.system, ctx, replyTokens);

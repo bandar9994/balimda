@@ -59,7 +59,7 @@ const MOBILE_DEFAULTS = {
   defaultModel: { provider: 'onDevice', model: '' },
   historyLimit: 0,
   providers: {
-    onDevice: { enabled: true, contextSize: 4096 },
+    onDevice: { enabled: true, contextSize: 4096, useGpu: false },
     ollama: { enabled: false, baseUrl: 'http://192.168.1.10:11434' },
     openaiCompatible: { enabled: false, baseUrl: 'http://192.168.1.10:1234/v1', apiKey: '' }
   }
