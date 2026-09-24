@@ -1,10 +1,13 @@
-// Persistent on-disk storage for chats, settings and app state.
-// Everything lives as plain JSON under one data directory so it is easy to
-// back up, sync or inspect by hand.
-
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+// Persistent storage for chats, settings and app state.
+// Everything is plain JSON files so it is easy to back up, sync or inspect.
+// The actual file access comes from a backend, so the same logic runs on
+// desktop (Node fs) and mobile (Capacitor Filesystem):
+//
+//   backend.read(name)        -> Promise<string | null>
+//   backend.write(name, text) -> Promise<void>   (should be atomic)
+//   backend.remove(name)      -> Promise<void>   (no error if missing)
+//   backend.list(dir)         -> Promise<string[]> file names in dir
+//   backend.mkdir(dir)        -> Promise<void>
 
 const DEFAULT_SETTINGS = {
   theme: 'system',
@@ -44,8 +47,10 @@ const DEFAULT_SETTINGS = {
   ]
 };
 
+const ID_RE = /^[A-Za-z0-9-]+$/;
+
 function newId() {
-  return crypto.randomUUID();
+  return globalThis.crypto.randomUUID();
 }
 
 // Short one-line preview, without a reasoning model's <think> block.
@@ -75,38 +80,50 @@ function mergeDefaults(defaults, saved) {
 
 class Storage {
   /**
-   * @param {string} dir  data directory
-   * @param {{encrypt?: (s: string) => string, decrypt?: (s: string) => string}} [secrets]
+   * @param backend  file backend (see top of file)
+   * @param [options.secrets]   { encrypt(s), decrypt(s) } for API keys
+   * @param [options.defaults]  platform-specific overrides of DEFAULT_SETTINGS
    */
-  constructor(dir, secrets = {}) {
-    this.dir = dir;
-    this.chatsDir = path.join(dir, 'chats');
-    this.encrypt = secrets.encrypt || ((s) => s);
-    this.decrypt = secrets.decrypt || ((s) => s);
-    fs.mkdirSync(this.chatsDir, { recursive: true });
-    this.index = this._loadIndex();
+  static async open(backend, options = {}) {
+    const storage = new Storage(backend, options);
+    await backend.mkdir('chats');
+    storage.index = await storage._loadIndex();
+    return storage;
   }
 
-  // ---- low level -------------------------------------------------------
+  constructor(backend, { secrets = {}, defaults = {} } = {}) {
+    this.backend = backend;
+    this.encrypt = secrets.encrypt || ((s) => s);
+    this.decrypt = secrets.decrypt || ((s) => s);
+    this.defaults = mergeDefaults(DEFAULT_SETTINGS, defaults);
+    if (Array.isArray(defaults.pals)) this.defaults.pals = defaults.pals;
+    this.index = [];
+    this._queue = Promise.resolve();
+  }
 
-  _readJson(file, fallback) {
+  // Run mutations one at a time so concurrent saves never clobber index.json.
+  _serial(fn) {
+    const run = this._queue.then(fn, fn);
+    this._queue = run.catch(() => {});
+    return run;
+  }
+
+  async _readJson(name, fallback) {
     try {
-      return JSON.parse(fs.readFileSync(file, 'utf8'));
+      const text = await this.backend.read(name);
+      return text == null ? fallback : JSON.parse(text);
     } catch {
       return fallback;
     }
   }
 
-  // Write to a temp file then rename, so a crash never leaves a half-written file.
-  _writeJson(file, data) {
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-    fs.renameSync(tmp, file);
+  _writeJson(name, data) {
+    return this.backend.write(name, JSON.stringify(data, null, 2));
   }
 
   _chatFile(id) {
-    if (!/^[A-Za-z0-9-]+$/.test(String(id))) throw new Error('Invalid chat id');
-    return path.join(this.chatsDir, `${id}.json`);
+    if (!ID_RE.test(String(id))) throw new Error('Invalid chat id');
+    return `chats/${id}.json`;
   }
 
   _meta(chat) {
@@ -124,32 +141,31 @@ class Storage {
     };
   }
 
-  _loadIndex() {
-    const indexFile = path.join(this.dir, 'index.json');
-    const saved = this._readJson(indexFile, null);
+  async _loadIndex() {
+    const saved = await this._readJson('index.json', null);
     if (saved && Array.isArray(saved.chats)) return saved.chats;
     return this.rebuildIndex();
   }
 
   _saveIndex() {
-    this._writeJson(path.join(this.dir, 'index.json'), { version: 1, chats: this.index });
+    return this._writeJson('index.json', { version: 1, chats: this.index });
   }
 
-  rebuildIndex() {
+  async rebuildIndex() {
     const chats = [];
-    for (const f of fs.readdirSync(this.chatsDir)) {
+    for (const f of await this.backend.list('chats')) {
       if (!f.endsWith('.json')) continue;
-      const chat = this._readJson(path.join(this.chatsDir, f), null);
+      const chat = await this._readJson(`chats/${f}`, null);
       if (chat && chat.id) chats.push(this._meta(chat));
     }
     this.index = chats;
-    this._saveIndex();
+    await this._saveIndex();
     return chats;
   }
 
   // ---- chats -----------------------------------------------------------
 
-  listChats() {
+  async listChats() {
     return [...this.index].sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
       return (b.updatedAt || 0) - (a.updatedAt || 0);
@@ -162,7 +178,7 @@ class Storage {
 
   createChat(init = {}) {
     const now = Date.now();
-    const chat = {
+    return this.saveChat({
       id: newId(),
       title: init.title || 'New chat',
       createdAt: now,
@@ -172,45 +188,57 @@ class Storage {
       model: init.model || null,
       systemPrompt: init.systemPrompt || '',
       messages: []
-    };
-    return this.saveChat(chat);
+    });
   }
 
   saveChat(chat) {
-    if (!chat || !chat.id) throw new Error('Chat must have an id');
-    chat.updatedAt = chat.updatedAt || Date.now();
-    chat.createdAt = chat.createdAt || chat.updatedAt;
-    this._writeJson(this._chatFile(chat.id), chat);
-    const meta = this._meta(chat);
-    const i = this.index.findIndex((c) => c.id === chat.id);
-    if (i >= 0) this.index[i] = meta;
-    else this.index.push(meta);
-    this._saveIndex();
-    return chat;
+    if (!chat || !chat.id) return Promise.reject(new Error('Chat must have an id'));
+    let file;
+    try {
+      file = this._chatFile(chat.id);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    return this._serial(async () => {
+      chat.updatedAt = chat.updatedAt || Date.now();
+      chat.createdAt = chat.createdAt || chat.updatedAt;
+      await this._writeJson(file, chat);
+      const meta = this._meta(chat);
+      const i = this.index.findIndex((c) => c.id === chat.id);
+      if (i >= 0) this.index[i] = meta;
+      else this.index.push(meta);
+      await this._saveIndex();
+      return chat;
+    });
   }
 
   deleteChat(id) {
+    let file;
     try {
-      fs.unlinkSync(this._chatFile(id));
+      file = this._chatFile(id);
     } catch (err) {
-      if (err.code !== 'ENOENT') throw err;
+      return Promise.reject(err);
     }
-    this.index = this.index.filter((c) => c.id !== id);
-    this._saveIndex();
-    return true;
+    return this._serial(async () => {
+      await this.backend.remove(file);
+      this.index = this.index.filter((c) => c.id !== id);
+      await this._saveIndex();
+      return true;
+    });
   }
 
   // Full-text search over titles and message contents.
-  searchChats(query) {
+  async searchChats(query) {
     const q = String(query || '').trim().toLowerCase();
-    if (!q) return this.listChats();
+    const all = await this.listChats();
+    if (!q) return all;
     const hits = [];
-    for (const meta of this.listChats()) {
+    for (const meta of all) {
       if (meta.title.toLowerCase().includes(q)) {
         hits.push(meta);
         continue;
       }
-      const chat = this.getChat(meta.id);
+      const chat = await this.getChat(meta.id);
       const msg = chat && chat.messages.find((m) => String(m.content || '').toLowerCase().includes(q));
       if (msg) {
         const text = String(msg.content);
@@ -224,23 +252,23 @@ class Storage {
 
   // ---- backup ----------------------------------------------------------
 
-  exportAll() {
-    return {
-      app: 'pal-desktop',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      chats: this.index.map((m) => this.getChat(m.id)).filter(Boolean)
-    };
+  async exportAll() {
+    const chats = [];
+    for (const m of this.index) {
+      const chat = await this.getChat(m.id);
+      if (chat) chats.push(chat);
+    }
+    return { app: 'pal', version: 1, exportedAt: new Date().toISOString(), chats };
   }
 
-  importAll(data) {
+  async importAll(data) {
     const chats = Array.isArray(data) ? data : data && data.chats;
-    if (!Array.isArray(chats)) throw new Error('Not a Pal Desktop backup file');
+    if (!Array.isArray(chats)) throw new Error('Not a Pal backup file');
     let imported = 0;
     for (const chat of chats) {
       if (!chat || !Array.isArray(chat.messages)) continue;
-      if (!chat.id || !/^[A-Za-z0-9-]+$/.test(chat.id)) chat.id = newId();
-      this.saveChat(chat);
+      if (!chat.id || !ID_RE.test(chat.id)) chat.id = newId();
+      await this.saveChat(chat);
       imported++;
     }
     return imported;
@@ -248,9 +276,9 @@ class Storage {
 
   // ---- settings & state ------------------------------------------------
 
-  getSettings() {
-    const saved = this._readJson(path.join(this.dir, 'settings.json'), {});
-    const settings = mergeDefaults(DEFAULT_SETTINGS, saved);
+  async getSettings() {
+    const saved = await this._readJson('settings.json', {});
+    const settings = mergeDefaults(this.defaults, saved);
     // Keep the user's own pal list rather than merging it with defaults.
     if (Array.isArray(saved.pals)) settings.pals = saved.pals;
     for (const p of Object.values(settings.providers)) {
@@ -259,24 +287,26 @@ class Storage {
     return settings;
   }
 
-  saveSettings(settings) {
+  async saveSettings(settings) {
     const copy = structuredClone(settings);
     for (const p of Object.values(copy.providers || {})) {
       if (p.apiKey) p.apiKey = this.encrypt(p.apiKey);
     }
-    this._writeJson(path.join(this.dir, 'settings.json'), copy);
+    await this._serial(() => this._writeJson('settings.json', copy));
     return this.getSettings();
   }
 
   getState() {
-    return this._readJson(path.join(this.dir, 'state.json'), {});
+    return this._readJson('state.json', {});
   }
 
   saveState(patch) {
-    const state = { ...this.getState(), ...patch };
-    this._writeJson(path.join(this.dir, 'state.json'), state);
-    return state;
+    return this._serial(async () => {
+      const state = { ...(await this.getState()), ...patch };
+      await this._writeJson('state.json', state);
+      return state;
+    });
   }
 }
 
-module.exports = { Storage, DEFAULT_SETTINGS, mergeDefaults };
+module.exports = { Storage, DEFAULT_SETTINGS, mergeDefaults, previewText };

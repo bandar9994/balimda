@@ -29,20 +29,28 @@ async function httpError(res) {
   return new Error(`HTTP ${res.status}${detail ? `: ${String(detail).slice(0, 500)}` : ''}`);
 }
 
-// Read a fetch body line by line.
+// Read a fetch body line by line. Uses getReader() so it works in Node,
+// Chromium and Safari/WebKit alike.
 async function* readLines(body) {
+  const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
-  for await (const chunk of body) {
-    buf += decoder.decode(chunk, { stream: true });
-    let nl;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      yield buf.slice(0, nl).replace(/\r$/, '');
-      buf = buf.slice(nl + 1);
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        yield buf.slice(0, nl).replace(/\r$/, '');
+        buf = buf.slice(nl + 1);
+      }
     }
+    buf += decoder.decode();
+    if (buf) yield buf;
+  } finally {
+    reader.releaseLock();
   }
-  buf += decoder.decode();
-  if (buf) yield buf;
 }
 
 function withSystem(system, messages) {
@@ -153,7 +161,8 @@ function openaiLike({ sendSampling }) {
 const anthropic = {
   client(cfg) {
     if (!cfg.apiKey) throw new Error('Add your Anthropic API key in Settings → Providers.');
-    return new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseUrl || undefined });
+    // The mobile app calls the API straight from the app's web view.
+    return new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseUrl || undefined, dangerouslyAllowBrowser: true });
   },
 
   async listModels(cfg) {

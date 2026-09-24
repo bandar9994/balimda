@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, Menu, shell, dialog, safeStorage, nativeThe
 const fs = require('fs');
 const path = require('path');
 const { Storage } = require('./src/storage');
+const { nodeFsBackend } = require('./src/backends/node-fs');
 const { PROVIDERS, normalizeMessages } = require('./src/providers');
 
 // Allow a custom data folder (e.g. a synced folder) via PAL_DATA_DIR.
@@ -52,8 +53,8 @@ function boundsAreVisible(bounds) {
     bounds.y < a.y + a.height && bounds.y + bounds.height > a.y);
 }
 
-function createWindow() {
-  const state = storage.getState();
+async function createWindow() {
+  const state = await storage.getState();
   const saved = state.windowBounds;
   const bounds = saved && boundsAreVisible(saved) ? saved : { width: 1200, height: 800 };
 
@@ -82,7 +83,7 @@ function createWindow() {
   const saveBounds = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     const maximized = mainWindow.isMaximized();
-    storage.saveState(maximized ? { maximized } : { maximized, windowBounds: mainWindow.getBounds() });
+    storage.saveState(maximized ? { maximized } : { maximized, windowBounds: mainWindow.getBounds() }).catch(() => {});
   };
   let boundsTimer;
   const scheduleSave = () => {
@@ -166,6 +167,8 @@ function registerIpc() {
     version: app.getVersion(),
     dataDir,
     platform: process.platform,
+    appName: 'Pal Desktop',
+    mobile: false,
     providers: Object.fromEntries(Object.entries(PROVIDERS).map(([k, v]) => [k, v.label]))
   }));
   ipcMain.handle('app:openDataDir', () => shell.openPath(dataDir));
@@ -178,7 +181,7 @@ function registerIpc() {
       filters: [{ name: 'JSON', extensions: ['json'] }]
     });
     if (canceled || !filePath) return null;
-    const data = storage.exportAll();
+    const data = await storage.exportAll();
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
     return { filePath, count: data.chats.length };
   });
@@ -191,11 +194,11 @@ function registerIpc() {
     });
     if (canceled || !filePaths.length) return null;
     const data = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
-    return { count: storage.importAll(data) };
+    return { count: await storage.importAll(data) };
   });
 
   ipcMain.handle('chat:exportMarkdown', async (_e, id) => {
-    const chat = storage.getChat(id);
+    const chat = await storage.getChat(id);
     if (!chat) return null;
     const safe = chat.title.replace(/[^\w\- ]+/g, '').trim() || 'chat';
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
@@ -215,7 +218,7 @@ function registerIpc() {
   ipcMain.handle('ai:models', async (_e, providerId) => {
     const provider = PROVIDERS[providerId];
     if (!provider) throw new Error(`Unknown provider: ${providerId}`);
-    const cfg = storage.getSettings().providers[providerId] || {};
+    const cfg = (await storage.getSettings()).providers[providerId] || {};
     return provider.impl.listModels(cfg);
   });
 
@@ -224,7 +227,7 @@ function registerIpc() {
     const { requestId, provider: providerId } = req;
     const provider = PROVIDERS[providerId];
     if (!provider) throw new Error(`Unknown provider: ${providerId}`);
-    const cfg = storage.getSettings().providers[providerId] || {};
+    const cfg = (await storage.getSettings()).providers[providerId] || {};
     const controller = new AbortController();
     activeRequests.set(requestId, controller);
     try {
@@ -256,11 +259,11 @@ function registerIpc() {
   });
 }
 
-app.whenReady().then(() => {
-  storage = new Storage(dataDir, secrets());
+app.whenReady().then(async () => {
+  storage = await Storage.open(nodeFsBackend(dataDir), { secrets: secrets() });
   registerIpc();
   buildMenu();
-  createWindow();
+  await createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -12,7 +12,7 @@
   <div id="app">
     <aside id="sidebar">
       <div class="sidebar-head">
-        <div class="brand"><span class="brand-mark">◆</span> Pal Desktop</div>
+        <div class="brand"><span class="brand-mark">◆</span> <span id="brandName">Pal</span></div>
         <button id="newChatBtn" class="btn primary block" title="New chat (Ctrl+N)">＋ New chat</button>
         <input id="searchInput" class="input" type="search" placeholder="Search all chats (Ctrl+K)" />
       </div>
@@ -21,6 +21,8 @@
         <button id="settingsBtn" class="btn ghost block" title="Settings (Ctrl+,)">⚙ Settings</button>
       </div>
     </aside>
+
+    <div id="drawerBackdrop"></div>
 
     <main id="main">
       <header id="topbar">

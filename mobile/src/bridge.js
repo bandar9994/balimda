@@ -1,0 +1,254 @@
+// Mobile (Capacitor) implementation of the `window.pal` API that the shared
+// UI in renderer/app.js talks to. On desktop the same API comes from
+// preload.js + main.js; here everything runs inside the app's web view.
+
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { App } from '@capacitor/app';
+import { Share } from '@capacitor/share';
+import { Storage } from '../../src/storage.js';
+import { PROVIDERS, normalizeMessages } from '../../src/providers.js';
+import * as local from './on-device.js';
+
+const ROOT = 'pal-data';
+const isNative = Capacitor.isNativePlatform();
+
+// ---- file storage in the app's private data folder ------------------------
+
+const fsBackend = {
+  async read(name) {
+    try {
+      const r = await Filesystem.readFile({ path: `${ROOT}/${name}`, directory: Directory.Data, encoding: Encoding.UTF8 });
+      return typeof r.data === 'string' ? r.data : await r.data.text();
+    } catch {
+      return null;
+    }
+  },
+  // Write a temp file, then rename over the real one, so a crash can't corrupt it.
+  async write(name, text) {
+    const path = `${ROOT}/${name}`;
+    const tmp = `${path}.tmp`;
+    await Filesystem.writeFile({ path: tmp, data: text, directory: Directory.Data, encoding: Encoding.UTF8, recursive: true });
+    try {
+      await Filesystem.rename({ from: tmp, to: path, directory: Directory.Data, toDirectory: Directory.Data });
+    } catch {
+      await Filesystem.writeFile({ path, data: text, directory: Directory.Data, encoding: Encoding.UTF8, recursive: true });
+      await Filesystem.deleteFile({ path: tmp, directory: Directory.Data }).catch(() => {});
+    }
+  },
+  async remove(name) {
+    await Filesystem.deleteFile({ path: `${ROOT}/${name}`, directory: Directory.Data }).catch(() => {});
+  },
+  async list(dir) {
+    try {
+      const r = await Filesystem.readdir({ path: `${ROOT}/${dir}`, directory: Directory.Data });
+      return r.files.map((f) => (typeof f === 'string' ? f : f.name));
+    } catch {
+      return [];
+    }
+  },
+  async mkdir(dir) {
+    await Filesystem.mkdir({ path: `${ROOT}/${dir}`, directory: Directory.Data, recursive: true }).catch(() => {});
+  }
+};
+
+// Phones can't reach a PC's "localhost", so local servers start switched off
+// and on-device models are the default.
+const MOBILE_DEFAULTS = {
+  sendOnEnter: false,
+  defaultModel: { provider: 'onDevice', model: '' },
+  historyLimit: 0,
+  providers: {
+    onDevice: { enabled: true, contextSize: 4096 },
+    ollama: { enabled: false, baseUrl: 'http://192.168.1.10:11434' },
+    openaiCompatible: { enabled: false, baseUrl: 'http://192.168.1.10:1234/v1', apiKey: '' }
+  }
+};
+
+const ready = Storage.open(fsBackend, { defaults: MOBILE_DEFAULTS });
+
+const providers = {
+  onDevice: { label: 'On this device (offline)', impl: local.onDevice },
+  ...PROVIDERS
+};
+
+// ---- helpers ---------------------------------------------------------------
+
+async function shareFile(fileName, text, mime) {
+  if (!isNative) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+    a.download = fileName;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    return { filePath: fileName };
+  }
+  const written = await Filesystem.writeFile({
+    path: fileName,
+    data: text,
+    directory: Directory.Cache,
+    encoding: Encoding.UTF8
+  });
+  await Share.share({ title: fileName, files: [written.uri] });
+  return { filePath: fileName };
+}
+
+function pickTextFile(accept) {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.addEventListener('change', async () => {
+      const file = input.files && input.files[0];
+      resolve(file ? await file.text() : null);
+    });
+    input.addEventListener('cancel', () => resolve(null));
+    input.click();
+  });
+}
+
+function chatToMarkdown(chat) {
+  const lines = [`# ${chat.title}`, ''];
+  for (const m of chat.messages) lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', m.content || '', '');
+  return lines.join('\n');
+}
+
+const safeName = (s) => s.replace(/[^\w\- ]+/g, '').trim() || 'chat';
+
+// ---- the API ---------------------------------------------------------------
+
+const active = new Map();
+const aiListeners = new Set();
+const menuListeners = new Set();
+
+const withStorage = (fn) => async (...args) => fn(await ready, ...args);
+
+window.pal = {
+  chats: {
+    list: withStorage((s) => s.listChats()),
+    search: withStorage((s, q) => s.searchChats(q)),
+    get: withStorage((s, id) => s.getChat(id)),
+    create: withStorage((s, init) => s.createChat(init)),
+    save: withStorage((s, chat) => s.saveChat(structuredClone(chat))),
+    remove: withStorage((s, id) => s.deleteChat(id)),
+    exportMarkdown: withStorage(async (s, id) => {
+      const chat = await s.getChat(id);
+      return chat ? shareFile(`${safeName(chat.title)}.md`, chatToMarkdown(chat), 'text/markdown') : null;
+    })
+  },
+  settings: {
+    get: withStorage((s) => s.getSettings()),
+    save: withStorage((s, settings) => s.saveSettings(settings))
+  },
+  state: {
+    get: withStorage((s) => s.getState()),
+    save: withStorage((s, patch) => s.saveState(patch))
+  },
+  backup: {
+    exportAll: withStorage(async (s) => {
+      const data = await s.exportAll();
+      const stamp = new Date().toISOString().slice(0, 10);
+      await shareFile(`pal-backup-${stamp}.json`, JSON.stringify(data, null, 2), 'application/json');
+      return { count: data.chats.length };
+    }),
+    importAll: withStorage(async (s) => {
+      const text = await pickTextFile('application/json,.json');
+      if (!text) return null;
+      return { count: await s.importAll(JSON.parse(text)) };
+    })
+  },
+  app: {
+    async info() {
+      let version = '1.0.0';
+      if (isNative) {
+        try {
+          version = (await App.getInfo()).version;
+        } catch {
+          // keep default
+        }
+      }
+      return {
+        version,
+        dataDir: 'Private app storage on this phone',
+        platform: Capacitor.getPlatform(),
+        appName: 'Pal',
+        mobile: true,
+        onDevice: true,
+        providers: Object.fromEntries(Object.entries(providers).map(([k, v]) => [k, v.label]))
+      };
+    },
+    async openDataDir() {},
+    async exit() {
+      if (isNative) await App.minimizeApp();
+    }
+  },
+  ai: {
+    async models(providerId) {
+      const provider = providers[providerId];
+      if (!provider) throw new Error(`Unknown provider: ${providerId}`);
+      const cfg = (await (await ready).getSettings()).providers[providerId] || {};
+      return provider.impl.listModels(cfg);
+    },
+    async chat(req) {
+      const provider = providers[req.provider];
+      if (!provider) return { ok: false, error: `Unknown provider: ${req.provider}` };
+      const cfg = (await (await ready).getSettings()).providers[req.provider] || {};
+      const controller = new AbortController();
+      active.set(req.requestId, controller);
+      try {
+        const result = await provider.impl.streamChat(
+          cfg,
+          {
+            model: req.model,
+            system: req.system,
+            messages: normalizeMessages(req.messages),
+            temperature: req.temperature,
+            maxTokens: req.maxTokens
+          },
+          (text) => {
+            for (const cb of aiListeners) cb({ requestId: req.requestId, type: 'delta', text });
+          },
+          controller.signal
+        );
+        return { ok: true, ...result };
+      } catch (err) {
+        if (controller.signal.aborted) return { ok: true, aborted: true };
+        let message = err.message || String(err);
+        if (err instanceof TypeError && /fetch|network|load failed/i.test(message)) {
+          message = `Couldn't reach the server (${message}). Check the address in Settings, and that the server allows connections from other devices.`;
+        }
+        return { ok: false, error: message };
+      } finally {
+        active.delete(req.requestId);
+      }
+    },
+    async abort(requestId) {
+      const c = active.get(requestId);
+      if (c) c.abort();
+      return !!c;
+    },
+    onEvent(cb) {
+      aiListeners.add(cb);
+      return () => aiListeners.delete(cb);
+    }
+  },
+  onDevice: {
+    catalog: async () => local.CATALOG,
+    list: () => local.listDownloaded(),
+    download: (url) => local.download(url),
+    cancel: async (url) => local.cancelDownload(url),
+    remove: (url) => local.remove(url),
+    downloads: async () => local.downloadState(),
+    modelName: (url) => local.modelName(url),
+    onProgress: (cb) => local.onDownloadProgress(cb)
+  },
+  onMenu(cb) {
+    menuListeners.add(cb);
+  }
+};
+
+if (isNative) {
+  App.addListener('backButton', () => {
+    for (const cb of menuListeners) cb('back');
+  });
+}

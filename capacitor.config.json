@@ -1,0 +1,16 @@
+{
+  "appId": "com.bandar9994.pal",
+  "appName": "Pal",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css"
+    }
+  }
+}

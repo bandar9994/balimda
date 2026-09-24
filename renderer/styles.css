@@ -370,6 +370,7 @@ textarea.input { resize: vertical; }
   inset: 0;
   background: rgba(0, 0, 0, 0.4);
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   z-index: 50;
   padding: 16px;
@@ -380,6 +381,7 @@ textarea.input { resize: vertical; }
   border-radius: 14px;
   box-shadow: var(--shadow);
   width: min(560px, 100%);
+  min-width: 0;
   max-height: 88vh;
   display: flex;
   flex-direction: column;
@@ -394,11 +396,13 @@ textarea.input { resize: vertical; }
 .settings-tabs { width: 160px; border-right: 1px solid var(--border); padding: 10px 8px; display: grid; align-content: start; gap: 2px; }
 .settings-tabs button { border: 0; background: transparent; text-align: left; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
 .settings-tabs button.active { background: var(--bg-active); font-weight: 600; }
-.settings-pane { flex: 1; padding: 16px 20px; overflow-y: auto; }
+.settings-pane { flex: 1; min-width: 0; padding: 16px 20px; overflow-y: auto; }
 .field { margin-bottom: 16px; }
 .field label { display: block; font-weight: 600; margin-bottom: 4px; }
 .field .help { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
-.field-row { display: flex; gap: 8px; align-items: center; }
+.field-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.field-row .input { flex: 1; min-width: 0; width: auto; }
+.field-row .btn { flex-shrink: 0; }
 .check { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; cursor: pointer; }
 .provider-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; }
 .provider-card h4 { margin: 0 0 8px; display: flex; justify-content: space-between; align-items: center; }
@@ -429,3 +433,101 @@ textarea.input { resize: vertical; }
   #palSelect { display: none; }
   #modelSelect { max-width: 170px; }
 }
+
+/* ---------- on-device models ---------- */
+
+.od-list { display: grid; gap: 8px; margin: 10px 0 16px; }
+.od-row { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.od-row .grow { flex: 1; min-width: 0; }
+.od-name { font-weight: 600; }
+.od-row .sub { font-size: 12px; color: var(--text-dim); }
+.od-row .sub.bad { color: var(--danger); overflow-wrap: anywhere; }
+.od-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.progress { width: 80px; height: 6px; border-radius: 3px; background: var(--bg-hover); overflow: hidden; }
+.progress .bar { height: 100%; background: var(--accent); transition: width 0.2s; }
+
+/* ---------- touch screens ---------- */
+
+@media (hover: none) {
+  .msg .actions { opacity: 1; }
+  .chat-item .ci-del { visibility: visible; }
+  .copy-code { opacity: 1; }
+}
+
+#drawerBackdrop { display: none; }
+
+/* ---------- phones ---------- */
+
+@media (max-width: 700px) {
+  html, body { font-size: 15px; }
+  #app { height: 100dvh; }
+  body {
+    padding: var(--safe-area-inset-top, env(safe-area-inset-top)) var(--safe-area-inset-right, env(safe-area-inset-right))
+      0 var(--safe-area-inset-left, env(safe-area-inset-left));
+  }
+
+  #sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    width: min(84vw, 320px);
+    margin-left: 0 !important;
+    transform: translateX(-102%);
+    transition: transform 0.2s ease;
+    padding-top: var(--safe-area-inset-top, env(safe-area-inset-top));
+    padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom));
+    box-shadow: var(--shadow);
+  }
+  #app.drawer-open #sidebar { transform: none; }
+  #app.drawer-open #drawerBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    background: rgba(0, 0, 0, 0.4);
+  }
+  .chat-item { padding: 10px 8px; }
+
+  #topbar { padding: 8px 8px; gap: 4px; min-height: 52px; }
+  #chatTitle { font-size: 16px; }
+  #palSelect, #refreshModelsBtn { display: none; }
+  #modelSelect { max-width: 42vw; font-size: 13px; }
+  .icon-btn { width: 40px; height: 40px; font-size: 18px; }
+
+  #messages { padding: 16px 12px 8px; }
+  .msg { gap: 8px; }
+  .msg .avatar { width: 26px; height: 26px; font-size: 14px; }
+  .msg.user .avatar { font-size: 11px; }
+  .msg .actions button { padding: 6px 10px; }
+
+  .welcome { margin-top: 3vh; }
+  .welcome h2 { font-size: 22px; }
+  .pal-cards { grid-template-columns: 1fr; }
+
+  #composer { padding: 6px 8px calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom))); }
+  #input { font-size: 16px; }
+  .hint { display: none; }
+
+  .modal-backdrop { padding: 0; align-items: end; }
+  .modal, .modal.wide { width: 100%; max-height: 92dvh; border-radius: 16px 16px 0 0; }
+  .modal.wide { height: 92dvh; }
+  .settings { flex-direction: column; }
+  .settings-tabs {
+    width: auto;
+    display: flex;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 6px;
+  }
+  .settings-tabs button { white-space: nowrap; }
+  .settings-pane { padding: 14px; }
+  .od-row { flex-wrap: wrap; }
+  .od-actions { width: 100%; justify-content: flex-end; }
+  .progress { flex: 1; }
+  .menu { right: 0; }
+  #toast { bottom: 110px; }
+}
+.msg .msg-notice { margin-top: 8px; font-size: 12px; color: var(--text-dim); font-style: italic; }
