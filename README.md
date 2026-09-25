@@ -19,7 +19,7 @@ The desktop app (Electron) and the mobile app (Capacitor) share the same interfa
 
 ### Install
 
-1. On your phone, open https://github.com/bandar9994/ai/releases/download/android-latest/Balimda-android.apk. This link always has the newest build. While the repository is private, you must be signed in to GitHub in that browser. (Each build is also attached to its run under **Actions → Android app → Artifacts**.)
+1. On your phone, open https://github.com/bandar9994/balimda/releases/download/android-latest/Balimda-android.apk. This link always has the newest build. While the repository is private, you must be signed in to GitHub in that browser. (Each build is also attached to its run under **Actions → Android app → Artifacts**.)
 2. Copy the APK to your phone (or download it there) and open it. Android will ask you to allow installing apps from that source; allow it.
 3. Open **Balimda**.
 
