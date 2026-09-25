@@ -1,3 +1,7 @@
+// Balimda — © 2026 Bandar. All rights reserved.
+// Licensed under the Balimda License (see LICENSE): non-commercial use only;
+// keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+
 // Mobile (Capacitor) implementation of the `window.balimda` API that the shared
 // UI in renderer/app.js talks to. On desktop the same API comes from
 // preload.js + main.js; here everything runs inside the app's web view.
@@ -187,12 +191,18 @@ window.balimda = {
         dataDir: 'Private app storage on this phone',
         platform: Capacitor.getPlatform(),
         appName: 'Balimda',
+        icon: 'icon.png',
         mobile: true,
         onDevice: true,
         providers: Object.fromEntries(Object.entries(providers).map(([k, v]) => [k, v.label]))
       };
     },
     async openDataDir() {},
+    // LICENSE / THIRD-PARTY-NOTICES.md, copied next to the app by build-web.
+    async legal(which) {
+      const res = await fetch(which === 'notices' ? 'THIRD-PARTY-NOTICES.md' : 'LICENSE.txt');
+      return res.text();
+    },
     async exit() {
       if (isNative) await App.minimizeApp();
     }

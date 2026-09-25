@@ -1,3 +1,7 @@
+// Balimda — © 2026 Bandar. All rights reserved.
+// Licensed under the Balimda License (see LICENSE): non-commercial use only;
+// keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+
 // JNI bridge between Balimda (com.bandar9994.balimda.LlamaEngine) and llama.cpp.
 //
 // One engine = one loaded model + context. Chats are formatted with the

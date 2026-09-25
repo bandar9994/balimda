@@ -1,3 +1,7 @@
+// Balimda — © 2026 Bandar. All rights reserved.
+// Licensed under the Balimda License (see LICENSE): non-commercial use only;
+// keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+
 /* global marked, DOMPurify */
 'use strict';
 
@@ -90,6 +94,11 @@ function parseModelKey(key) {
 function displayModel(name) {
   return String(name).replace(/\.gguf$/i, '');
 }
+
+// Ownership and license, shown on the About page. See LICENSE.
+const AUTHOR = 'Bandar';
+const PROJECT_URL = 'https://github.com/bandar9994/balimda';
+const COPYRIGHT = `© 2026 ${AUTHOR}. All rights reserved.`;
 
 function appName() {
   return (S.info && S.info.appName) || 'Balimda';
@@ -925,7 +934,8 @@ function openSettings(tab = 'general') {
     ['providers', 'Models & providers'],
     ['assistants', 'Assistants'],
     ['memory', 'Memory'],
-    ['data', 'Data & backup']
+    ['data', 'Data & backup'],
+    ['about', 'About']
   ];
   const tabBar = h('div', { class: 'settings-tabs' });
   let cleanups = [];
@@ -1088,6 +1098,35 @@ function openSettings(tab = 'general') {
           h('button', { class: 'btn', text: 'Import chats…', onclick: importAll })),
         'Export makes a single JSON file with every chat. Importing merges chats into this app.'),
         h('p', { class: 'help', text: `${appName()} ${S.info.version} · ${S.chats.length} chats` })
+      ];
+    },
+
+    about() {
+      const showLegal = async (which, title) => {
+        let text;
+        try {
+          text = await api.app.legal(which);
+        } catch (err) {
+          text = `Couldn't open this file: ${errorText(err)}`;
+        }
+        openModal({ title, wide: true, body: h('pre', { class: 'legal', text }) });
+      };
+      return [
+        h('div', { class: 'about-head' },
+          S.info.icon ? h('img', { class: 'about-icon', src: S.info.icon, alt: '' }) : null,
+          h('div', {},
+            h('div', { class: 'about-name', text: appName() }),
+            h('div', { class: 'help', text: `Version ${S.info.version}` }))),
+        h('p', { class: 'about-by' }, 'Created by ', h('strong', { text: AUTHOR })),
+        h('p', { class: 'help', text: COPYRIGHT }),
+        h('p', { text: 'Balimda is a private AI chat app that remembers every chat. It runs models on your device, on your own computer, or in the cloud. Your chats stay on your device.' }),
+        field('License', h('div', {},
+          h('p', { class: 'help', text: 'Free for personal, non-commercial use under the Balimda License. You may share or change it only if it keeps the Balimda name and the "Balimda by Bandar" credit. It may not be rebranded or used commercially without written permission from Bandar.' }),
+          h('div', { class: 'field-row' },
+            h('button', { class: 'btn', text: 'Read the license', onclick: () => showLegal('license', 'Balimda License') }),
+            h('button', { class: 'btn', text: 'Open-source credits', onclick: () => showLegal('notices', 'Third-party notices') })))),
+        field('Project', h('a', { href: PROJECT_URL, target: '_blank', rel: 'noopener', text: PROJECT_URL })),
+        h('p', { class: 'help', text: 'Built with llama.cpp, wllama, Electron, Capacitor, marked and DOMPurify. AI models belong to their creators and have their own licenses.' })
       ];
     }
   };
@@ -1355,6 +1394,7 @@ function goBack() {
 function bindEvents() {
   $('#newChatBtn').addEventListener('click', newChat);
   $('#settingsBtn').addEventListener('click', () => openSettings());
+  $('#creditBtn').addEventListener('click', () => openSettings('about'));
   $('#toggleSidebarBtn').addEventListener('click', toggleSidebar);
   $('#refreshModelsBtn').addEventListener('click', async () => { await loadModels(); toast('Model list refreshed'); });
   el.title.addEventListener('click', renameChat);

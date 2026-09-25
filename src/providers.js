@@ -1,3 +1,7 @@
+// Balimda — © 2026 Bandar. All rights reserved.
+// Licensed under the Balimda License (see LICENSE): non-commercial use only;
+// keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+
 // Model providers. Every provider exposes:
 //   listModels(config)                          -> Promise<string[]>
 //   streamChat(config, request, onDelta, signal) -> Promise<{ stopReason, text }>

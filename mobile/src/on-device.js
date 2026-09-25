@@ -1,3 +1,7 @@
+// Balimda — © 2026 Bandar. All rights reserved.
+// Licensed under the Balimda License (see LICENSE): non-commercial use only;
+// keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+
 // On-device models: llama.cpp compiled to WebAssembly (wllama), so chats work
 // offline and never leave the phone. Models are GGUF files downloaded once
 // and kept in the app's private storage.

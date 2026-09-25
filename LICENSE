@@ -1,0 +1,96 @@
+Balimda License
+Version 1.0
+
+Copyright (c) 2026 Bandar (https://github.com/bandar9994). All rights reserved.
+
+"Balimda" (the name, the logo and the app icon) is the brand of Bandar.
+
+This license applies to the Balimda software: its source code, the apps
+built from it, and its documentation (together, "the Software"). By using,
+copying, changing or sharing the Software you agree to these terms.
+
+
+1. What you may do
+
+   You may, free of charge and for NON-COMMERCIAL purposes only:
+   a) use the Software;
+   b) read and study its source code;
+   c) change the Software (fix bugs, add features, translate it); and
+   d) share copies of the Software, changed or unchanged,
+   as long as you follow every condition in sections 2 to 4.
+
+
+2. Credit to the author (attribution)
+
+   Every copy you share, changed or unchanged, and every app or
+   project built from the Software must:
+   a) keep this LICENSE file, and all copyright and license notices in
+      the source files, exactly as they are;
+   b) clearly show "Balimda by Bandar" and a link to
+      https://github.com/bandar9994/balimda in the app's About or credits
+      screen, and in the README, description or store listing of the
+      project; and
+   c) if you changed the Software, say so clearly (for example
+      "Based on Balimda by Bandar, modified by <your name>"), so nobody
+      thinks your changes were made by the author.
+
+
+3. No rebranding
+
+   a) Any copy or changed version must keep the name "Balimda" and the
+      Balimda logo and icon. You may not rename it, remove the brand, or
+      publish it under another name, logo or author.
+   b) You may not remove, hide or change the "Balimda by Bandar" credit
+      or the About screen, or suggest that anyone other than Bandar
+      created Balimda.
+   c) You may not use the Balimda name or logo for any other product,
+      or in a way that suggests Bandar endorses your version, without
+      Bandar's written permission.
+
+
+4. No commercial use
+
+   You may not use the Software, or any changed version or part of it,
+   for any commercial purpose without a separate written license from
+   Bandar. Commercial purposes include, for example:
+   a) selling the Software or a changed version, or charging for
+      downloading, installing or using it;
+   b) including it in a product or service that is sold or paid for;
+   c) showing ads in it or collecting fees or subscriptions through it;
+   d) using it to provide paid services to others; and
+   e) publishing it on any app store, marketplace or website in a way
+      that earns money for anyone other than Bandar.
+   To ask for a commercial license, contact Bandar through
+   https://github.com/bandar9994.
+
+
+5. Other software included
+
+   Balimda includes and uses software made by others (for example
+   llama.cpp, wllama, Electron, Capacitor, marked and DOMPurify). Those
+   parts remain under their own licenses; see THIRD-PARTY-NOTICES.md.
+   Nothing in this license limits the rights those licenses give you
+   for those parts. AI models that you download inside Balimda belong
+   to their creators and are covered by their own licenses.
+
+
+6. Ending this license
+
+   If you break any of these terms, your rights under this license end
+   automatically. They come back only if Bandar confirms it in writing.
+
+
+7. No warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
+   IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+   DEALINGS IN THE SOFTWARE. Answers produced by AI models can be wrong;
+   you use them at your own risk.
+
+
+Anything not clearly allowed by this license is not allowed without
+Bandar's written permission.

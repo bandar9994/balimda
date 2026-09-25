@@ -4,8 +4,11 @@
   "version": "1.0.0",
   "description": "Balimda: a private AI chat app for desktop and mobile that remembers every chat. Runs models on your device (with GPU acceleration on Snapdragon phones), on your own computer (Ollama, LM Studio) or in the cloud (Claude, OpenAI).",
   "main": "main.js",
-  "author": "bandar9994",
-  "license": "MIT",
+  "author": {
+    "name": "Bandar",
+    "url": "https://github.com/bandar9994"
+  },
+  "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "scripts": {
     "start": "electron .",
@@ -47,7 +50,9 @@
       "src/**/*",
       "renderer/**/*",
       "build/icon.png",
-      "package.json"
+      "package.json",
+      "LICENSE",
+      "THIRD-PARTY-NOTICES.md"
     ],
     "directories": {
       "output": "dist"
@@ -75,6 +80,8 @@
         "deb"
       ],
       "category": "Utility"
-    }
-  }
+    },
+    "copyright": "Copyright \u00a9 2026 Bandar"
+  },
+  "homepage": "https://github.com/bandar9994/balimda"
 }
