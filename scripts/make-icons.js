@@ -3,7 +3,8 @@
 // keep the Balimda name and the "Balimda by Bandar Altariqi" credit; no rebranding.
 
 // Draws the Balimda icon (chat bubble with a diamond on an indigo gradient) and
-// writes the desktop icon plus Android launcher icons and splash screens.
+// writes the desktop icon, the website logos, and Android launcher icons and
+// splash screens.
 // Pure Node, no image libraries needed.
 //
 //   node scripts/make-icons.js
@@ -138,6 +139,11 @@ function write(file, data) {
 // ---- outputs ---------------------------------------------------------------
 
 write(path.join(root, 'build/icon.png'), render(512, 512, { iconSize: 512, background: 'rounded' }));
+
+// Website: the logo for Google's sign-in screen (square, 120×120, full
+// background so it looks right when Google rounds it) and the page icon.
+write(path.join(root, 'site/logo-120.png'), render(120, 120, { iconSize: 120, background: 'fill' }));
+write(path.join(root, 'site/icon.png'), render(192, 192, { iconSize: 192, background: 'rounded' }));
 
 const res = path.join(root, 'android/app/src/main/res');
 if (fs.existsSync(res)) {
