@@ -10,6 +10,8 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # to publish the APK to the "android-latest" release
     env:
       # Optional: your own signing key (see README). Without it the shared
       # key in android/app is used, which still lets updates install cleanly.
@@ -46,3 +48,17 @@ jobs:
           name: Pal-android-apk
           path: Pal-android.apk
           if-no-files-found: error
+      # One fixed link that always has the newest APK (no zip):
+      # https://github.com/<owner>/<repo>/releases/download/android-latest/Pal-android.apk
+      - name: Publish to the android-latest release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view android-latest >/dev/null 2>&1; then
+            gh release create android-latest --prerelease --target "$GITHUB_SHA" \
+              --title "Pal for Android (latest build)" \
+              --notes "Newest Android build. Download Pal-android.apk and open it on your phone; it installs over the previous version and keeps your chats."
+          fi
+          gh release upload android-latest Pal-android.apk --clobber
+          gh release edit android-latest --notes "Newest Android build (from ${GITHUB_SHA::7}, $(date -u '+%Y-%m-%d %H:%M UTC')). Download Pal-android.apk and open it on your phone; it installs over the previous version and keeps your chats."
