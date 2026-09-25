@@ -1,3 +1,7 @@
+# Balimda — © 2026 Bandar. All rights reserved.
+# Licensed under the Balimda License (see LICENSE): non-commercial use only;
+# keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+
 # Native llama.cpp engine for Balimda on Android: CPU (ARM NEON/dotprod) plus
 # the OpenCL backend that Qualcomm tunes for Adreno GPUs.
 cmake_minimum_required(VERSION 3.22)

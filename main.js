@@ -1,3 +1,7 @@
+// Balimda — © 2026 Bandar. All rights reserved.
+// Licensed under the Balimda License (see LICENSE): non-commercial use only;
+// keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+
 const { app, BrowserWindow, ipcMain, Menu, shell, dialog, safeStorage, nativeTheme, screen } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -168,10 +172,16 @@ function registerIpc() {
     dataDir,
     platform: process.platform,
     appName: 'Balimda',
+    icon: '../build/icon.png',
     mobile: false,
     providers: Object.fromEntries(Object.entries(PROVIDERS).map(([k, v]) => [k, v.label]))
   }));
   ipcMain.handle('app:openDataDir', () => shell.openPath(dataDir));
+  // LICENSE / THIRD-PARTY-NOTICES.md for the About page.
+  ipcMain.handle('app:legal', (_e, which) => {
+    const file = which === 'notices' ? 'THIRD-PARTY-NOTICES.md' : 'LICENSE';
+    return fs.readFileSync(path.join(__dirname, file), 'utf8');
+  });
 
   ipcMain.handle('backup:export', async () => {
     const stamp = new Date().toISOString().slice(0, 10);

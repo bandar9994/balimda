@@ -1,3 +1,7 @@
+// Balimda — © 2026 Bandar. All rights reserved.
+// Licensed under the Balimda License (see LICENSE): non-commercial use only;
+// keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+
 const { contextBridge, ipcRenderer } = require('electron');
 
 const invoke = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
@@ -26,7 +30,8 @@ contextBridge.exposeInMainWorld('balimda', {
   },
   app: {
     info: invoke('app:info'),
-    openDataDir: invoke('app:openDataDir')
+    openDataDir: invoke('app:openDataDir'),
+    legal: invoke('app:legal')
   },
   ai: {
     models: invoke('ai:models'),

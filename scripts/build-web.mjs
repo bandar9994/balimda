@@ -1,3 +1,7 @@
+// Balimda — © 2026 Bandar. All rights reserved.
+// Licensed under the Balimda License (see LICENSE): non-commercial use only;
+// keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+
 // Builds the mobile web app into www/ for Capacitor (Android / iOS).
 // It reuses the desktop UI from renderer/ and swaps the Electron bridge for
 // the mobile one in mobile/src/bridge.js.
@@ -21,6 +25,8 @@ await Promise.all([
   fs.copyFile(r('renderer/app.js'), path.join(out, 'app.js')),
   fs.copyFile(r('renderer/styles.css'), path.join(out, 'styles.css')),
   fs.copyFile(r('build/icon.png'), path.join(out, 'icon.png')),
+  fs.copyFile(r('LICENSE'), path.join(out, 'LICENSE.txt')),
+  fs.copyFile(r('THIRD-PARTY-NOTICES.md'), path.join(out, 'THIRD-PARTY-NOTICES.md')),
   fs.copyFile(r('node_modules/marked/lib/marked.umd.js'), path.join(out, 'vendor/marked.umd.js')),
   fs.copyFile(r('node_modules/dompurify/dist/purify.min.js'), path.join(out, 'vendor/purify.min.js')),
   fs.copyFile(r('node_modules/@wllama/wllama/esm/wasm/wllama.wasm'), path.join(out, 'wllama/wllama.wasm'))
@@ -36,6 +42,7 @@ await build({
   minify: true,
   sourcemap: false,
   legalComments: 'none',
+  banner: { js: '/*! Balimda — © 2026 Bandar. All rights reserved. Balimda License (non-commercial; keep the Balimda name and "Balimda by Bandar" credit; no rebranding). Includes third-party software under their own licenses; see THIRD-PARTY-NOTICES.md. */' },
   define: { 'process.env.NODE_ENV': '"production"' },
   logLevel: 'warning'
 });

@@ -1,3 +1,7 @@
+/* Balimda — © 2026 Bandar. All rights reserved.
+   Licensed under the Balimda License (see LICENSE): non-commercial use only;
+   keep the Balimda name and the "Balimda by Bandar" credit; no rebranding. */
+
 :root {
   --bg: #ffffff;
   --bg-side: #f5f5f7;
@@ -539,3 +543,25 @@ textarea.input { resize: vertical; }
 .msg .msg-notice { margin-top: 8px; font-size: 12px; color: var(--text-dim); font-style: italic; }
 .msg .meta .stats { cursor: pointer; }
 .msg .meta .stats.gpu { color: #2f9e5b; font-weight: 600; }
+
+/* ---------- about / credit ---------- */
+
+.credit {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: left;
+  padding: 2px 12px;
+  cursor: pointer;
+}
+.credit:hover { color: var(--text); text-decoration: underline; }
+.about-head { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+.about-icon { width: 64px; height: 64px; border-radius: 14px; }
+.about-name { font-size: 22px; font-weight: 700; }
+.about-by { margin: 4px 0 0; font-size: 15px; }
+.legal { white-space: pre-wrap; font-size: 12px; line-height: 1.5; margin: 0; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.settings-pane a { color: var(--accent); overflow-wrap: anywhere; }
