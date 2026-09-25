@@ -43,6 +43,16 @@ jobs:
           BALIMDA_KEY_PASSWORD: ${{ secrets.BALIMDA_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon
       - run: cp android/app/build/outputs/apk/release/app-release.apk Balimda-android.apk
+      # Google sign-in (Drive sync) recognises the app by its package name and
+      # this fingerprint, which goes into the Android OAuth client in Google
+      # Cloud. It's public (anyone can read it from the APK).
+      - name: Show the signing certificate's SHA-1
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          SHA1=$("$APKSIGNER" verify --print-certs Balimda-android.apk | grep -m1 'SHA-1 digest' | sed 's/.*: //' | tr 'a-f' 'A-F' | sed 's/../&:/g; s/:$//')
+          KEY=$([ -n "$BALIMDA_KEYSTORE_BASE64" ] && echo "your private key" || echo "the test key")
+          echo "::notice title=SHA-1 fingerprint ($KEY)::$SHA1"
+          echo "**SHA-1 certificate fingerprint** ($KEY), for the Android OAuth client in Google Cloud: \`$SHA1\`" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: Balimda-android-apk

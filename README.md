@@ -8,7 +8,7 @@
 - **Cloud models** too: Anthropic Claude and OpenAI (bring your own API key).
 - **Assistants** are personas with their own instructions and, optionally, their own model. Three come built in (Assistant, Code Buddy, Writing Coach), and you can add your own.
 - **Memory** holds facts about you that go into every chat. Tap **Remember** under any of your messages to add it.
-- **Sync between your PC and phone**: start a chat on your computer and carry on from your phone anywhere. Chats go through a private GitHub repository of your own and are **encrypted on the device** first, so only your devices can read them.
+- **Sync between your PC and phone**: start a chat on your computer and carry on from your phone anywhere. Sign in with Google (or use a private GitHub repository). Chats are **encrypted on the device** first, so only your devices can read them.
 - **Search across all chats**, pin favourites, rename, and export a chat to Markdown.
 - Markdown and code rendering, with a collapsible "thought process" for reasoning models.
 - Streaming replies with Stop, Regenerate, and Edit & resend.
@@ -111,16 +111,18 @@ API keys are encrypted with your system keychain when one is available. To keep 
 
 **Settings → Sync** keeps your chats, assistants and memory the same on every device, so you can start a chat at your desk and continue it on your phone.
 
-1. Create a **private** repository on GitHub, for example `balimda-sync` ([github.com/new](https://github.com/new)).
-2. Create a [fine-grained access token](https://github.com/settings/personal-access-tokens/new). Under *Repository access*, choose only that repository. Under *Permissions*, set **Contents** to **Read and write**.
-3. In Balimda, open **Settings → Sync** and enter the repository, the token and a **sync passphrase**. Do the same on your other devices with the same repository and passphrase.
+- **Google Drive** (recommended): choose a **sync passphrase** and tap **Sign in with Google**. Do the same on your other devices with the same Google account and passphrase. Balimda uses a hidden app folder in your Drive. It can't see your other files, and you won't see its files in Drive. The data uses a little of your Drive storage.
+- **GitHub** (for developers): create a **private** repository and a [fine-grained access token](https://github.com/settings/personal-access-tokens/new) with only that repository and **Contents: Read and write**. Then enter both, with a sync passphrase, on each device.
 
 How it works:
 
-- Everything is compressed and encrypted on the device (AES-256-GCM, with a key made from your passphrase by PBKDF2) before it is uploaded. The repository holds only encrypted files, and GitHub cannot read your chats. The passphrase cannot be recovered, so keep it safe.
+- Everything is compressed and encrypted on the device (AES-256-GCM, with a key made from your passphrase by PBKDF2) before it is uploaded. Google or GitHub only ever hold encrypted files and cannot read your chats. The passphrase cannot be recovered, so keep it safe.
 - It syncs a few seconds after each change, when you open or come back to the app, every minute while it is open, and before the desktop app quits. A **✓ Synced** line under Settings in the sidebar shows the status. Click it to sync right away.
-- Each sync is one Git commit. If the same chat changed on two devices before they synced, the messages are merged, so nothing is lost. Deleting a chat deletes it everywhere.
+- If the same chat changed on two devices before they synced, the messages are merged, so nothing is lost. Deleting a chat deletes it everywhere.
 - API keys and model server addresses stay on each device.
+- **Stop syncing** turns sync off on that device and, for Google Drive, removes Balimda's access to the Google account.
+
+Google sign-in needs a one-time setup of the app in Google Cloud. See [docs/google-drive-setup.md](docs/google-drive-setup.md).
 
 ### Keyboard shortcuts
 
@@ -150,7 +152,7 @@ npm run icons         # redraw the app icon, Android launcher icons and splash s
 - `main.js`: Electron main process. It owns the window, the menu, and model API calls.
 - `preload.js`: the small, safe bridge between the UI and the main process.
 - `src/storage.js`: JSON chat storage, shared by desktop and mobile.
-- `src/sync.js`: encrypted sync through a private GitHub repository, shared by desktop and mobile.
+- `src/sync.js`: encrypted sync through Google Drive or a private GitHub repository, shared by desktop and mobile. `src/google-auth-desktop.js` is Google sign-in for the desktop app, and `android/.../GoogleAuthPlugin.java` is Google sign-in on Android.
 - `src/providers.js`: Ollama, OpenAI-compatible, Anthropic and OpenAI streaming. It runs in both Node and the phone's web view.
 - `renderer/`: the UI, in plain HTML/CSS/JS with no build step. Desktop and mobile share it.
 - `src/backends/node-fs.js`: desktop file storage.

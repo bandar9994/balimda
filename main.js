@@ -9,6 +9,7 @@ const { Storage } = require('./src/storage');
 const { nodeFsBackend } = require('./src/backends/node-fs');
 const { PROVIDERS, normalizeMessages } = require('./src/providers');
 const { Sync } = require('./src/sync');
+const { desktopGoogleAuth } = require('./src/google-auth-desktop');
 
 // Allow a custom data folder (e.g. a synced folder) via BALIMDA_DATA_DIR.
 const dataDir = process.env.BALIMDA_DATA_DIR || path.join(app.getPath('userData'), 'data');
@@ -49,6 +50,36 @@ function secrets() {
       } catch {
         return '';
       }
+    }
+  };
+}
+
+// Google sign-in (for Drive sync) needs the app's OAuth client. Release
+// builds get it from google-oauth.json, which CI writes from repository
+// secrets; for development, set BALIMDA_GOOGLE_CLIENT_ID and _SECRET.
+function googleAuth() {
+  let cfg = null;
+  try {
+    cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'google-oauth.json'), 'utf8'));
+  } catch {
+    cfg = { clientId: process.env.BALIMDA_GOOGLE_CLIENT_ID, clientSecret: process.env.BALIMDA_GOOGLE_CLIENT_SECRET };
+  }
+  if (!cfg || !cfg.clientId || !cfg.clientSecret) return null;
+  const auth = desktopGoogleAuth({
+    ...cfg,
+    openUrl: (url) => shell.openExternal(url),
+    fetch: (url, opts) => net.fetch(url, opts)
+  });
+  return {
+    ...auth,
+    // Bring Balimda back to the front once the browser part is done.
+    async signIn() {
+      const result = await auth.signIn();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+      }
+      return result;
     }
   };
 }
@@ -287,6 +318,7 @@ app.whenReady().then(async () => {
     device: `desktop (${process.platform})`,
     secrets: secrets(),
     fetch: (url, opts) => net.fetch(url, opts),
+    googleAuth: googleAuth(),
     onEvent: (evt) => send('sync:event', evt)
   });
   await sync.load();

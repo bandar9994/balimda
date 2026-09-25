@@ -12,6 +12,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(LlamaPlugin.class);
+        registerPlugin(GoogleAuthPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
