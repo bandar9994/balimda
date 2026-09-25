@@ -59,6 +59,7 @@
 html, body {
   margin: 0;
   height: 100%;
+  overflow: hidden; /* only the message list scrolls, never the page */
   background: var(--bg);
   color: var(--text);
   font: 14px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
@@ -66,7 +67,7 @@ html, body {
 
 button { font: inherit; color: inherit; }
 
-#app { display: flex; height: 100vh; overflow: hidden; }
+#app { display: flex; height: 100%; overflow: hidden; }
 
 /* ---------- sidebar ---------- */
 
@@ -460,8 +461,13 @@ textarea.input { resize: vertical; }
 
 @media (max-width: 700px) {
   html, body { font-size: 15px; }
-  #app { height: 100dvh; }
+  /* Pin the page to the screen: the status-bar padding must not make it
+     taller than the viewport, or Android scrolls it under the clock when
+     the keyboard opens. */
   body {
+    position: fixed;
+    inset: 0;
+    box-sizing: border-box;
     padding: var(--safe-area-inset-top, env(safe-area-inset-top)) var(--safe-area-inset-right, env(safe-area-inset-right))
       0 var(--safe-area-inset-left, env(safe-area-inset-left));
   }
