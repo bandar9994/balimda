@@ -1,4 +1,4 @@
-// Mobile (Capacitor) implementation of the `window.pal` API that the shared
+// Mobile (Capacitor) implementation of the `window.balimda` API that the shared
 // UI in renderer/app.js talks to. On desktop the same API comes from
 // preload.js + main.js; here everything runs inside the app's web view.
 
@@ -11,7 +11,7 @@ import { PROVIDERS, normalizeMessages } from '../../src/providers.js';
 import * as local from './on-device.js';
 import * as native from './native-engine.js';
 
-const ROOT = 'pal-data';
+const ROOT = 'balimda-data';
 const isNative = Capacitor.isNativePlatform();
 
 // ---- file storage in the app's private data folder ------------------------
@@ -70,7 +70,7 @@ const ready = Storage.open(fsBackend, { defaults: MOBILE_DEFAULTS });
 
 // On-device engine: native llama.cpp (CPU + Adreno GPU) when the Android app
 // has it, otherwise llama.cpp compiled to WebAssembly.
-const nativeInfo = isNative && Capacitor.isPluginAvailable('PalLlama')
+const nativeInfo = isNative && Capacitor.isPluginAvailable('Llama')
   ? native.probe()
   : Promise.resolve({ available: false, devices: [] });
 const engine = async () => ((await nativeInfo).available ? native : local);
@@ -138,7 +138,7 @@ const menuListeners = new Set();
 
 const withStorage = (fn) => async (...args) => fn(await ready, ...args);
 
-window.pal = {
+window.balimda = {
   chats: {
     list: withStorage((s) => s.listChats()),
     search: withStorage((s, q) => s.searchChats(q)),
@@ -163,7 +163,7 @@ window.pal = {
     exportAll: withStorage(async (s) => {
       const data = await s.exportAll();
       const stamp = new Date().toISOString().slice(0, 10);
-      await shareFile(`pal-backup-${stamp}.json`, JSON.stringify(data, null, 2), 'application/json');
+      await shareFile(`balimda-backup-${stamp}.json`, JSON.stringify(data, null, 2), 'application/json');
       return { count: data.chats.length };
     }),
     importAll: withStorage(async (s) => {
@@ -186,7 +186,7 @@ window.pal = {
         version,
         dataDir: 'Private app storage on this phone',
         platform: Capacitor.getPlatform(),
-        appName: 'Pal',
+        appName: 'Balimda',
         mobile: true,
         onDevice: true,
         providers: Object.fromEntries(Object.entries(providers).map(([k, v]) => [k, v.label]))

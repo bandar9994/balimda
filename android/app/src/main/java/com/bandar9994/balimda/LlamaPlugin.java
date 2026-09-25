@@ -1,4 +1,4 @@
-package com.bandar9994.pal;
+package com.bandar9994.balimda;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -27,8 +27,8 @@ import org.json.JSONObject;
  * Events: "token" {requestId, text}, "status" {requestId, status},
  *         "download" {url, loaded, total, done, error}
  */
-@CapacitorPlugin(name = "PalLlama")
-public class PalLlamaPlugin extends Plugin {
+@CapacitorPlugin(name = "Llama")
+public class LlamaPlugin extends Plugin {
 
     private final ExecutorService inference = Executors.newSingleThreadExecutor();
     private final ExecutorService downloads = Executors.newCachedThreadPool();

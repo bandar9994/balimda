@@ -1,4 +1,4 @@
-package com.bandar9994.pal;
+package com.bandar9994.balimda;
 
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
@@ -7,7 +7,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        registerPlugin(PalLlamaPlugin.class);
+        registerPlugin(LlamaPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

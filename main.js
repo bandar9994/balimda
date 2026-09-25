@@ -5,8 +5,8 @@ const { Storage } = require('./src/storage');
 const { nodeFsBackend } = require('./src/backends/node-fs');
 const { PROVIDERS, normalizeMessages } = require('./src/providers');
 
-// Allow a custom data folder (e.g. a synced folder) via PAL_DATA_DIR.
-const dataDir = process.env.PAL_DATA_DIR || path.join(app.getPath('userData'), 'data');
+// Allow a custom data folder (e.g. a synced folder) via BALIMDA_DATA_DIR.
+const dataDir = process.env.BALIMDA_DATA_DIR || path.join(app.getPath('userData'), 'data');
 
 let storage;
 let mainWindow;
@@ -62,7 +62,7 @@ async function createWindow() {
     ...bounds,
     minWidth: 720,
     minHeight: 480,
-    title: 'Pal Desktop',
+    title: 'Balimda',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#16171b' : '#ffffff',
     icon: path.join(__dirname, 'build', 'icon.png'),
     show: false,
@@ -167,7 +167,7 @@ function registerIpc() {
     version: app.getVersion(),
     dataDir,
     platform: process.platform,
-    appName: 'Pal Desktop',
+    appName: 'Balimda',
     mobile: false,
     providers: Object.fromEntries(Object.entries(PROVIDERS).map(([k, v]) => [k, v.label]))
   }));
@@ -177,7 +177,7 @@ function registerIpc() {
     const stamp = new Date().toISOString().slice(0, 10);
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
       title: 'Export all chats',
-      defaultPath: `pal-desktop-backup-${stamp}.json`,
+      defaultPath: `balimda-backup-${stamp}.json`,
       filters: [{ name: 'JSON', extensions: ['json'] }]
     });
     if (canceled || !filePath) return null;

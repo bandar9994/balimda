@@ -1,12 +1,12 @@
-# Pal
+# Balimda
 
-An AI chat app to use instead of PocketPal, for **Windows, macOS, Linux and Android** (iOS is coming next). It **remembers every session and chat**.
+A private AI chat app for **Windows, macOS, Linux and Android** (iOS is coming next) that **remembers every session and chat**.
 
 - **Every chat is saved** on your device as it happens, including replies still being written. Close the app whenever you like and you'll be back where you left off: the same chat and even any half-typed message.
-- **Private, offline models on your phone**, like PocketPal: download a small model (Llama 3.2, Qwen 2.5/3, Gemma 3…) once, then chat with no internet.
+- **Private, offline models on your phone**: download a small model (Llama 3.2, Qwen 2.5/3, Gemma 3…) once, then chat with no internet.
 - **Local servers**: [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), llama.cpp, Jan, or any OpenAI-compatible server. On a phone, you can use the models running on your PC over Wi-Fi.
 - **Cloud models** too: Anthropic Claude and OpenAI (bring your own API key).
-- **Pals** are personas with their own instructions and, optionally, their own model. Three come built in (Assistant, Code Buddy, Writing Coach), and you can add your own.
+- **Assistants** are personas with their own instructions and, optionally, their own model. Three come built in (Assistant, Code Buddy, Writing Coach), and you can add your own.
 - **Memory** holds facts about you that go into every chat. Tap **Remember** under any of your messages to add it.
 - **Search across all chats**, pin favourites, rename, and export a chat to Markdown.
 - Markdown and code rendering, with a collapsible "thought process" for reasoning models.
@@ -19,9 +19,9 @@ The desktop app (Electron) and the mobile app (Capacitor) share the same interfa
 
 ### Install
 
-1. On your phone, open https://github.com/bandar9994/ai/releases/download/android-latest/Pal-android.apk. This link always has the newest build. (Each build is also attached to its run under **Actions → Android app → Artifacts**.)
+1. On your phone, open https://github.com/bandar9994/ai/releases/download/android-latest/Balimda-android.apk. This link always has the newest build. While the repository is private, you must be signed in to GitHub in that browser. (Each build is also attached to its run under **Actions → Android app → Artifacts**.)
 2. Copy the APK to your phone (or download it there) and open it. Android will ask you to allow installing apps from that source; allow it.
-3. Open **Pal**.
+3. Open **Balimda**.
 
 New builds install over the old one as an update, so your chats are kept.
 
@@ -43,12 +43,12 @@ Open **Settings → Models & providers**. Under **On this device (offline)**, ta
 
 You can also paste a link to any `.gguf` file.
 
-**GPU acceleration.** The Android app runs models with native [llama.cpp](https://github.com/ggml-org/llama.cpp). On Snapdragon phones it uses the **Adreno GPU** through llama.cpp's OpenCL backend, which Qualcomm tunes for Adreno. This is the same approach PocketPal uses. The GPU is on by default, and Settings shows which GPU was detected. `Q4_0` models, which the list above uses, run fastest on Adreno. On other phones it runs natively on the CPU, which is still much faster than the WebAssembly fallback.
+**GPU acceleration.** The Android app runs models with native [llama.cpp](https://github.com/ggml-org/llama.cpp). On Snapdragon phones it uses the **Adreno GPU** through llama.cpp's OpenCL backend, which Qualcomm tunes for Adreno. The GPU is on by default, and Settings shows which GPU was detected. `Q4_0` models, which the list above uses, run fastest on Adreno. On other phones it runs natively on the CPU, which is still much faster than the WebAssembly fallback.
 
 ### Using the models on your PC from your phone
 
-- **Ollama**: on the PC, set the environment variables `OLLAMA_HOST=0.0.0.0` and `OLLAMA_ORIGINS=*`, then restart Ollama. In Pal on the phone, enable **Ollama** and enter `http://<your PC's IP>:11434`.
-- **LM Studio**: in the Developer tab turn on **Serve on Local Network** and **Enable CORS**. In Pal, enable **LM Studio / OpenAI-compatible** and enter `http://<your PC's IP>:1234/v1`.
+- **Ollama**: on the PC, set the environment variables `OLLAMA_HOST=0.0.0.0` and `OLLAMA_ORIGINS=*`, then restart Ollama. In Balimda on the phone, enable **Ollama** and enter `http://<your PC's IP>:11434`.
+- **LM Studio**: in the Developer tab turn on **Serve on Local Network** and **Enable CORS**. In Balimda, enable **LM Studio / OpenAI-compatible** and enter `http://<your PC's IP>:1234/v1`.
 
 The phone and PC must be on the same Wi-Fi network.
 
@@ -67,7 +67,7 @@ Pick one (you can use several):
 | **Claude** | Get an API key at [console.anthropic.com](https://console.anthropic.com) and paste it into Settings → Models & providers |
 | **OpenAI** | Get an API key at [platform.openai.com](https://platform.openai.com) and paste it into Settings → Models & providers |
 
-#### 2. Run Pal Desktop
+#### 2. Run Balimda on your computer
 
 **Option A: download an installer.** Go to the repo's **Actions** tab → **Build installers** → the latest run → **Artifacts**. There is a Windows `.exe`, a macOS `.dmg` and a Linux `.AppImage`/`.deb`. To produce a new build, run the workflow by hand or push a tag such as `v1.0.0`.
 
@@ -92,19 +92,19 @@ Everything is plain JSON in your user data folder. **Settings → Data & backup 
 
 | OS | Location |
 |---|---|
-| Windows | `%APPDATA%\Pal Desktop\data` |
-| macOS | `~/Library/Application Support/Pal Desktop/data` |
-| Linux | `~/.config/Pal Desktop/data` |
+| Windows | `%APPDATA%\Balimda\data` |
+| macOS | `~/Library/Application Support/Balimda/data` |
+| Linux | `~/.config/Balimda/data` |
 
 ```
 data/
   chats/<id>.json   one file per chat (all messages)
   index.json        chat list (rebuilt automatically if deleted)
-  settings.json     providers, Pals, memory, preferences
+  settings.json     providers, assistants, memory, preferences
   state.json        last open chat, drafts, window size
 ```
 
-API keys are encrypted with your system keychain when one is available. To keep chats in a synced folder such as Dropbox or OneDrive, start the app with the `PAL_DATA_DIR` environment variable pointing at that folder.
+API keys are encrypted with your system keychain when one is available. To keep chats in a synced folder such as Dropbox or OneDrive, start the app with the `BALIMDA_DATA_DIR` environment variable pointing at that folder.
 
 ### Keyboard shortcuts
 
@@ -128,7 +128,7 @@ npm run android:apk   # build android/app/build/outputs/apk/release/app-release.
 npm run icons         # redraw the app icon, Android launcher icons and splash screens
 ```
 
-**Android signing.** Android only installs an update if it is signed with the same key as the installed app. By default, builds use the shared key in `android/app/pal-debug.keystore`, which is fine for installing on your own phone. To publish on Google Play, create your own key and add these repository secrets: `PAL_KEYSTORE_BASE64` (the keystore file, base64-encoded), `PAL_KEYSTORE_PASSWORD`, `PAL_KEY_ALIAS` and `PAL_KEY_PASSWORD`. Switching keys requires uninstalling the old build once, so export your chats first.
+**Android signing.** Android only installs an update if it is signed with the same key as the installed app. By default, builds use the test key in `android/app/balimda-test.keystore`. That key is only for installing on your own devices, because anyone with this repository has it. **Before publishing**, create your own private key and add these repository secrets: `BALIMDA_KEYSTORE_BASE64` (the keystore file, base64-encoded), `BALIMDA_KEYSTORE_PASSWORD`, `BALIMDA_KEY_ALIAS` and `BALIMDA_KEY_PASSWORD`. Switching keys requires uninstalling the old build once, so export your chats first.
 
 
 - `main.js`: Electron main process. It owns the window, the menu, and model API calls.
@@ -138,6 +138,6 @@ npm run icons         # redraw the app icon, Android launcher icons and splash s
 - `renderer/`: the UI, in plain HTML/CSS/JS with no build step. Desktop and mobile share it.
 - `src/backends/node-fs.js`: desktop file storage.
 - `mobile/src/bridge.js`: the mobile version of the desktop bridge. It covers storage through the Capacitor Filesystem, sharing, and the Android back button.
-- `mobile/src/native-engine.js` + `android/app/src/main/java/com/bandar9994/pal/PalLlamaPlugin.java` + `android/app/src/main/cpp/`: the native llama.cpp engine for Android (CPU, plus Adreno GPU through OpenCL). The Android build downloads llama.cpp and compiles it; see `LLAMA_CPP_TAG` in `CMakeLists.txt`.
+- `mobile/src/native-engine.js` + `android/app/src/main/java/com/bandar9994/balimda/LlamaPlugin.java` + `android/app/src/main/cpp/`: the native llama.cpp engine for Android (CPU, plus Adreno GPU through OpenCL). The Android build downloads llama.cpp and compiles it; see `LLAMA_CPP_TAG` in `CMakeLists.txt`.
 - `mobile/src/on-device.js`: the fallback engine, llama.cpp compiled to WebAssembly via [wllama](https://github.com/ngxson/wllama). It's used where the native engine isn't available.
 - `android/`: the Capacitor Android project.

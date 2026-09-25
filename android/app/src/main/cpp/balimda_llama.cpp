@@ -1,4 +1,4 @@
-// JNI bridge between Pal (com.bandar9994.pal.LlamaEngine) and llama.cpp.
+// JNI bridge between Balimda (com.bandar9994.balimda.LlamaEngine) and llama.cpp.
 //
 // One engine = one loaded model + context. Chats are formatted with the
 // model's own chat template, and the KV cache is reused between turns so only
@@ -19,7 +19,7 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "PalLlama", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "BalimdaLlama", __VA_ARGS__)
 #else
 #include <cstdio>
 #define LOGI(...) (fprintf(stderr, __VA_ARGS__), fputc('\n', stderr))
@@ -174,7 +174,7 @@ std::string apply_template(const Engine & e, const std::vector<std::string> & ro
 extern "C" {
 
 JNIEXPORT jstring JNICALL
-Java_com_bandar9994_pal_LlamaEngine_nativeDevices(JNIEnv * env, jclass) {
+Java_com_bandar9994_balimda_LlamaEngine_nativeDevices(JNIEnv * env, jclass) {
     init_backend();
     std::string out;
     for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
@@ -192,7 +192,7 @@ Java_com_bandar9994_pal_LlamaEngine_nativeDevices(JNIEnv * env, jclass) {
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_bandar9994_pal_LlamaEngine_nativeLoad(JNIEnv * env, jclass, jstring jpath, jint n_ctx,
+Java_com_bandar9994_balimda_LlamaEngine_nativeLoad(JNIEnv * env, jclass, jstring jpath, jint n_ctx,
                                                jint n_gpu_layers, jint n_threads) {
     init_backend();
     const std::string path = to_utf8(env, jpath);
@@ -238,13 +238,13 @@ Java_com_bandar9994_pal_LlamaEngine_nativeLoad(JNIEnv * env, jclass, jstring jpa
 
 // Where the loaded model runs, e.g. "offloaded 29/29 layers to GPU" ("" = CPU only).
 JNIEXPORT jstring JNICALL
-Java_com_bandar9994_pal_LlamaEngine_nativeOffload(JNIEnv * env, jclass, jlong handle) {
+Java_com_bandar9994_balimda_LlamaEngine_nativeOffload(JNIEnv * env, jclass, jlong handle) {
     auto * e = reinterpret_cast<Engine *>(handle);
     return to_jstring(env, e ? e->offload : std::string());
 }
 
 JNIEXPORT void JNICALL
-Java_com_bandar9994_pal_LlamaEngine_nativeFree(JNIEnv *, jclass, jlong handle) {
+Java_com_bandar9994_balimda_LlamaEngine_nativeFree(JNIEnv *, jclass, jlong handle) {
     auto * e = reinterpret_cast<Engine *>(handle);
     if (!e) return;
     llama_free(e->ctx);
@@ -256,7 +256,7 @@ Java_com_bandar9994_pal_LlamaEngine_nativeFree(JNIEnv *, jclass, jlong handle) {
 // false to stop. Returns "<reason>\t<prompt tokens>\t<prompt ms>\t<generated tokens>\t<generation ms>"
 // where reason is "end_turn", "max_tokens" or "aborted".
 JNIEXPORT jstring JNICALL
-Java_com_bandar9994_pal_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlong handle, jobjectArray jroles,
+Java_com_bandar9994_balimda_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlong handle, jobjectArray jroles,
                                                    jobjectArray jcontents, jint max_tokens, jfloat temperature,
                                                    jobject callback) {
     auto * e = reinterpret_cast<Engine *>(handle);

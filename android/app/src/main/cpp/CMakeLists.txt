@@ -1,7 +1,7 @@
-# Native llama.cpp engine for Pal on Android: CPU (ARM NEON/dotprod) plus
+# Native llama.cpp engine for Balimda on Android: CPU (ARM NEON/dotprod) plus
 # the OpenCL backend that Qualcomm tunes for Adreno GPUs.
 cmake_minimum_required(VERSION 3.22)
-project(pal_llama C CXX)
+project(balimda_llama C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,14 +13,14 @@ if (POLICY CMP0169)
 endif ()
 
 set(LLAMA_CPP_TAG b11170 CACHE STRING "llama.cpp release to build")
-option(PAL_OPENCL "Build the OpenCL (Adreno GPU) backend" ON)
+option(BALIMDA_OPENCL "Build the OpenCL (Adreno GPU) backend" ON)
 
 # ---- OpenCL -----------------------------------------------------------------
 # We compile against the official Khronos headers and link against a stub
 # libOpenCL.so generated from them. The stub is NOT packaged into the APK: at
 # runtime the phone's own driver (/vendor/lib64/libOpenCL.so) is used, which
 # the manifest makes visible with <uses-native-library>.
-if (PAL_OPENCL)
+if (BALIMDA_OPENCL)
     if (DEFINED OPENCL_HEADERS_DIR)
         set(CL_HEADERS_DIR ${OPENCL_HEADERS_DIR})
     else ()
@@ -89,12 +89,12 @@ endif ()
 add_subdirectory(${llama_src} ${CMAKE_CURRENT_BINARY_DIR}/llama.cpp EXCLUDE_FROM_ALL)
 
 # ---- JNI library ----------------------------------------------------------------
-add_library(pal_llama SHARED pal_llama.cpp)
-target_link_libraries(pal_llama PRIVATE llama ggml)
+add_library(balimda_llama SHARED balimda_llama.cpp)
+target_link_libraries(balimda_llama PRIVATE llama ggml)
 if (ANDROID)
-    target_link_libraries(pal_llama PRIVATE log android)
-    target_link_options(pal_llama PRIVATE "-Wl,-z,max-page-size=16384")
+    target_link_libraries(balimda_llama PRIVATE log android)
+    target_link_options(balimda_llama PRIVATE "-Wl,-z,max-page-size=16384")
 else ()
     find_package(JNI REQUIRED)
-    target_include_directories(pal_llama PRIVATE ${JNI_INCLUDE_DIRS})
+    target_include_directories(balimda_llama PRIVATE ${JNI_INCLUDE_DIRS})
 endif ()

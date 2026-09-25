@@ -1,4 +1,4 @@
-// Draws the Pal icon (chat bubble with a diamond on an indigo gradient) and
+// Draws the Balimda icon (chat bubble with a diamond on an indigo gradient) and
 // writes the desktop icon plus Android launcher icons and splash screens.
 // Pure Node, no image libraries needed.
 //

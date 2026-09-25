@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const invoke = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
 
-contextBridge.exposeInMainWorld('pal', {
+contextBridge.exposeInMainWorld('balimda', {
   chats: {
     list: invoke('chats:list'),
     search: invoke('chats:search'),
