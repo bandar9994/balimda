@@ -4,3 +4,8 @@ out/
 *.log
 .DS_Store
 www/
+
+# Signing keys must never be committed (the test key is the only exception)
+*.keystore
+*.jks
+!android/app/balimda-test.keystore

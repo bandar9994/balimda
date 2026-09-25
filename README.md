@@ -128,7 +128,7 @@ npm run android:apk   # build android/app/build/outputs/apk/release/app-release.
 npm run icons         # redraw the app icon, Android launcher icons and splash screens
 ```
 
-**Android signing.** Android only installs an update if it is signed with the same key as the installed app. By default, builds use the test key in `android/app/balimda-test.keystore`. That key is only for installing on your own devices, because anyone with this repository has it. **Before publishing**, create your own private key and add these repository secrets: `BALIMDA_KEYSTORE_BASE64` (the keystore file, base64-encoded), `BALIMDA_KEYSTORE_PASSWORD`, `BALIMDA_KEY_ALIAS` and `BALIMDA_KEY_PASSWORD`. Switching keys requires uninstalling the old build once, so export your chats first.
+**Android signing.** Android only installs an update if it is signed with the same key as the installed app. By default, builds use the test key in `android/app/balimda-test.keystore`. That key is only for installing on your own devices, because anyone with this repository has it. **Before publishing**, create your own private key and add these repository secrets: `BALIMDA_KEYSTORE_BASE64` (the keystore file, base64-encoded), `BALIMDA_KEYSTORE_PASSWORD`, `BALIMDA_KEY_ALIAS` and `BALIMDA_KEY_PASSWORD`. Switching keys requires uninstalling the old build once, so export your chats first. Only builds signed with the private key are published to the `android-latest` download link. Builds made with the test key are attached only to their own GitHub Actions run.
 
 
 - `main.js`: Electron main process. It owns the window, the menu, and model API calls.

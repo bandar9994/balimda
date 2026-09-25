@@ -50,8 +50,13 @@ jobs:
           if-no-files-found: error
       # One fixed link that always has the newest APK (no zip):
       # https://github.com/<owner>/<repo>/releases/download/android-latest/Balimda-android.apk
+      - name: Signing key missing
+        if: env.BALIMDA_KEYSTORE_BASE64 == ''
+        run: echo "::warning::Built with the test key (BALIMDA_KEYSTORE_* secrets not set). This APK is only attached to this run, not published to the android-latest release."
+      # Only builds signed with the private key go to the public download link,
+      # so people never get an APK that can't update their installed app.
       - name: Publish to the android-latest release
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.BALIMDA_KEYSTORE_BASE64 != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
