@@ -38,6 +38,8 @@ public class PalLlamaPlugin extends Plugin {
     // Loaded model state (only touched on the inference thread).
     private long handle = 0;
     private String loadedKey = null;
+    private String loadedDevice = "CPU";   // where the loaded model runs
+    private String loadedOffload = "";
 
     private File modelsDir() {
         File dir = new File(getContext().getFilesDir(), "models");
@@ -247,6 +249,8 @@ public class PalLlamaPlugin extends Plugin {
                     emitStatus(requestId, "loading");
                     handle = LlamaEngine.nativeLoad(file.getAbsolutePath(), nCtx, gpu ? 99 : 0, threadCount());
                     loadedKey = key;
+                    loadedOffload = LlamaEngine.nativeOffload(handle);
+                    loadedDevice = describeDevice(loadedOffload);
                 }
                 if (stop.get()) {
                     resolveDone(call, "aborted");
@@ -261,7 +265,7 @@ public class PalLlamaPlugin extends Plugin {
                     roles[i] = m.optString("role", "user");
                     contents[i] = m.optString("content", "");
                 }
-                String reason = LlamaEngine.nativeComplete(handle, roles, contents, maxTokens, temperature, (text) -> {
+                String result = LlamaEngine.nativeComplete(handle, roles, contents, maxTokens, temperature, (text) -> {
                     if (!text.isEmpty()) {
                         JSObject evt = new JSObject();
                         evt.put("requestId", requestId);
@@ -270,7 +274,7 @@ public class PalLlamaPlugin extends Plugin {
                     }
                     return !stop.get();
                 });
-                resolveDone(call, reason);
+                resolveDone(call, result);
             } catch (Throwable t) {
                 call.reject(t.getMessage() == null ? t.toString() : t.getMessage());
             } finally {
@@ -279,10 +283,41 @@ public class PalLlamaPlugin extends Plugin {
         });
     }
 
-    private void resolveDone(PluginCall call, String reason) {
+    /** result = "reason\tpromptTokens\tpromptMs\tgeneratedTokens\tgenerationMs" (or just "reason"). */
+    private void resolveDone(PluginCall call, String result) {
+        String[] parts = result.split("\t");
         JSObject ret = new JSObject();
-        ret.put("stopReason", reason);
+        ret.put("stopReason", parts[0]);
+        if (parts.length >= 5) {
+            JSObject stats = new JSObject();
+            stats.put("device", loadedDevice);
+            stats.put("offload", loadedOffload);
+            stats.put("promptTokens", Long.parseLong(parts[1]));
+            stats.put("promptMs", Double.parseDouble(parts[2]));
+            stats.put("tokens", Long.parseLong(parts[3]));
+            stats.put("ms", Double.parseDouble(parts[4]));
+            ret.put("stats", stats);
+        }
         call.resolve(ret);
+    }
+
+    /** "GPU · QUALCOMM Adreno(TM) 740" when layers were offloaded, else "CPU". */
+    private static String describeDevice(String offload) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("offloaded (\\d+)/(\\d+)").matcher(offload == null ? "" : offload);
+        if (!m.find() || Integer.parseInt(m.group(1)) == 0) return "CPU";
+        String gpu = "GPU";
+        try {
+            for (String line : LlamaEngine.nativeDevices().split("\n")) {
+                String[] p = line.split("\t");
+                if (p.length >= 3 && p[0].equals("gpu")) {
+                    gpu = "GPU · " + p[2];
+                    break;
+                }
+            }
+        } catch (Throwable ignored) {
+            // keep the generic label
+        }
+        return gpu;
     }
 
     private void emitStatus(String requestId, String status) {

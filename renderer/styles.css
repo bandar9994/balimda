@@ -168,7 +168,7 @@ button { font: inherit; color: inherit; }
 }
 .msg.user .avatar { background: var(--accent); color: var(--accent-text); font-size: 13px; font-weight: 600; }
 .msg .body { flex: 1; min-width: 0; }
-.msg .meta { font-size: 12px; color: var(--text-dim); margin-bottom: 2px; display: flex; gap: 8px; }
+.msg .meta { font-size: 12px; color: var(--text-dim); margin-bottom: 2px; display: flex; flex-wrap: wrap; column-gap: 8px; }
 .msg.user .content { background: var(--bg-user); padding: 10px 14px; border-radius: var(--radius); white-space: pre-wrap; word-wrap: break-word; }
 .msg .content { overflow-wrap: anywhere; }
 .msg .content > :first-child { margin-top: 0; }
@@ -537,3 +537,5 @@ textarea.input { resize: vertical; }
   #toast { bottom: 110px; }
 }
 .msg .msg-notice { margin-top: 8px; font-size: 12px; color: var(--text-dim); font-style: italic; }
+.msg .meta .stats { cursor: pointer; }
+.msg .meta .stats.gpu { color: #2f9e5b; font-weight: 600; }

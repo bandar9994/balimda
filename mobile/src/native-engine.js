@@ -186,7 +186,7 @@ export const nativeEngine = {
     if (signal) signal.addEventListener('abort', onAbort);
     try {
       const temperature = req.temperature != null && !Number.isNaN(req.temperature) ? req.temperature : 0.7;
-      const { stopReason } = await PalLlama.generate({
+      const { stopReason, stats } = await PalLlama.generate({
         requestId,
         model: req.model,
         messages,
@@ -196,7 +196,7 @@ export const nativeEngine = {
         temperature
       });
       if (stopReason === 'aborted') throw new DOMException('Aborted', 'AbortError');
-      return { text, stopReason };
+      return { text, stopReason, stats };
     } finally {
       tokenListeners.delete(requestId);
       if (signal) signal.removeEventListener('abort', onAbort);

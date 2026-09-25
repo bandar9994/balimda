@@ -7,6 +7,7 @@
 #include <jni.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <random>
@@ -32,12 +33,28 @@ struct Engine {
     const llama_vocab * vocab = nullptr;
     std::vector<llama_token> cached;  // tokens currently in the KV cache
     std::string tmpl;                 // chat template ("" = built-in default)
+    std::string offload;              // e.g. "offloaded 29/29 layers to GPU"
 };
 
 std::once_flag backend_once;
+std::mutex log_mutex;
+std::string last_offload;  // captured from llama.cpp's log while a model loads
 
 void log_to_logcat(ggml_log_level level, const char * text, void *) {
     if (level >= GGML_LOG_LEVEL_WARN) LOGI("%s", text);
+    // llama.cpp reports how many layers went to the GPU; keep it so the app
+    // can show where the model really runs.
+    const char * p = strstr(text, "offloaded ");
+    if (p && strstr(p, "layers to GPU")) {
+        std::lock_guard<std::mutex> lock(log_mutex);
+        last_offload = p;
+        while (!last_offload.empty() && (last_offload.back() == '\n' || last_offload.back() == ' ')) last_offload.pop_back();
+    }
+}
+
+double now_ms() {
+    using namespace std::chrono;
+    return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
 }
 
 void init_backend() {
@@ -182,6 +199,10 @@ Java_com_bandar9994_pal_LlamaEngine_nativeLoad(JNIEnv * env, jclass, jstring jpa
 
     llama_model_params mp = llama_model_default_params();
     mp.n_gpu_layers = n_gpu_layers;
+    {
+        std::lock_guard<std::mutex> lock(log_mutex);
+        last_offload.clear();
+    }
     llama_model * model = llama_model_load_from_file(path.c_str(), mp);
     if (!model) {
         throw_java(env, "Couldn't load the model file. It may be incomplete or not a GGUF model; try deleting and downloading it again.");
@@ -207,8 +228,19 @@ Java_com_bandar9994_pal_LlamaEngine_nativeLoad(JNIEnv * env, jclass, jstring jpa
     e->vocab = llama_model_get_vocab(model);
     const char * tmpl = llama_model_chat_template(model, nullptr);
     if (tmpl) e->tmpl = tmpl;
+    {
+        std::lock_guard<std::mutex> lock(log_mutex);
+        e->offload = last_offload;
+    }
     LOGI("loaded %s (ctx %d, gpu layers %d, threads %d)", path.c_str(), n_ctx, n_gpu_layers, n_threads);
     return reinterpret_cast<jlong>(e);
+}
+
+// Where the loaded model runs, e.g. "offloaded 29/29 layers to GPU" ("" = CPU only).
+JNIEXPORT jstring JNICALL
+Java_com_bandar9994_pal_LlamaEngine_nativeOffload(JNIEnv * env, jclass, jlong handle) {
+    auto * e = reinterpret_cast<Engine *>(handle);
+    return to_jstring(env, e ? e->offload : std::string());
 }
 
 JNIEXPORT void JNICALL
@@ -221,7 +253,8 @@ Java_com_bandar9994_pal_LlamaEngine_nativeFree(JNIEnv *, jclass, jlong handle) {
 }
 
 // Streams a reply. `callback.onToken(String)` receives text pieces and returns
-// false to stop. Returns "end_turn", "max_tokens" or "aborted".
+// false to stop. Returns "<reason>\t<prompt tokens>\t<prompt ms>\t<generated tokens>\t<generation ms>"
+// where reason is "end_turn", "max_tokens" or "aborted".
 JNIEXPORT jstring JNICALL
 Java_com_bandar9994_pal_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlong handle, jobjectArray jroles,
                                                    jobjectArray jcontents, jint max_tokens, jfloat temperature,
@@ -290,7 +323,15 @@ Java_com_bandar9994_pal_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlong h
         return go_on;
     };
 
+    auto result = [&](const std::string & reason, size_t n_prompt, double prompt_ms, int n_gen, double gen_ms) {
+        char buf[160];
+        snprintf(buf, sizeof(buf), "%s\t%zu\t%.1f\t%d\t%.1f", reason.c_str(), n_prompt, prompt_ms, n_gen, gen_ms);
+        return to_jstring(env, buf);
+    };
+
     // Process the prompt in batches; an empty onToken("") call lets the user cancel.
+    const double t_prompt = now_ms();
+    const size_t n_new_prompt = tokens.size() - keep;
     const int32_t n_batch = int32_t(llama_n_batch(e->ctx));
     for (size_t i = keep; i < tokens.size(); i += n_batch) {
         const int32_t n = int32_t(std::min<size_t>(n_batch, tokens.size() - i));
@@ -301,8 +342,9 @@ Java_com_bandar9994_pal_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlong h
             return nullptr;
         }
         e->cached.insert(e->cached.end(), tokens.begin() + i, tokens.begin() + i + n);
-        if (!emit("")) return to_jstring(env, "aborted");
+        if (!emit("")) return result("aborted", n_new_prompt, now_ms() - t_prompt, 0, 0);
     }
+    const double prompt_ms = now_ms() - t_prompt;
 
     auto sparams = llama_sampler_chain_default_params();
     llama_sampler * smpl = llama_sampler_chain_init(sparams);
@@ -320,6 +362,7 @@ Java_com_bandar9994_pal_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlong h
     std::string stop_reason = "end_turn";
     std::string pending;
     int generated = 0;
+    const double t_gen = now_ms();
     for (;;) {
         llama_token tok = llama_sampler_sample(smpl, e->ctx, -1);
         if (llama_vocab_is_eog(e->vocab, tok)) break;
@@ -344,9 +387,10 @@ Java_com_bandar9994_pal_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlong h
         }
         e->cached.push_back(tok);
     }
+    const double gen_ms = now_ms() - t_gen;
     if (!pending.empty() && stop_reason != "aborted") emit(pending);
     llama_sampler_free(smpl);
-    return to_jstring(env, stop_reason);
+    return result(stop_reason, n_new_prompt, prompt_ms, generated, gen_ms);
 }
 
 }  // extern "C"
