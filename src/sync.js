@@ -2,21 +2,24 @@
 // Licensed under the Balimda License (see LICENSE): non-commercial use only;
 // keep the Balimda name and the "Balimda by Bandar Altariqi" credit; no rebranding.
 
-// Sync between devices through a private GitHub repository the user owns.
+// Sync between devices through storage the user owns: Google Drive's hidden
+// app folder, or a private GitHub repository.
 //
 // Everything is encrypted on the device before it leaves (AES-256-GCM with a
-// key made from the user's passphrase), so the repository only ever holds
-// unreadable data. Layout of the repository:
+// key made from the user's passphrase), so the storage only ever holds
+// unreadable data. Files:
 //
 //   balimda-sync.json   format, key-derivation salt and a passphrase check
-//   index.enc           encrypted list of chats: id -> { m: modifiedAt, d: deleted }
 //   chats/<id>.enc      one encrypted chat per file
 //   shared.enc          encrypted shared settings (assistants, memory)
+//   index.enc           GitHub only: encrypted list of chats
+//                       (id -> { m: modifiedAt, r: revision, d: deleted }); on Drive the
+//                       same facts are kept on each file
 //
-// Each sync is one Git commit, so changes from two devices can never
-// half-overwrite each other: if another device pushed first, we pull its
-// changes and try again. The same code runs on desktop (Node) and on phones
-// (web view); it only needs fetch and WebCrypto.
+// On GitHub each sync is one Git commit, so changes from two devices can
+// never half-overwrite each other: if another device pushed first, we pull
+// its changes and try again. The same code runs on desktop (Node) and on
+// phones (web view); it only needs fetch and WebCrypto.
 
 'use strict';
 
@@ -227,6 +230,305 @@ class GitHub {
   }
 }
 
+// The GitHub repository as a sync destination. The chat list lives in an
+// encrypted index file, and every sync is one atomic commit.
+class GitHubRemote {
+  constructor({ repo, token, branch, fetch }) {
+    this.gh = new GitHub({ repo, token, fetch });
+    this.repo = repo;
+    this.branch = branch;
+    this.usesIndex = true;
+  }
+
+  static async open({ repo, token, fetch }) {
+    const gh = new GitHub({ repo, token, fetch });
+    const info = await gh.info();
+    if (!info.private) throw new SyncError('This repository is public. Use a private repository for your chats.');
+    return new GitHubRemote({ repo, token, branch: info.default_branch || 'main', fetch });
+  }
+
+  describe() {
+    return { provider: 'github', label: `github.com/${this.repo}`, link: `https://github.com/${this.repo}` };
+  }
+
+  head() {
+    return this.gh.head(this.branch);
+  }
+
+  async readMeta() {
+    const head = await this.head();
+    if (!head) return null;
+    const { files } = await this.gh.files(head);
+    return files.has(META_FILE) ? this.gh.text(files.get(META_FILE)) : null;
+  }
+
+  async createMeta(text) {
+    let head = await this.head();
+    if (!head) head = await this.gh.init(this.branch);
+    const { tree } = await this.gh.files(head);
+    try {
+      await this.gh.commit({
+        branch: this.branch,
+        parent: head,
+        baseTree: tree,
+        writes: [{ path: META_FILE, text }],
+        deletes: [],
+        message: 'Set up Balimda sync (encrypted)'
+      });
+    } catch (err) {
+      // Another device set it up at the same moment: use theirs.
+      if (!err.conflict) throw err;
+    }
+    return this.readMeta();
+  }
+
+  async load() {
+    const head = await this.head();
+    if (!head) throw new SyncError('The sync repository is empty. Set up sync again.');
+    const { tree, files } = await this.gh.files(head);
+    if (!files.has(META_FILE)) throw new SyncError('The sync repository was reset. Set up sync again.');
+    const read = (path) => (files.has(path) ? this.gh.text(files.get(path)) : Promise.resolve(null));
+    return {
+      head,
+      tree,
+      files,
+      indexText: await read(INDEX_FILE),
+      readChat: (id) => read(chatPath(id)),
+      readShared: () => read(SHARED_FILE)
+    };
+  }
+
+  async save(snap, { writes, deletes, shared, indexText, message }) {
+    const out = writes.map((w) => ({ path: chatPath(w.id), text: w.text }));
+    if (shared) out.push({ path: SHARED_FILE, text: shared.text });
+    out.push({ path: INDEX_FILE, text: indexText });
+    return this.gh.commit({
+      branch: this.branch,
+      parent: snap.head,
+      baseTree: snap.tree,
+      writes: out,
+      deletes: deletes.map((d) => chatPath(d.id)).filter((p) => snap.files.has(p)),
+      message
+    });
+  }
+}
+
+// ---- Google Drive ----------------------------------------------------------------
+
+const DRIVE = 'https://www.googleapis.com/drive/v3';
+const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
+
+function driveError(status, data) {
+  const reason = data && data.error && ((data.error.errors && data.error.errors[0] && data.error.errors[0].reason) || data.error.status);
+  const msg = (data && data.error && data.error.message) || '';
+  if (status === 401) return 'Google sign-in has expired. Open Settings → Sync and sign in again.';
+  if (reason === 'storageQuotaExceeded') return 'Your Google Drive is full, so Balimda cannot save your chats there.';
+  if (status === 429 || /rate ?limit/i.test(String(reason))) return 'Google Drive is busy. Sync will try again in a few minutes.';
+  if (status === 403 && /disabled|has not been used/i.test(msg)) return 'The Google Drive API is not enabled for this app. See the setup guide.';
+  return `Google Drive error ${status}${msg ? `: ${msg}` : ''}`;
+}
+
+// Google Drive's hidden app folder as a sync destination. Only Balimda can
+// see this folder, and Balimda cannot see anything else in the user's Drive.
+// Each chat is its own file; its modifiedAt and deleted flag are kept in the
+// file's appProperties, so listing the folder is the chat index.
+class DriveRemote {
+  /**
+   * @param token   async (force) => access token; force asks for a fresh one
+   */
+  constructor({ token, account, fetch }) {
+    this.token = token;
+    this.account = account || null;
+    this.fetch = fetch || ((...args) => globalThis.fetch(...args));
+    this.usesIndex = false;
+  }
+
+  describe() {
+    return {
+      provider: 'gdrive',
+      label: this.account ? `Google Drive (${this.account})` : 'Google Drive',
+      link: 'https://drive.google.com/drive/settings'
+    };
+  }
+
+  async req(method, url, { body, contentType, text = false } = {}) {
+    for (let attempt = 0; ; attempt++) {
+      let res;
+      try {
+        res = await this.fetch(url, {
+          method,
+          headers: {
+            Authorization: `Bearer ${await this.token(attempt > 0)}`,
+            ...(contentType ? { 'Content-Type': contentType } : {})
+          },
+          body
+        });
+      } catch (err) {
+        if (err instanceof SyncError) throw err;
+        const e = new SyncError(`Can't reach Google Drive (${err.message || err}). Sync will try again when you're online.`);
+        e.offline = true;
+        throw e;
+      }
+      if (res.status === 401 && attempt === 0) continue;
+      const raw = await res.text();
+      if (!res.ok) {
+        let data = null;
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          // not JSON
+        }
+        const err = new SyncError(driveError(res.status, data));
+        err.status = res.status;
+        // A file another device just replaced: start the sync over.
+        if (res.status === 404) err.conflict = true;
+        throw err;
+      }
+      if (text) return raw;
+      return raw ? JSON.parse(raw) : null;
+    }
+  }
+
+  async email() {
+    const r = await this.req('GET', `${DRIVE}/about?fields=user(emailAddress)`);
+    return r && r.user ? r.user.emailAddress : null;
+  }
+
+  async list(q) {
+    const files = [];
+    let page = '';
+    do {
+      const params = new URLSearchParams({
+        spaces: 'appDataFolder',
+        pageSize: '1000',
+        fields: 'nextPageToken,files(id,name,appProperties,createdTime,modifiedTime)'
+      });
+      if (q) params.set('q', q);
+      if (page) params.set('pageToken', page);
+      const r = await this.req('GET', `${DRIVE}/files?${params}`);
+      files.push(...r.files);
+      page = r.nextPageToken || '';
+    } while (page);
+    return files;
+  }
+
+  read(id) {
+    return this.req('GET', `${DRIVE}/files/${id}?alt=media`, { text: true });
+  }
+
+  _multipart(meta, content) {
+    const b = `balimda${Math.random().toString(36).slice(2)}`;
+    return {
+      contentType: `multipart/related; boundary=${b}`,
+      body: `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n` +
+        `--${b}\r\nContent-Type: text/plain\r\n\r\n${content}\r\n--${b}--`
+    };
+  }
+
+  create(name, content, appProperties = {}) {
+    return this.req('POST', `${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id`,
+      this._multipart({ name, parents: ['appDataFolder'], mimeType: 'text/plain', appProperties }, content));
+  }
+
+  update(id, content, appProperties = {}) {
+    return this.req('PATCH', `${DRIVE_UPLOAD}/files/${id}?uploadType=multipart&fields=id`,
+      this._multipart({ appProperties }, content));
+  }
+
+  remove(id) {
+    return this.req('DELETE', `${DRIVE}/files/${id}`, { text: true });
+  }
+
+  // The most recently changed file stands in for a commit id: if it hasn't
+  // changed, nothing in the folder has.
+  async head() {
+    const params = new URLSearchParams({
+      spaces: 'appDataFolder',
+      pageSize: '1',
+      orderBy: 'modifiedTime desc',
+      fields: 'files(id,modifiedTime)'
+    });
+    const r = await this.req('GET', `${DRIVE}/files?${params}`);
+    const f = r.files[0];
+    return f ? `${f.id}@${f.modifiedTime}` : null;
+  }
+
+  async _metaFiles() {
+    const files = await this.list(`name = '${META_FILE}'`);
+    return files.sort((a, b) => String(a.createdTime).localeCompare(String(b.createdTime)));
+  }
+
+  async readMeta() {
+    const [first] = await this._metaFiles();
+    return first ? this.read(first.id) : null;
+  }
+
+  async createMeta(text) {
+    const mine = await this.create(META_FILE, text);
+    // If two devices set up at the same moment, the older file wins.
+    const [first] = await this._metaFiles();
+    if (first && first.id !== mine.id) {
+      await this.remove(mine.id).catch(() => {});
+      return this.read(first.id);
+    }
+    return text;
+  }
+
+  async load() {
+    const head = await this.head();
+    const byName = new Map();
+    const extra = [];
+    for (const f of await this.list()) {
+      const m = Number((f.appProperties || {}).m) || 0;
+      const prev = byName.get(f.name);
+      if (!prev) byName.set(f.name, { ...f, m });
+      else if (f.name !== META_FILE) {
+        // Two devices created the same file at once: keep the newest.
+        const keep = m > prev.m ? { ...f, m } : prev;
+        extra.push(keep === prev ? f : prev);
+        byName.set(f.name, keep);
+      }
+    }
+    if (!byName.has(META_FILE)) throw new SyncError('The sync data in Google Drive was removed. Set up sync again.');
+    await pool(extra, 4, (f) => this.remove(f.id).catch(() => {}));
+
+    const chats = {};
+    for (const f of byName.values()) {
+      const id = (f.name.match(/^chats\/(.+)\.enc$/) || [])[1];
+      const props = f.appProperties || {};
+      if (id) chats[id] = props.d === '1' ? { m: f.m, d: true } : { m: f.m, r: props.r };
+    }
+    const sharedFile = byName.get(SHARED_FILE);
+    const read = (name) => (byName.has(name) ? this.read(byName.get(name).id) : Promise.resolve(null));
+    return {
+      head,
+      files: byName,
+      chats,
+      shared: sharedFile ? { m: sharedFile.m } : null,
+      readChat: (id) => (chats[id] && !chats[id].d ? read(chatPath(id)) : Promise.resolve(null)),
+      readShared: () => read(SHARED_FILE)
+    };
+  }
+
+  async save(snap, { writes, deletes, shared }) {
+    const put = (name, content, props) => {
+      const f = snap.files.get(name);
+      return f ? this.update(f.id, content, props) : this.create(name, content, props);
+    };
+    await pool(writes, 4, (w) => put(chatPath(w.id), w.text, { m: String(w.m), r: w.rev, d: '0' }));
+    // A deleted chat keeps an empty file marked deleted, so other devices
+    // know to delete it too.
+    await pool(deletes, 4, (d) => put(chatPath(d.id), '', { m: String(d.m), d: '1' }));
+    if (shared) await put(SHARED_FILE, shared.text, { m: String(shared.m) });
+    // Another device may have uploaded while we did, so the folder's state
+    // now is not something this device has seen. Returning no head makes the
+    // next sync compare everything again instead of assuming it's current.
+    return null;
+  }
+}
+
+const chatPath = (id) => `chats/${id}.enc`;
+
 // ---- merging -------------------------------------------------------------------
 
 const msgKey = (m) => m.id || `${m.role}|${m.createdAt}|${String(m.content || '').slice(0, 80)}`;
@@ -256,27 +558,60 @@ async function pool(items, limit, fn) {
   await Promise.all(workers);
 }
 
+// ---- encryption settings -----------------------------------------------------------
+
+async function newMeta(passphrase) {
+  const salt = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  const keyBytes = await deriveKeyBytes(passphrase, salt, KDF_ITERATIONS);
+  const meta = {
+    app: 'balimda',
+    format: FORMAT,
+    cipher: 'AES-256-GCM',
+    kdf: 'PBKDF2-SHA256',
+    iterations: KDF_ITERATIONS,
+    salt: toBase64(salt),
+    check: await seal(await importKey(keyBytes), CHECK_TEXT)
+  };
+  return `${JSON.stringify(meta, null, 2)}\n`;
+}
+
+// The key for existing sync data, if the passphrase is right.
+async function keyFromMeta(text, passphrase) {
+  const meta = JSON.parse(text);
+  if (meta.app !== 'balimda' || meta.format > FORMAT) throw new SyncError('This sync data is from a newer version of Balimda. Update the app.');
+  const keyBytes = await deriveKeyBytes(passphrase, fromBase64(meta.salt), meta.iterations);
+  const check = await unseal(await importKey(keyBytes), meta.check).catch(() => null);
+  if (check !== CHECK_TEXT) throw new SyncError('Wrong sync passphrase. Use the same passphrase you chose on your first device.');
+  return keyBytes;
+}
+
 // ---- sync ----------------------------------------------------------------------
 
 class Sync {
   /**
-   * @param storage   Storage instance
-   * @param device    short device name used in commit messages
-   * @param secrets   { encrypt, decrypt } for the token and key at rest
-   * @param fetch     fetch implementation (desktop passes Electron's)
-   * @param onEvent   receives { type: 'status', status } and
-   *                  { type: 'changed', chats, deleted, settings }
-   * @param auto      sync by itself a few seconds after local changes
+   * @param storage     Storage instance
+   * @param device      short device name used in commit messages
+   * @param secrets     { encrypt, decrypt } for tokens and the key at rest
+   * @param fetch       fetch implementation (desktop passes Electron's)
+   * @param googleAuth  Google sign-in for this platform, or null:
+   *                      signIn() -> { account, secret }   (interactive)
+   *                      accessToken(secret, { force }) -> string
+   *                      signOut(secret, account)
+   * @param onEvent     receives { type: 'status', status } and
+   *                    { type: 'changed', chats, deleted, settings }
+   * @param auto        sync by itself a few seconds after local changes
    */
-  constructor({ storage, device = 'device', secrets = {}, fetch, onEvent = () => {}, auto = true }) {
+  constructor({ storage, device = 'device', secrets = {}, fetch, googleAuth = null, onEvent = () => {}, auto = true }) {
     this.auto = auto;
     this.storage = storage;
     this.device = device;
     this.encrypt = secrets.encrypt || ((s) => s);
     this.decrypt = secrets.decrypt || ((s) => s);
     this.fetch = fetch;
+    this.googleAuth = googleAuth;
     this.onEvent = onEvent;
     this.config = null;
+    this.remote = null;
     this.state = {};
     this.running = null;
     this.again = false;
@@ -286,16 +621,35 @@ class Sync {
 
   async load() {
     const cfg = await this.storage.readFile(CONFIG_FILE, null);
-    this.config = cfg && cfg.repo ? { ...cfg, token: this.decrypt(cfg.token), key: this.decrypt(cfg.key) } : null;
+    if (cfg && (cfg.repo || cfg.provider)) {
+      this.config = {
+        ...cfg,
+        provider: cfg.provider || 'github',
+        token: cfg.token ? this.decrypt(cfg.token) : undefined,
+        secret: cfg.secret ? this.decrypt(cfg.secret) : undefined,
+        key: this.decrypt(cfg.key)
+      };
+      this.remote = this._remoteFor(this.config);
+    }
     this.state = (await this.storage.readFile(STATE_FILE, null)) || {};
     if (this.auto) this.storage.onChange(() => this.soon());
     return this.status();
   }
 
+  // Which destinations this build can use.
+  providers() {
+    return { github: true, gdrive: !!this.googleAuth };
+  }
+
   status() {
+    const d = this.remote ? this.remote.describe() : {};
     return {
       configured: !!this.config,
-      repo: this.config ? this.config.repo : null,
+      provider: d.provider || null,
+      label: d.label || null,
+      link: d.link || null,
+      repo: this.config && this.config.provider === 'github' ? this.config.repo : null,
+      providers: this.providers(),
       running: !!this.running,
       lastSync: this.state.lastSync || null,
       error: this.state.error || null,
@@ -307,66 +661,56 @@ class Sync {
     this.onEvent({ type: 'status', status: this.status() });
   }
 
-  _github(cfg = this.config) {
-    return new GitHub({ repo: cfg.repo, token: cfg.token, fetch: this.fetch });
-  }
-
-  // Set up sync with a repository. The first device creates the encryption
-  // settings; later devices must use the same passphrase.
-  async connect({ repo, token, passphrase }) {
-    repo = parseRepo(repo);
-    token = String(token || '').trim();
-    if (!token) throw new SyncError('Enter a GitHub access token.');
-    if (String(passphrase || '').length < 8) throw new SyncError('Use a sync passphrase of at least 8 characters.');
-    const gh = new GitHub({ repo, token, fetch: this.fetch });
-    const info = await gh.info();
-    if (!info.private) throw new SyncError('This repository is public. Use a private repository for your chats.');
-    const branch = info.default_branch || 'main';
-
-    let head = await gh.head(branch);
-    const { tree, files } = head ? await gh.files(head) : { tree: null, files: new Map() };
-    let keyBytes;
-    if (files.has(META_FILE)) {
-      const meta = JSON.parse(await gh.text(files.get(META_FILE)));
-      if (meta.app !== 'balimda' || meta.format > FORMAT) throw new SyncError('This repository has sync data from a newer version of Balimda. Update the app.');
-      keyBytes = await deriveKeyBytes(passphrase, fromBase64(meta.salt), meta.iterations);
-      const check = await unseal(await importKey(keyBytes), meta.check).catch(() => null);
-      if (check !== CHECK_TEXT) throw new SyncError('Wrong sync passphrase. Use the same passphrase you chose on your first device.');
-    } else {
-      const salt = globalThis.crypto.getRandomValues(new Uint8Array(16));
-      keyBytes = await deriveKeyBytes(passphrase, salt, KDF_ITERATIONS);
-      const meta = {
-        app: 'balimda',
-        format: FORMAT,
-        cipher: 'AES-256-GCM',
-        kdf: 'PBKDF2-SHA256',
-        iterations: KDF_ITERATIONS,
-        salt: toBase64(salt),
-        check: await seal(await importKey(keyBytes), CHECK_TEXT)
-      };
-      let baseTree = tree;
-      if (!head) {
-        head = await gh.init(branch);
-        baseTree = (await gh.files(head)).tree;
-      }
-      await gh.commit({
-        branch,
-        parent: head,
-        baseTree,
-        writes: [{ path: META_FILE, text: `${JSON.stringify(meta, null, 2)}\n` }],
-        deletes: [],
-        message: 'Set up Balimda sync (encrypted)'
+  _remoteFor(cfg) {
+    if (cfg.provider === 'gdrive') {
+      return new DriveRemote({
+        account: cfg.account,
+        fetch: this.fetch,
+        token: (force) => {
+          if (!this.googleAuth) throw new SyncError('Google sign-in is not available in this version of the app.');
+          return this.googleAuth.accessToken(cfg.secret, { force });
+        }
       });
     }
+    return new GitHubRemote({ repo: cfg.repo, token: cfg.token, branch: cfg.branch, fetch: this.fetch });
+  }
 
-    this.config = { repo, branch, token, key: toBase64(keyBytes) };
-    await this.storage.writeFile(CONFIG_FILE, {
-      repo,
-      branch,
-      token: this.encrypt(token),
-      key: this.encrypt(this.config.key)
-    });
-    // A fresh start: every chat is compared with the repository once.
+  // Set up sync. The first device creates the encryption settings; later
+  // devices must use the same passphrase.
+  //   { provider: 'github', repo, token, passphrase }
+  //   { provider: 'gdrive', passphrase }   (signs in to Google)
+  async connect({ provider = 'github', repo, token, passphrase }) {
+    if (String(passphrase || '').length < 8) throw new SyncError('Use a sync passphrase of at least 8 characters.');
+    let cfg;
+    let remote;
+    if (provider === 'gdrive') {
+      if (!this.googleAuth) throw new SyncError('Google sign-in is not available in this version of the app.');
+      const signed = await this.googleAuth.signIn();
+      cfg = { provider, account: signed.account || null, secret: signed.secret || null };
+      remote = this._remoteFor(cfg);
+      if (!cfg.account) {
+        cfg.account = await remote.email().catch(() => null);
+        remote.account = cfg.account;
+      }
+    } else {
+      repo = parseRepo(repo);
+      token = String(token || '').trim();
+      if (!token) throw new SyncError('Enter a GitHub access token.');
+      remote = await GitHubRemote.open({ repo, token, fetch: this.fetch });
+      cfg = { provider, repo, branch: remote.branch, token };
+    }
+
+    let meta = await remote.readMeta();
+    if (!meta) meta = await remote.createMeta(await newMeta(passphrase));
+    const keyBytes = await keyFromMeta(meta, passphrase);
+
+    this.config = { ...cfg, key: toBase64(keyBytes) };
+    this.remote = remote;
+    const saved = { ...cfg, key: this.encrypt(this.config.key) };
+    if (cfg.token) saved.token = this.encrypt(cfg.token);
+    if (cfg.secret) saved.secret = this.encrypt(cfg.secret);
+    await this.storage.writeFile(CONFIG_FILE, saved);
+    // A fresh start: every chat is compared with the synced copy once.
     this.state = {};
     await this.storage.writeFile(STATE_FILE, this.state);
     await this.run();
@@ -377,16 +721,21 @@ class Sync {
     clearTimeout(this.timer);
     this.timer = null;
     if (this.running) await this.running.catch(() => {});
+    const cfg = this.config;
     this.config = null;
+    this.remote = null;
     this.state = {};
     await this.storage.writeFile(CONFIG_FILE, null);
     await this.storage.writeFile(STATE_FILE, null);
+    if (cfg && cfg.provider === 'gdrive' && this.googleAuth && this.googleAuth.signOut) {
+      await Promise.resolve(this.googleAuth.signOut(cfg.secret, cfg.account)).catch(() => {});
+    }
     this._emitStatus();
     return this.status();
   }
 
   // Sync a few seconds after a change, and not more than every 20 seconds, so
-  // a streaming reply turns into one commit instead of dozens.
+  // a streaming reply turns into one upload instead of dozens.
   soon() {
     if (!this.config) return;
     clearTimeout(this.timer);
@@ -395,14 +744,14 @@ class Sync {
     if (this.timer && this.timer.unref) this.timer.unref();
   }
 
-  // True when this device has changes the repository doesn't have yet.
+  // True when this device has changes the synced copy doesn't have yet.
   hasLocalChanges() {
     const base = this.state.chats || {};
-    for (const c of this.storage.index) if ((c.modifiedAt || 0) !== base[c.id]) return true;
+    for (const c of this.storage.index) if (c.rev !== base[c.id]) return true;
     return false;
   }
 
-  // Local changes that haven't reached the repository yet.
+  // Local changes that haven't been synced yet.
   pending() {
     return !!this.config && (!!this.running || !!this.timer || this.hasLocalChanges());
   }
@@ -446,13 +795,12 @@ class Sync {
   }
 
   async _syncOnce() {
-    const cfg = this.config;
-    const gh = this._github(cfg);
-    const key = await importKey(fromBase64(cfg.key));
+    const remote = this.remote;
+    const key = await importKey(fromBase64(this.config.key));
     const storage = this.storage;
 
-    const head = await gh.head(cfg.branch);
-    if (!head) throw new SyncError('The sync repository is empty. Connect again to set it up.');
+    const head = await remote.head();
+    if (!head) throw new SyncError('The synced data is gone. Set up sync again.');
     const tomb = await storage.getTombstones();
     const shared = await storage.getSharedSettings();
     if (head === this.state.head && !this.hasLocalChanges() && !Object.keys(tomb).length && shared.modifiedAt === this.state.shared) {
@@ -460,30 +808,41 @@ class Sync {
       return;
     }
 
-    const { tree, files } = await gh.files(head);
-    if (!files.has(META_FILE)) throw new SyncError('The sync repository was reset. Connect again to set it up.');
-    const remote = files.has(INDEX_FILE) ? await unseal(key, await gh.text(files.get(INDEX_FILE))) : { chats: {} };
-    remote.chats = remote.chats || {};
-    const next = { chats: { ...remote.chats }, shared: remote.shared || null };
+    const snap = await remote.load();
+    const remoteIdx = remote.usesIndex
+      ? (snap.indexText ? await unseal(key, snap.indexText) : { chats: {} })
+      : { chats: snap.chats, shared: snap.shared };
+    remoteIdx.chats = remoteIdx.chats || {};
+    const next = { chats: { ...remoteIdx.chats }, shared: remoteIdx.shared || null };
     const base = this.state.chats || {};
-    const local = new Map(storage.index.map((c) => [c.id, c.modifiedAt || 0]));
-    const chatPath = (id) => `chats/${id}.enc`;
-    const fetchChat = async (id) => (files.has(chatPath(id)) ? unseal(key, await gh.text(files.get(chatPath(id)))) : null);
+    const local = new Map(storage.index.map((c) => [c.id, c]));
+    const fetchChat = async (id) => {
+      const text = await snap.readChat(id);
+      return text ? unseal(key, text) : null;
+    };
 
+    // Versions are compared by revision id; modifiedAt only decides which of
+    // two versions is newer.
     const pulls = [];
     const pushes = [];
     const merges = [];
     const localDeletes = [];
     const remoteDeletes = [];
-    for (const id of new Set([...local.keys(), ...Object.keys(remote.chats), ...Object.keys(tomb)])) {
-      const r = remote.chats[id];
-      const lm = local.get(id);
-      if (lm != null) {
+    for (const id of new Set([...local.keys(), ...Object.keys(remoteIdx.chats), ...Object.keys(tomb)])) {
+      const r = remoteIdx.chats[id];
+      const l = local.get(id);
+      if (l) {
+        const lm = l.modifiedAt || 0;
         if (!r) pushes.push(id);
         else if (r.d) (lm > r.m ? pushes : localDeletes).push(id);
-        else if (r.m === lm) continue;
-        else if (lm > (base[id] || 0) && r.m > (base[id] || 0)) merges.push(id);
-        else (r.m > lm ? pulls : pushes).push(id);
+        else {
+          const rr = r.r || `m${r.m}`;
+          if (rr === l.rev) continue;
+          const localChanged = l.rev !== base[id];
+          const remoteChanged = rr !== base[id];
+          if (localChanged && remoteChanged) merges.push(id);
+          else (remoteChanged ? pulls : pushes).push(id);
+        }
       } else if (r && !r.d) {
         if (tomb[id] != null && tomb[id] >= r.m) remoteDeletes.push(id);
         else pulls.push(id);
@@ -495,7 +854,8 @@ class Sync {
     await pool(pulls, 6, async (id) => {
       const chat = await fetchChat(id);
       if (!chat) return;
-      chat.modifiedAt = remote.chats[id].m;
+      chat.modifiedAt = remoteIdx.chats[id].m;
+      chat.rev = remoteIdx.chats[id].r || `m${chat.modifiedAt}`;
       await storage.putSyncedChat(chat);
       changed.push(id);
     });
@@ -507,9 +867,10 @@ class Sync {
         pushes.push(id);
         return;
       }
-      theirs.modifiedAt = remote.chats[id].m;
+      theirs.modifiedAt = remoteIdx.chats[id].m;
       const merged = mergeChats(mine, theirs);
       merged.modifiedAt = Math.max(Date.now(), mine.modifiedAt + 1, theirs.modifiedAt + 1);
+      merged.rev = globalThis.crypto.randomUUID();
       await storage.putSyncedChat(merged);
       changed.push(id);
       pushes.push(id);
@@ -520,48 +881,49 @@ class Sync {
     }
 
     const writes = [];
-    const deletes = [];
     for (const id of pushes) {
       const chat = await storage.getChat(id);
       if (!chat) continue;
       // Chats saved before sync existed have no modifiedAt yet.
-      chat.modifiedAt = chat.modifiedAt || chat.updatedAt || local.get(id) || 1;
-      writes.push({ path: chatPath(id), text: await seal(key, chat) });
-      next.chats[id] = { m: chat.modifiedAt };
+      chat.modifiedAt = chat.modifiedAt || chat.updatedAt || 1;
+      chat.rev = chat.rev || `m${chat.modifiedAt}`;
+      writes.push({ id, m: chat.modifiedAt, rev: chat.rev, text: await seal(key, chat) });
+      next.chats[id] = { m: chat.modifiedAt, r: chat.rev };
     }
-    for (const id of remoteDeletes) {
-      next.chats[id] = { m: Math.max(tomb[id], remote.chats[id].m), d: true };
-      if (files.has(chatPath(id))) deletes.push(chatPath(id));
-    }
+    const deletes = remoteDeletes.map((id) => {
+      const m = Math.max(tomb[id], remoteIdx.chats[id].m);
+      next.chats[id] = { m, d: true };
+      return { id, m };
+    });
 
     // Shared settings: newest wins.
     let settingsChanged = false;
-    const rs = remote.shared;
-    if (rs && rs.m > shared.modifiedAt && files.has(SHARED_FILE)) {
-      await storage.applySharedSettings(await unseal(key, await gh.text(files.get(SHARED_FILE))), rs.m);
+    let sharedWrite = null;
+    const rs = remoteIdx.shared;
+    const rsText = rs && rs.m > shared.modifiedAt ? await snap.readShared() : null;
+    if (rsText) {
+      await storage.applySharedSettings(await unseal(key, rsText), rs.m);
       settingsChanged = true;
     } else if (!rs || shared.modifiedAt > rs.m) {
-      writes.push({ path: SHARED_FILE, text: await seal(key, shared.data) });
+      sharedWrite = { m: shared.modifiedAt, text: await seal(key, shared.data) };
       next.shared = { m: shared.modifiedAt };
     }
 
     let newHead = head;
-    if (writes.length || deletes.length) {
-      writes.push({ path: INDEX_FILE, text: await seal(key, next) });
-      newHead = await gh.commit({
-        branch: cfg.branch,
-        parent: head,
-        baseTree: tree,
+    if (writes.length || deletes.length || sharedWrite) {
+      newHead = await remote.save(snap, {
         writes,
         deletes,
+        shared: sharedWrite,
+        indexText: remote.usesIndex ? await seal(key, next) : null,
         message: `Sync from ${this.device}`
       });
       this.lastPush = Date.now();
     }
 
-    // Everything on this device now matches the repository.
+    // Everything on this device now matches the synced copy.
     const nextBase = {};
-    for (const c of storage.index) nextBase[c.id] = c.modifiedAt || 0;
+    for (const c of storage.index) nextBase[c.id] = c.rev;
     this.state = {
       ...this.state,
       head: newHead,
@@ -578,4 +940,4 @@ class Sync {
   }
 }
 
-module.exports = { Sync, SyncError, GitHub, mergeChats, parseRepo, seal, unseal, importKey, deriveKeyBytes };
+module.exports = { Sync, SyncError, GitHub, GitHubRemote, DriveRemote, mergeChats, parseRepo, seal, unseal, importKey, deriveKeyBytes };

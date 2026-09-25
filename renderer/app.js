@@ -957,7 +957,7 @@ function renderSyncBadge() {
   if (!label) return;
   btn.textContent = label.text;
   btn.className = `sync-status ${label.cls}`;
-  btn.title = S.sync.error || `Synced with github.com/${S.sync.repo}. Click to sync now.`;
+  btn.title = S.sync.error || `Synced with ${S.sync.label}. Click to sync now.`;
 }
 
 // Another device changed chats or settings: show the new versions.
@@ -1005,7 +1005,9 @@ function syncView(onCleanup, field) {
   const connectedView = (st) => {
     const label = syncLabel(st);
     return [
-      field('Syncing with', link(`github.com/${st.repo}`, `https://github.com/${st.repo}`)),
+      field('Syncing with', st.provider === 'gdrive'
+        ? h('div', {}, st.label, h('div', { class: 'help', text: 'In a hidden Balimda folder in your Drive. It uses a little of your Drive storage.' }))
+        : link(st.label, st.link)),
       h('p', { class: `status ${label.cls}`, text: label.text }),
       st.error ? h('p', { class: 'help', text: st.error }) : null,
       h('div', { class: 'field-row' },
@@ -1024,19 +1026,29 @@ function syncView(onCleanup, field) {
     ];
   };
 
-  const setupView = () => {
-    const repo = h('input', { class: 'input', placeholder: 'your-name/balimda-sync', autocapitalize: 'off', spellcheck: 'false' });
-    const token = h('input', { class: 'input', type: 'password', placeholder: 'github_pat_…', autocomplete: 'off' });
+  // Which destination the setup form shows. Google Drive is the easy one,
+  // when this build can sign in to Google.
+  let choice = (S.sync && S.sync.providers && S.sync.providers.gdrive) ? 'gdrive' : 'github';
+
+  const passField = () => {
     const pass = h('input', { class: 'input', type: 'password', placeholder: 'At least 8 characters', autocomplete: 'new-password' });
+    return {
+      pass,
+      node: field('Sync passphrase', pass, 'Encrypts your chats. Use the same one on every device. It cannot be recovered, so keep it somewhere safe.')
+    };
+  };
+
+  const connectButton = (label, busyText, getOptions) => {
     const msg = h('p', { class: 'status' });
-    const btn = h('button', { class: 'btn primary', text: 'Turn on sync' });
+    const btn = h('button', { class: 'btn primary', text: label });
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       msg.className = 'status';
-      msg.textContent = 'Connecting… (the first sync can take a minute)';
+      msg.textContent = busyText;
       try {
-        S.sync = await api.sync.connect({ repo: repo.value, token: token.value, passphrase: pass.value });
+        S.sync = await api.sync.connect(getOptions());
         renderSyncBadge();
+        shownConfigured = null;
         draw();
         toast(S.sync.error ? 'Sync is on, but the first sync had a problem' : 'Sync is on');
       } catch (err) {
@@ -1045,8 +1057,29 @@ function syncView(onCleanup, field) {
         btn.disabled = false;
       }
     });
+    return [h('div', { class: 'field-row' }, btn), msg];
+  };
+
+  const driveForm = () => {
+    const { pass, node } = passField();
     return [
-      h('p', { text: 'Start a chat on one device and continue it on another. Balimda keeps your chats in a private GitHub repository that only you can access. They are encrypted on this device with your sync passphrase first, so not even GitHub can read them.' }),
+      h('p', { text: 'Your chats are kept in a hidden Balimda folder in your Google Drive. Balimda cannot see anything else in your Drive, and your chats are encrypted on this device first, so not even Google can read them.' }),
+      h('ol', { class: 'steps' },
+        h('li', {}, 'Choose a sync passphrase below.'),
+        h('li', {}, S.info.mobile ? 'Tap the button and pick your Google account.' : 'Click the button, then sign in to Google in your browser.'),
+        h('li', {}, 'On your other devices, sign in to the same Google account with the same passphrase.')),
+      node,
+      ...connectButton('Sign in with Google', S.info.mobile ? 'Signing in…' : 'Finish signing in in your browser…',
+        () => ({ provider: 'gdrive', passphrase: pass.value }))
+    ];
+  };
+
+  const githubForm = () => {
+    const repo = h('input', { class: 'input', placeholder: 'your-name/balimda-sync', autocapitalize: 'off', spellcheck: 'false' });
+    const token = h('input', { class: 'input', type: 'password', placeholder: 'github_pat_…', autocomplete: 'off' });
+    const { pass, node } = passField();
+    return [
+      h('p', { text: 'Your chats are kept in a private GitHub repository that only you can access. They are encrypted on this device with your sync passphrase first, so not even GitHub can read them.' }),
       h('ol', { class: 'steps' },
         h('li', {}, 'Create a private repository, for example "balimda-sync": ', link('github.com/new', 'https://github.com/new'), '. Set it to Private.'),
         h('li', {}, 'Create an access token: ', link('new fine-grained token', 'https://github.com/settings/personal-access-tokens/new'),
@@ -1054,9 +1087,30 @@ function syncView(onCleanup, field) {
         h('li', {}, 'Enter them here with a sync passphrase. On your other devices use the same repository and passphrase (a token made on that device works too).')),
       field('Repository', repo),
       field('Access token', token),
-      field('Sync passphrase', pass, 'Encrypts your chats. Use the same one on every device. It cannot be recovered, so keep it somewhere safe.'),
-      h('div', { class: 'field-row' }, btn),
-      msg
+      node,
+      ...connectButton('Turn on sync', 'Connecting… (the first sync can take a minute)',
+        () => ({ provider: 'github', repo: repo.value, token: token.value, passphrase: pass.value }))
+    ];
+  };
+
+  const setupView = () => {
+    const providers = (S.sync && S.sync.providers) || {};
+    const intro = h('p', { class: 'help', text: 'Start a chat on one device and continue it on another. Chats, assistants and memory stay the same everywhere.' });
+    if (!providers.gdrive) return [intro, ...githubForm()];
+    const option = (id, title, sub) => h('button', {
+      class: `choice ${choice === id ? 'active' : ''}`,
+      onclick: () => {
+        choice = id;
+        shownConfigured = null;
+        draw();
+      }
+    }, h('strong', { text: title }), h('span', { text: sub }));
+    return [
+      intro,
+      h('div', { class: 'choices' },
+        option('gdrive', 'Google Drive', 'Recommended. Just sign in.'),
+        option('github', 'GitHub', 'For developers. Uses a private repository.')),
+      ...(choice === 'gdrive' ? driveForm() : githubForm())
     ];
   };
 

@@ -9,3 +9,6 @@ www/
 *.keystore
 *.jks
 !android/app/balimda-test.keystore
+
+# Google sign-in client for desktop builds (written by CI from repository secrets)
+google-oauth.json

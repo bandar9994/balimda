@@ -36,6 +36,19 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Google sign-in for Drive sync. Without these secrets the app still
+      # builds, but only offers GitHub for sync.
+      - name: Add Google sign-in client
+        shell: bash
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.BALIMDA_GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.BALIMDA_GOOGLE_CLIENT_SECRET }}
+        run: |
+          if [ -z "$GOOGLE_CLIENT_ID" ] || [ -z "$GOOGLE_CLIENT_SECRET" ]; then
+            echo "::warning::BALIMDA_GOOGLE_CLIENT_ID / BALIMDA_GOOGLE_CLIENT_SECRET are not set, so this build can't sync with Google Drive."
+            exit 0
+          fi
+          node -e "require('fs').writeFileSync('google-oauth.json', JSON.stringify({ clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET }))"
       - run: npx electron-builder --publish never
       - uses: actions/upload-artifact@v4
         with:

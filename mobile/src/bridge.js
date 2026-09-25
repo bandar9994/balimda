@@ -6,13 +6,13 @@
 // UI in renderer/app.js talks to. On desktop the same API comes from
 // preload.js + main.js; here everything runs inside the app's web view.
 
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { App } from '@capacitor/app';
 import { Share } from '@capacitor/share';
 import { Storage } from '../../src/storage.js';
 import { PROVIDERS, normalizeMessages } from '../../src/providers.js';
-import { Sync } from '../../src/sync.js';
+import { Sync, SyncError } from '../../src/sync.js';
 import * as local from './on-device.js';
 import * as native from './native-engine.js';
 
@@ -73,12 +73,49 @@ const MOBILE_DEFAULTS = {
 
 const ready = Storage.open(fsBackend, { defaults: MOBILE_DEFAULTS });
 
+// Google sign-in for Drive sync, through Google Play services
+// (android/.../GoogleAuthPlugin.java). Play services keeps the grant and
+// renews tokens; we only cache the current access token for a while.
+const GoogleAuth = registerPlugin('GoogleAuth');
+function nativeGoogleAuth() {
+  let cached = null;  // { token, until }
+  const call = async (method, opts) => {
+    try {
+      return await GoogleAuth[method](opts);
+    } catch (err) {
+      const e = new SyncError(err.message || 'Google sign-in failed.');
+      e.offline = err.code === 'NETWORK';
+      throw e;
+    }
+  };
+  const remember = (r) => {
+    cached = { token: r.accessToken, until: Date.now() + 45 * 60 * 1000 };
+    return r.accessToken;
+  };
+  return {
+    async signIn() {
+      remember(await call('authorize', { interactive: true }));
+      return { account: null, secret: null };
+    },
+    async accessToken(_secret, { force = false } = {}) {
+      if (!force && cached && Date.now() < cached.until) return cached.token;
+      if (force && cached) await call('clearToken', { token: cached.token }).catch(() => {});
+      return remember(await call('authorize', { interactive: false }));
+    },
+    async signOut(_secret, email) {
+      cached = null;
+      await call('signOut', { email }).catch(() => {});
+    }
+  };
+}
+
 // Chat sync with the desktop app (see src/sync.js).
 const syncListeners = new Set();
 const syncReady = ready.then(async (storage) => {
   const sync = new Sync({
     storage,
     device: `phone (${Capacitor.getPlatform()})`,
+    googleAuth: isNative && Capacitor.isPluginAvailable('GoogleAuth') ? nativeGoogleAuth() : null,
     onEvent: (evt) => {
       for (const cb of syncListeners) cb(evt);
     }

@@ -174,6 +174,7 @@ class Storage {
       createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,
       modifiedAt: chat.modifiedAt || chat.updatedAt || 1,
+      rev: chat.rev || `m${chat.modifiedAt || chat.updatedAt || 1}`,
       pinned: !!chat.pinned,
       assistantId: chat.assistantId || null,
       model: chat.model || null,
@@ -185,7 +186,10 @@ class Storage {
   async _loadIndex() {
     const saved = await this._readJson('index.json', null);
     if (saved && Array.isArray(saved.chats)) {
-      for (const c of saved.chats) c.modifiedAt = c.modifiedAt || c.updatedAt || 1;
+      for (const c of saved.chats) {
+        c.modifiedAt = c.modifiedAt || c.updatedAt || 1;
+        c.rev = c.rev || `m${c.modifiedAt}`;
+      }
       return saved.chats;
     }
     return this.rebuildIndex();
@@ -257,6 +261,10 @@ class Storage {
       chat.updatedAt = chat.updatedAt || Date.now();
       chat.createdAt = chat.createdAt || chat.updatedAt;
       if (local || !chat.modifiedAt) chat.modifiedAt = Math.max(Date.now(), (chat.modifiedAt || 0) + 1);
+      // Every local save gets a new revision id, so sync can tell versions
+      // apart even when two devices save in the same millisecond.
+      if (local) chat.rev = newId();
+      else chat.rev = chat.rev || `m${chat.modifiedAt}`;
       await this._writeJson(file, chat);
       const meta = this._meta(chat);
       const i = this.index.findIndex((c) => c.id === chat.id);
