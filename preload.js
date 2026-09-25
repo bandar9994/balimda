@@ -43,6 +43,17 @@ contextBridge.exposeInMainWorld('balimda', {
       return () => ipcRenderer.removeListener('ai:event', listener);
     }
   },
+  sync: {
+    status: invoke('sync:status'),
+    connect: invoke('sync:connect'),
+    disconnect: invoke('sync:disconnect'),
+    now: invoke('sync:now'),
+    onEvent(cb) {
+      const listener = (_e, evt) => cb(evt);
+      ipcRenderer.on('sync:event', listener);
+      return () => ipcRenderer.removeListener('sync:event', listener);
+    }
+  },
   onMenu(cb) {
     ipcRenderer.on('menu', (_e, action) => cb(action));
   }

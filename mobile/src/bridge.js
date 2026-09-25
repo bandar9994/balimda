@@ -12,6 +12,7 @@ import { App } from '@capacitor/app';
 import { Share } from '@capacitor/share';
 import { Storage } from '../../src/storage.js';
 import { PROVIDERS, normalizeMessages } from '../../src/providers.js';
+import { Sync } from '../../src/sync.js';
 import * as local from './on-device.js';
 import * as native from './native-engine.js';
 
@@ -71,6 +72,21 @@ const MOBILE_DEFAULTS = {
 };
 
 const ready = Storage.open(fsBackend, { defaults: MOBILE_DEFAULTS });
+
+// Chat sync with the desktop app (see src/sync.js).
+const syncListeners = new Set();
+const syncReady = ready.then(async (storage) => {
+  const sync = new Sync({
+    storage,
+    device: `phone (${Capacitor.getPlatform()})`,
+    onEvent: (evt) => {
+      for (const cb of syncListeners) cb(evt);
+    }
+  });
+  await sync.load();
+  return sync;
+});
+const withSync = (fn) => async (...args) => fn(await syncReady, ...args);
 
 // On-device engine: native llama.cpp (CPU + Adreno GPU) when the Android app
 // has it, otherwise llama.cpp compiled to WebAssembly.
@@ -257,6 +273,16 @@ window.balimda = {
       return () => aiListeners.delete(cb);
     }
   },
+  sync: {
+    status: withSync((s) => s.status()),
+    connect: withSync((s, opts) => s.connect(opts)),
+    disconnect: withSync((s) => s.disconnect()),
+    now: withSync((s) => s.run()),
+    onEvent(cb) {
+      syncListeners.add(cb);
+      return () => syncListeners.delete(cb);
+    }
+  },
   onDevice: {
     async engine() {
       const info = await nativeInfo;
@@ -306,3 +332,19 @@ if (isNative) {
     for (const cb of menuListeners) cb('back');
   });
 }
+
+// Sync when the app opens, when you come back to it, every minute while it's
+// on screen, and when you leave it (so the PC gets your last messages).
+syncReady.then((sync) => {
+  sync.run();
+  setInterval(() => {
+    if (document.visibilityState === 'visible') sync.run();
+  }, 60 * 1000);
+  document.addEventListener('visibilitychange', () => sync.run());
+  if (isNative) {
+    App.addListener('resume', () => sync.run());
+    App.addListener('pause', () => {
+      if (sync.pending()) sync.run();
+    });
+  }
+});
