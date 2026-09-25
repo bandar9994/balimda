@@ -31,4 +31,6 @@ To stop syncing, open **Settings → Sync → Stop syncing**. For Google Drive, 
 
 ## Contact
 
-Questions: https://github.com/bandar9994/balimda
+Questions: https://github.com/bandar9994
+
+This policy is also published at https://bandar9994.github.io/privacy.html.

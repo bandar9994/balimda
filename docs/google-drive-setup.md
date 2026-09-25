@@ -18,8 +18,13 @@ basic verification, with no security review.
 Open **Google Auth Platform** (in the menu, or search for "OAuth consent screen").
 
 - **Branding**:
-  - App name **Balimda**, your support email, and the logo (`build/icon.png`).
-  - Links to the app's home page and privacy policy. [PRIVACY.md](../PRIVACY.md) is ready to use, but the link must be public, for example a public copy of it on GitHub Pages.
+  - App name **Balimda** and your support email.
+  - Logo: `site/logo-120.png` (120×120). Adding a logo means Google must verify the app before it shows the logo, so add it when you publish.
+  - Home page: `https://bandar9994.github.io/`
+  - Privacy policy: `https://bandar9994.github.io/privacy.html`
+  - Authorized domain: `bandar9994.github.io`
+
+  The website lives in the public `bandar9994.github.io` repository, which holds only the files in `site/`. Copy any changes there.
 - **Audience**: **External**.
 - **Data access**: **Add or remove scopes**, then add `https://www.googleapis.com/auth/drive.appdata` (shown as "See, create, and delete its own configuration data in your Google Drive").
 
