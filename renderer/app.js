@@ -1,6 +1,6 @@
-// Balimda — © 2026 Bandar. All rights reserved.
+// Balimda — © 2026 Bandar Altariqi. All rights reserved.
 // Licensed under the Balimda License (see LICENSE): non-commercial use only;
-// keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+// keep the Balimda name and the "Balimda by Bandar Altariqi" credit; no rebranding.
 
 /* global marked, DOMPurify */
 'use strict';
@@ -96,7 +96,7 @@ function displayModel(name) {
 }
 
 // Ownership and license, shown on the About page. See LICENSE.
-const AUTHOR = 'Bandar';
+const AUTHOR = 'Bandar Altariqi';
 const PROJECT_URL = 'https://github.com/bandar9994/balimda';
 const COPYRIGHT = `© 2026 ${AUTHOR}. All rights reserved.`;
 
@@ -1121,7 +1121,7 @@ function openSettings(tab = 'general') {
         h('p', { class: 'help', text: COPYRIGHT }),
         h('p', { text: 'Balimda is a private AI chat app that remembers every chat. It runs models on your device, on your own computer, or in the cloud. Your chats stay on your device.' }),
         field('License', h('div', {},
-          h('p', { class: 'help', text: 'Free for personal, non-commercial use under the Balimda License. You may share or change it only if it keeps the Balimda name and the "Balimda by Bandar" credit. It may not be rebranded or used commercially without written permission from Bandar.' }),
+          h('p', { class: 'help', text: 'Free for personal, non-commercial use under the Balimda License. You may share or change it only if it keeps the Balimda name and the "Balimda by Bandar Altariqi" credit. It may not be rebranded or used commercially without written permission from Bandar Altariqi.' }),
           h('div', { class: 'field-row' },
             h('button', { class: 'btn', text: 'Read the license', onclick: () => showLegal('license', 'Balimda License') }),
             h('button', { class: 'btn', text: 'Open-source credits', onclick: () => showLegal('notices', 'Third-party notices') })))),

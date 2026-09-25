@@ -1,6 +1,6 @@
 # Third-party notices
 
-Balimda is © 2026 Bandar and licensed under the [Balimda License](LICENSE).
+Balimda is © 2026 Bandar Altariqi and licensed under the [Balimda License](LICENSE).
 It is built with the open-source components below. Each one remains under
 its own license, and the Balimda License does not change or limit it.
 

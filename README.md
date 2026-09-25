@@ -1,6 +1,6 @@
 # Balimda
 
-**Balimda by Bandar**: a private AI chat app for **Windows, macOS, Linux and Android** (iOS is coming next) that **remembers every session and chat**.
+**Balimda by Bandar Altariqi**: a private AI chat app for **Windows, macOS, Linux and Android** (iOS is coming next) that **remembers every session and chat**.
 
 - **Every chat is saved** on your device as it happens, including replies still being written. Close the app whenever you like and you'll be back where you left off: the same chat and even any half-typed message.
 - **Private, offline models on your phone**: download a small model (Llama 3.2, Qwen 2.5/3, Gemma 3…) once, then chat with no internet.
@@ -144,11 +144,11 @@ npm run icons         # redraw the app icon, Android launcher icons and splash s
 
 ## License
 
-**Balimda © 2026 Bandar. All rights reserved.** Balimda is released under the [Balimda License](LICENSE). In short:
+**Balimda © 2026 Bandar Altariqi. All rights reserved.** Balimda is released under the [Balimda License](LICENSE). In short:
 
 - ✅ You may use, study, change and share it **for non-commercial purposes**.
-- ✅ Every copy or changed version must keep the **Balimda** name, logo and icon, and credit **"Balimda by Bandar"** with a link to this repository. Changed versions must say they were changed.
+- ✅ Every copy or changed version must keep the **Balimda** name, logo and icon, and credit **"Balimda by Bandar Altariqi"** with a link to this repository. Changed versions must say they were changed.
 - ❌ You may **not rebrand** it: no renaming, removing the brand, or publishing it under another name or author.
-- ❌ You may **not use it commercially** (selling it, paid products or services, ads, subscriptions) without written permission from Bandar.
+- ❌ You may **not use it commercially** (selling it, paid products or services, ads, subscriptions) without written permission from Bandar Altariqi.
 
 Balimda includes open-source components under their own licenses; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

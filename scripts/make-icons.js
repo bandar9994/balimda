@@ -1,6 +1,6 @@
-// Balimda — © 2026 Bandar. All rights reserved.
+// Balimda — © 2026 Bandar Altariqi. All rights reserved.
 // Licensed under the Balimda License (see LICENSE): non-commercial use only;
-// keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+// keep the Balimda name and the "Balimda by Bandar Altariqi" credit; no rebranding.
 
 // Draws the Balimda icon (chat bubble with a diamond on an indigo gradient) and
 // writes the desktop icon plus Android launcher icons and splash screens.
