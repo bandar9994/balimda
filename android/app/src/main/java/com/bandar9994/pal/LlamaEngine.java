@@ -58,8 +58,12 @@ public final class LlamaEngine {
 
     public static native long nativeLoad(String path, int nCtx, int nGpuLayers, int nThreads);
 
+    /** e.g. "offloaded 29/29 layers to GPU", or "" when the model runs on the CPU only. */
+    public static native String nativeOffload(long handle);
+
     public static native void nativeFree(long handle);
 
+    /** Returns "reason\tpromptTokens\tpromptMs\tgeneratedTokens\tgenerationMs". */
     public static native String nativeComplete(
         long handle,
         String[] roles,

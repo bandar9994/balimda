@@ -551,13 +551,34 @@ function renderMessage(chat, msg, index) {
     h('div', { class: 'body' },
       h('div', { class: 'meta' },
         h('span', { text: isUser ? 'You' : pal.name }),
-        !isUser && msg.model ? h('span', { text: `· ${msg.model.model}` }) : null,
+        !isUser && msg.model ? h('span', { text: `· ${displayModel(msg.model.model)}` }) : null,
+        !isUser && msg.stats ? statsBadge(msg.stats) : null,
         when ? h('span', { text: `· ${when}` }) : null),
       content,
       msg.error ? h('div', { class: 'error', text: msg.error }) : null,
       msg.notice ? h('div', { class: 'msg-notice', text: msg.notice }) : null,
       msg.pending ? null : actions));
   return node;
+}
+
+// "GPU · 24 tok/s" under on-device replies, with details on tap/hover.
+function statsBadge(st) {
+  const speed = st.ms > 0 ? st.tokens / (st.ms / 1000) : 0;
+  const onGpu = /^GPU/.test(st.device || '');
+  const details = [
+    `Ran on: ${st.device}`,
+    st.offload ? `llama.cpp ${st.offload}` : 'All layers on the CPU',
+    `Reply: ${st.tokens} tokens in ${(st.ms / 1000).toFixed(1)} s (${speed.toFixed(1)} tokens/s)`,
+    st.promptTokens ? `Reading the chat: ${st.promptTokens} tokens in ${(st.promptMs / 1000).toFixed(1)} s` : 'Reading the chat: reused from memory'
+  ].join('\n');
+  return h('span', {
+    class: `stats ${onGpu ? 'gpu' : 'cpu'}`,
+    title: details,
+    role: 'button',
+    tabindex: 0,
+    onclick: () => openModal({ title: 'How this reply ran', body: h('div', { style: 'white-space: pre-wrap', text: details }) }),
+    text: `· ${onGpu ? 'GPU' : 'CPU'}${speed ? ` · ${speed.toFixed(1)} tok/s` : ''}`
+  });
 }
 
 function fillContent(container, msg) {
@@ -802,6 +823,7 @@ async function runCompletion(chat) {
   S.requests.delete(requestId);
   msg.pending = false;
   if (!res.ok) msg.error = `Error: ${res.error}`;
+  if (res.stats) msg.stats = res.stats;
   if (res.ok && res.stopReason === 'max_tokens') msg.notice = 'The reply was cut off at the length limit. Ask it to continue, or raise "Max tokens" in Settings.';
   chat.updatedAt = Date.now();
   await saveChatNow(chat);
