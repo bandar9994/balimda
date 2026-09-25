@@ -1,6 +1,6 @@
-// Balimda — © 2026 Bandar. All rights reserved.
+// Balimda — © 2026 Bandar Altariqi. All rights reserved.
 // Licensed under the Balimda License (see LICENSE): non-commercial use only;
-// keep the Balimda name and the "Balimda by Bandar" credit; no rebranding.
+// keep the Balimda name and the "Balimda by Bandar Altariqi" credit; no rebranding.
 
 // Native on-device engine (Android): llama.cpp compiled for the phone, running
 // on the CPU or, on Snapdragon phones, the Adreno GPU via OpenCL. Talks to
