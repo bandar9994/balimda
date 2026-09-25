@@ -53,6 +53,14 @@ const DEFAULT_SETTINGS = {
 
 const ID_RE = /^[A-Za-z0-9-]+$/;
 
+// Settings that follow the user between devices when sync is on. Server
+// addresses and API keys differ per device, so they stay local.
+const SHARED_SETTINGS = ['assistants', 'memory', 'memoryEnabled'];
+
+function pickShared(settings) {
+  return Object.fromEntries(SHARED_SETTINGS.map((k) => [k, settings[k]]));
+}
+
 function newId() {
   return globalThis.crypto.randomUUID();
 }
@@ -113,6 +121,24 @@ class Storage {
     if (Array.isArray(defaults.assistants)) this.defaults.assistants = defaults.assistants;
     this.index = [];
     this._queue = Promise.resolve();
+    this._listeners = new Set();
+  }
+
+  // Called after the user changes chats or shared settings (not for changes
+  // that came in through sync). Used to schedule a sync.
+  onChange(cb) {
+    this._listeners.add(cb);
+    return () => this._listeners.delete(cb);
+  }
+
+  _changed(what) {
+    for (const cb of this._listeners) {
+      try {
+        cb(what);
+      } catch {
+        // a listener must never break saving
+      }
+    }
   }
 
   // Run mutations one at a time so concurrent saves never clobber index.json.
@@ -147,6 +173,7 @@ class Storage {
       title: chat.title || 'New chat',
       createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,
+      modifiedAt: chat.modifiedAt || chat.updatedAt || 1,
       pinned: !!chat.pinned,
       assistantId: chat.assistantId || null,
       model: chat.model || null,
@@ -157,7 +184,10 @@ class Storage {
 
   async _loadIndex() {
     const saved = await this._readJson('index.json', null);
-    if (saved && Array.isArray(saved.chats)) return saved.chats;
+    if (saved && Array.isArray(saved.chats)) {
+      for (const c of saved.chats) c.modifiedAt = c.modifiedAt || c.updatedAt || 1;
+      return saved.chats;
+    }
     return this.rebuildIndex();
   }
 
@@ -206,6 +236,15 @@ class Storage {
   }
 
   saveChat(chat) {
+    return this._putChat(chat, { local: true });
+  }
+
+  // Store a chat that arrived through sync, keeping its modifiedAt.
+  putSyncedChat(chat) {
+    return this._putChat(chat, { local: false });
+  }
+
+  _putChat(chat, { local }) {
     if (!chat || !chat.id) return Promise.reject(new Error('Chat must have an id'));
     let file;
     try {
@@ -214,32 +253,65 @@ class Storage {
       return Promise.reject(err);
     }
     upgradeChat(chat);
-    return this._serial(async () => {
+    const run = this._serial(async () => {
       chat.updatedAt = chat.updatedAt || Date.now();
       chat.createdAt = chat.createdAt || chat.updatedAt;
+      if (local || !chat.modifiedAt) chat.modifiedAt = Math.max(Date.now(), (chat.modifiedAt || 0) + 1);
       await this._writeJson(file, chat);
       const meta = this._meta(chat);
       const i = this.index.findIndex((c) => c.id === chat.id);
       if (i >= 0) this.index[i] = meta;
       else this.index.push(meta);
       await this._saveIndex();
+      if (!local) await this._dropTombstones([chat.id]);
       return chat;
     });
+    if (local) run.then(() => this._changed('chat'), () => {});
+    return run;
   }
 
   deleteChat(id) {
+    return this._removeChat(id, { local: true });
+  }
+
+  // Delete a chat because it was deleted on another device.
+  deleteSyncedChat(id) {
+    return this._removeChat(id, { local: false });
+  }
+
+  _removeChat(id, { local }) {
     let file;
     try {
       file = this._chatFile(id);
     } catch (err) {
       return Promise.reject(err);
     }
-    return this._serial(async () => {
+    const run = this._serial(async () => {
       await this.backend.remove(file);
       this.index = this.index.filter((c) => c.id !== id);
       await this._saveIndex();
+      // Remember the deletion so sync can remove the chat on other devices.
+      if (local) await this._writeJson('deleted.json', { ...(await this.getTombstones()), [id]: Date.now() });
       return true;
     });
+    if (local) run.then(() => this._changed('chat'), () => {});
+    return run;
+  }
+
+  getTombstones() {
+    return this._readJson('deleted.json', {});
+  }
+
+  // Forget deletions once every device can see them.
+  clearTombstones(ids) {
+    return this._serial(() => this._dropTombstones(ids));
+  }
+
+  async _dropTombstones(ids) {
+    const tomb = await this.getTombstones();
+    if (!ids.some((id) => id in tomb)) return;
+    for (const id of ids) delete tomb[id];
+    await this._writeJson('deleted.json', tomb);
   }
 
   // Full-text search over titles and message contents.
@@ -309,8 +381,40 @@ class Storage {
     for (const p of Object.values(copy.providers || {})) {
       if (p.apiKey) p.apiKey = this.encrypt(p.apiKey);
     }
-    await this._serial(() => this._writeJson('settings.json', copy));
+    let sharedChanged = false;
+    await this._serial(async () => {
+      const before = await this.getSettings();
+      sharedChanged = JSON.stringify(pickShared(before)) !== JSON.stringify(pickShared(settings));
+      copy.sharedModifiedAt = sharedChanged ? Date.now() : before.sharedModifiedAt || 0;
+      await this._writeJson('settings.json', copy);
+    });
+    if (sharedChanged) this._changed('settings');
     return this.getSettings();
+  }
+
+  // The settings that sync between devices, and when they last changed.
+  async getSharedSettings() {
+    const settings = await this.getSettings();
+    return { modifiedAt: settings.sharedModifiedAt || 0, data: pickShared(settings) };
+  }
+
+  applySharedSettings(data, modifiedAt) {
+    return this._serial(async () => {
+      const saved = await this._readJson('settings.json', {});
+      for (const k of SHARED_SETTINGS) if (k in data) saved[k] = data[k];
+      saved.sharedModifiedAt = modifiedAt;
+      delete saved.pals;
+      await this._writeJson('settings.json', saved);
+    });
+  }
+
+  // Small JSON files owned by other modules (sync config and state).
+  readFile(name, fallback = null) {
+    return this._readJson(name, fallback);
+  }
+
+  writeFile(name, data) {
+    return this._serial(() => (data == null ? this.backend.remove(name) : this._writeJson(name, data)));
   }
 
   getState() {
@@ -326,4 +430,4 @@ class Storage {
   }
 }
 
-module.exports = { Storage, DEFAULT_SETTINGS, mergeDefaults, previewText };
+module.exports = { Storage, DEFAULT_SETTINGS, SHARED_SETTINGS, mergeDefaults, previewText };

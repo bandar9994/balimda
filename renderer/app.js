@@ -19,7 +19,8 @@ const S = {
   models: {},           // provider id -> [model names]
   modelErrors: {},
   newChatAssistantId: null,
-  newChatModel: null
+  newChatModel: null,
+  sync: null            // sync status from api.sync
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -639,7 +640,7 @@ function updateComposer() {
   const streaming = isStreaming(S.current);
   el.sendBtn.textContent = streaming ? 'Stop' : 'Send';
   el.sendBtn.classList.toggle('danger', streaming);
-  if (S.info.mobile) el.hint.textContent = 'Every chat is saved on this phone';
+  if (S.info.mobile) el.hint.textContent = S.sync && S.sync.configured ? 'Every chat is saved on this phone and synced' : 'Every chat is saved on this phone';
   else {
     el.hint.textContent = S.settings.sendOnEnter
       ? 'Enter to send · Shift+Enter for a new line · every chat is saved automatically'
@@ -655,23 +656,27 @@ function autoGrow() {
 // ---------------------------------------------------------------------------
 // actions
 
+// Read a chat from storage into the cache.
+async function loadChat(id) {
+  const chat = await api.chats.get(id);
+  if (!chat) return null;
+  // A reply that was cut off when the app closed.
+  for (const m of chat.messages) {
+    if (m.pending) {
+      m.pending = false;
+      if (!m.content) m.error = 'This reply was interrupted.';
+    }
+  }
+  S.cache.set(id, chat);
+  return chat;
+}
+
 async function openChat(id) {
-  let chat = S.cache.get(id);
+  const chat = S.cache.get(id) || await loadChat(id);
   if (!chat) {
-    chat = await api.chats.get(id);
-    if (!chat) {
-      toast('That chat could not be found.');
-      await refreshList();
-      return;
-    }
-    // A reply that was cut off when the app closed.
-    for (const m of chat.messages) {
-      if (m.pending) {
-        m.pending = false;
-        if (!m.content) m.error = 'This reply was interrupted.';
-      }
-    }
-    S.cache.set(id, chat);
+    toast('That chat could not be found.');
+    await refreshList();
+    return;
   }
   S.current = chat;
   S.state.lastChatId = id;
@@ -923,6 +928,152 @@ function startEdit(chat, msg, node) {
 }
 
 // ---------------------------------------------------------------------------
+// sync between devices
+
+const syncViews = new Set();  // open Settings > Sync panes to redraw on changes
+
+function timeAgo(ts) {
+  const sec = Math.round((Date.now() - ts) / 1000);
+  if (sec < 45) return 'just now';
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min} min ago`;
+  const hours = Math.round(min / 60);
+  if (hours < 24) return `${hours} h ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+function syncLabel(st = S.sync) {
+  if (!st || !st.configured) return null;
+  if (st.running) return { cls: '', text: '⟳ Syncing…' };
+  if (st.error && st.offline) return { cls: '', text: '⚠ Offline, will sync later' };
+  if (st.error) return { cls: 'bad', text: '⚠ Sync problem' };
+  return { cls: 'ok', text: st.lastSync ? `✓ Synced ${timeAgo(st.lastSync)}` : 'Not synced yet' };
+}
+
+function renderSyncBadge() {
+  const btn = $('#syncBtn');
+  const label = syncLabel();
+  btn.hidden = !label;
+  if (!label) return;
+  btn.textContent = label.text;
+  btn.className = `sync-status ${label.cls}`;
+  btn.title = S.sync.error || `Synced with github.com/${S.sync.repo}. Click to sync now.`;
+}
+
+// Another device changed chats or settings: show the new versions.
+async function onSyncEvent(evt) {
+  if (evt.type === 'status') {
+    S.sync = evt.status;
+    renderSyncBadge();
+    for (const draw of syncViews) draw();
+    return;
+  }
+  if (evt.type !== 'changed') return;
+  if (evt.settings) {
+    const fresh = await api.settings.get();
+    for (const k of ['assistants', 'memory', 'memoryEnabled', 'sharedModifiedAt']) S.settings[k] = fresh[k];
+    renderSelectors();
+  }
+  for (const id of evt.deleted) {
+    const cached = S.cache.get(id);
+    if (cached && isStreaming(cached)) continue;
+    S.cache.delete(id);
+    if (S.current && S.current.id === id) newChat();
+  }
+  for (const id of evt.chats) {
+    const cached = S.cache.get(id);
+    if (cached && isStreaming(cached)) continue;
+    S.cache.delete(id);
+    if (S.current && S.current.id === id) {
+      const stick = nearBottom();
+      const chat = await loadChat(id);
+      if (chat) {
+        S.current = chat;
+        renderChat();
+        if (stick) scrollToBottom();
+      }
+    }
+  }
+  await refreshList();
+}
+
+function syncView(onCleanup, field) {
+  const box = h('div');
+  const link = (text, href) => h('a', { href, target: '_blank', rel: 'noopener', text });
+  let shownConfigured = null;
+
+  const connectedView = (st) => {
+    const label = syncLabel(st);
+    return [
+      field('Syncing with', link(`github.com/${st.repo}`, `https://github.com/${st.repo}`)),
+      h('p', { class: `status ${label.cls}`, text: label.text }),
+      st.error ? h('p', { class: 'help', text: st.error }) : null,
+      h('div', { class: 'field-row' },
+        h('button', { class: 'btn primary', text: 'Sync now', disabled: st.running, onclick: () => api.sync.now() }),
+        h('button', {
+          class: 'btn danger',
+          text: 'Stop syncing',
+          onclick: async () => {
+            if (!(await confirmBox('Stop syncing on this device? Your chats stay here and in the repository.', 'Stop syncing'))) return;
+            S.sync = await api.sync.disconnect();
+            renderSyncBadge();
+            draw();
+          }
+        })),
+      h('p', { class: 'help', text: 'Chats, assistants and memory sync by themselves: a few seconds after each change, when you open the app and every minute while it is open. API keys and server addresses stay on each device.' })
+    ];
+  };
+
+  const setupView = () => {
+    const repo = h('input', { class: 'input', placeholder: 'your-name/balimda-sync', autocapitalize: 'off', spellcheck: 'false' });
+    const token = h('input', { class: 'input', type: 'password', placeholder: 'github_pat_…', autocomplete: 'off' });
+    const pass = h('input', { class: 'input', type: 'password', placeholder: 'At least 8 characters', autocomplete: 'new-password' });
+    const msg = h('p', { class: 'status' });
+    const btn = h('button', { class: 'btn primary', text: 'Turn on sync' });
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      msg.className = 'status';
+      msg.textContent = 'Connecting… (the first sync can take a minute)';
+      try {
+        S.sync = await api.sync.connect({ repo: repo.value, token: token.value, passphrase: pass.value });
+        renderSyncBadge();
+        draw();
+        toast(S.sync.error ? 'Sync is on, but the first sync had a problem' : 'Sync is on');
+      } catch (err) {
+        msg.className = 'status bad';
+        msg.textContent = errorText(err);
+        btn.disabled = false;
+      }
+    });
+    return [
+      h('p', { text: 'Start a chat on one device and continue it on another. Balimda keeps your chats in a private GitHub repository that only you can access. They are encrypted on this device with your sync passphrase first, so not even GitHub can read them.' }),
+      h('ol', { class: 'steps' },
+        h('li', {}, 'Create a private repository, for example "balimda-sync": ', link('github.com/new', 'https://github.com/new'), '. Set it to Private.'),
+        h('li', {}, 'Create an access token: ', link('new fine-grained token', 'https://github.com/settings/personal-access-tokens/new'),
+          '. Under Repository access choose "Only select repositories" and pick that repository. Under Permissions set Contents to "Read and write".'),
+        h('li', {}, 'Enter them here with a sync passphrase. On your other devices use the same repository and passphrase (a token made on that device works too).')),
+      field('Repository', repo),
+      field('Access token', token),
+      field('Sync passphrase', pass, 'Encrypts your chats. Use the same one on every device. It cannot be recovered, so keep it somewhere safe.'),
+      h('div', { class: 'field-row' }, btn),
+      msg
+    ];
+  };
+
+  // Redraw on status changes, but never while the setup form is being filled in.
+  const draw = () => {
+    const st = S.sync || {};
+    if (!st.configured && shownConfigured === false) return;
+    shownConfigured = !!st.configured;
+    box.replaceChildren(...(st.configured ? connectedView(st) : setupView()).filter(Boolean));
+  };
+  syncViews.add(draw);
+  onCleanup(() => syncViews.delete(draw));
+  draw();
+  return [box];
+}
+
+// ---------------------------------------------------------------------------
 // settings
 
 function openSettings(tab = 'general') {
@@ -934,6 +1085,7 @@ function openSettings(tab = 'general') {
     ['providers', 'Models & providers'],
     ['assistants', 'Assistants'],
     ['memory', 'Memory'],
+    ...(api.sync ? [['sync', 'Sync']] : []),
     ['data', 'Data & backup'],
     ['about', 'About']
   ];
@@ -1086,6 +1238,10 @@ function openSettings(tab = 'general') {
           bind(h('textarea', { class: 'input', rows: 12, value: s.memory, placeholder: '- My name is …\n- I work as …\n- I prefer short answers' }), s, 'memory'),
           'This is shared with the model at the start of every chat. Tip: use "Remember" under any of your messages to add it here.')
       ];
+    },
+
+    sync() {
+      return syncView(onCleanup, field);
     },
 
     data() {
@@ -1395,6 +1551,10 @@ function bindEvents() {
   $('#newChatBtn').addEventListener('click', newChat);
   $('#settingsBtn').addEventListener('click', () => openSettings());
   $('#creditBtn').addEventListener('click', () => openSettings('about'));
+  $('#syncBtn').addEventListener('click', () => {
+    if (S.sync && S.sync.error && !S.sync.offline) openSettings('sync');
+    else api.sync.now();
+  });
   $('#toggleSidebarBtn').addEventListener('click', toggleSidebar);
   $('#refreshModelsBtn').addEventListener('click', async () => { await loadModels(); toast('Model list refreshed'); });
   el.title.addEventListener('click', renameChat);
@@ -1465,19 +1625,27 @@ function bindEvents() {
   $('#drawerBackdrop').addEventListener('click', closeDrawer);
 
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+
+  if (api.sync) {
+    api.sync.onEvent(onSyncEvent);
+    setInterval(renderSyncBadge, 30 * 1000);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // start
 
 async function init() {
-  [S.settings, S.info, S.state] = await Promise.all([api.settings.get(), api.app.info(), api.state.get()]);
+  [S.settings, S.info, S.state, S.sync] = await Promise.all([
+    api.settings.get(), api.app.info(), api.state.get(), api.sync ? api.sync.status() : null
+  ]);
   $('#brandName').textContent = appName();
   if (S.info.mobile) el.search.placeholder = 'Search all chats';
   document.body.classList.toggle('is-mobile', !!S.info.mobile);
   applyTheme();
   if (S.state.sidebarCollapsed) el.app.classList.add('sidebar-collapsed');
   bindEvents();
+  renderSyncBadge();
   await refreshList();
 
   const last = S.state.lastChatId && S.chats.find((c) => c.id === S.state.lastChatId);

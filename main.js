@@ -2,17 +2,19 @@
 // Licensed under the Balimda License (see LICENSE): non-commercial use only;
 // keep the Balimda name and the "Balimda by Bandar Altariqi" credit; no rebranding.
 
-const { app, BrowserWindow, ipcMain, Menu, shell, dialog, safeStorage, nativeTheme, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell, dialog, safeStorage, nativeTheme, screen, net } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { Storage } = require('./src/storage');
 const { nodeFsBackend } = require('./src/backends/node-fs');
 const { PROVIDERS, normalizeMessages } = require('./src/providers');
+const { Sync } = require('./src/sync');
 
 // Allow a custom data folder (e.g. a synced folder) via BALIMDA_DATA_DIR.
 const dataDir = process.env.BALIMDA_DATA_DIR || path.join(app.getPath('userData'), 'data');
 
 let storage;
+let sync;
 let mainWindow;
 const activeRequests = new Map();
 
@@ -97,6 +99,8 @@ async function createWindow() {
   mainWindow.on('resize', scheduleSave);
   mainWindow.on('move', scheduleSave);
   mainWindow.on('close', saveBounds);
+  // Pick up what you did on your phone as soon as you come back to the PC.
+  mainWindow.on('focus', () => sync.run());
 
   // Open links in the user's browser, never inside the app.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -128,6 +132,7 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Export All Chats…', click: () => send('menu', 'export') },
         { label: 'Import Chats…', click: () => send('menu', 'import') },
+        { label: 'Sync Now', click: () => sync.run() },
         { label: 'Open Data Folder', click: () => shell.openPath(dataDir) },
         { type: 'separator' },
         isMac ? { role: 'close' } : { role: 'quit' }
@@ -225,6 +230,11 @@ function registerIpc() {
     return { filePath };
   });
 
+  ipcMain.handle('sync:status', () => sync.status());
+  ipcMain.handle('sync:connect', (_e, opts) => sync.connect(opts));
+  ipcMain.handle('sync:disconnect', () => sync.disconnect());
+  ipcMain.handle('sync:now', () => sync.run());
+
   ipcMain.handle('ai:models', async (_e, providerId) => {
     const provider = PROVIDERS[providerId];
     if (!provider) throw new Error(`Unknown provider: ${providerId}`);
@@ -271,6 +281,15 @@ function registerIpc() {
 
 app.whenReady().then(async () => {
   storage = await Storage.open(nodeFsBackend(dataDir), { secrets: secrets() });
+  // net.fetch uses the system proxy settings, which matters on work networks.
+  sync = new Sync({
+    storage,
+    device: `desktop (${process.platform})`,
+    secrets: secrets(),
+    fetch: (url, opts) => net.fetch(url, opts),
+    onEvent: (evt) => send('sync:event', evt)
+  });
+  await sync.load();
   registerIpc();
   buildMenu();
   await createWindow();
@@ -278,6 +297,19 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  sync.run();
+  setInterval(() => sync.run(), 60 * 1000);
+});
+
+// Push the last changes before quitting, so they're on the phone right away.
+let syncedBeforeQuit = false;
+app.on('before-quit', (e) => {
+  if (syncedBeforeQuit || !sync || !sync.pending()) return;
+  e.preventDefault();
+  syncedBeforeQuit = true;
+  const timeout = new Promise((r) => setTimeout(r, 8000));
+  Promise.race([sync.run(), timeout]).finally(() => app.quit());
 });
 
 app.on('window-all-closed', () => {

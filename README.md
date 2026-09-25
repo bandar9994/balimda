@@ -8,6 +8,7 @@
 - **Cloud models** too: Anthropic Claude and OpenAI (bring your own API key).
 - **Assistants** are personas with their own instructions and, optionally, their own model. Three come built in (Assistant, Code Buddy, Writing Coach), and you can add your own.
 - **Memory** holds facts about you that go into every chat. Tap **Remember** under any of your messages to add it.
+- **Sync between your PC and phone**: start a chat on your computer and carry on from your phone anywhere. Chats go through a private GitHub repository of your own and are **encrypted on the device** first, so only your devices can read them.
 - **Search across all chats**, pin favourites, rename, and export a chat to Markdown.
 - Markdown and code rendering, with a collapsible "thought process" for reasoning models.
 - Streaming replies with Stop, Regenerate, and Edit & resend.
@@ -106,6 +107,21 @@ data/
 
 API keys are encrypted with your system keychain when one is available. To keep chats in a synced folder such as Dropbox or OneDrive, start the app with the `BALIMDA_DATA_DIR` environment variable pointing at that folder.
 
+### Sync between devices
+
+**Settings → Sync** keeps your chats, assistants and memory the same on every device, so you can start a chat at your desk and continue it on your phone.
+
+1. Create a **private** repository on GitHub, for example `balimda-sync` ([github.com/new](https://github.com/new)).
+2. Create a [fine-grained access token](https://github.com/settings/personal-access-tokens/new). Under *Repository access*, choose only that repository. Under *Permissions*, set **Contents** to **Read and write**.
+3. In Balimda, open **Settings → Sync** and enter the repository, the token and a **sync passphrase**. Do the same on your other devices with the same repository and passphrase.
+
+How it works:
+
+- Everything is compressed and encrypted on the device (AES-256-GCM, with a key made from your passphrase by PBKDF2) before it is uploaded. The repository holds only encrypted files, and GitHub cannot read your chats. The passphrase cannot be recovered, so keep it safe.
+- It syncs a few seconds after each change, when you open or come back to the app, every minute while it is open, and before the desktop app quits. A **✓ Synced** line under Settings in the sidebar shows the status. Click it to sync right away.
+- Each sync is one Git commit. If the same chat changed on two devices before they synced, the messages are merged, so nothing is lost. Deleting a chat deletes it everywhere.
+- API keys and model server addresses stay on each device.
+
 ### Keyboard shortcuts
 
 | Shortcut | Action |
@@ -120,7 +136,7 @@ API keys are encrypted with your system keychain when one is available. To keep 
 ## Development
 
 ```bash
-npm test              # unit tests: storage and providers (mock servers, no keys needed)
+npm test              # unit tests: storage, providers and sync (mock servers, no keys needed)
 npm start             # desktop app
 npm run build:web     # build the mobile web app into www/
 npm run android:open  # sync into the Android project and open Android Studio
@@ -134,6 +150,7 @@ npm run icons         # redraw the app icon, Android launcher icons and splash s
 - `main.js`: Electron main process. It owns the window, the menu, and model API calls.
 - `preload.js`: the small, safe bridge between the UI and the main process.
 - `src/storage.js`: JSON chat storage, shared by desktop and mobile.
+- `src/sync.js`: encrypted sync through a private GitHub repository, shared by desktop and mobile.
 - `src/providers.js`: Ollama, OpenAI-compatible, Anthropic and OpenAI streaming. It runs in both Node and the phone's web view.
 - `renderer/`: the UI, in plain HTML/CSS/JS with no build step. Desktop and mobile share it.
 - `src/backends/node-fs.js`: desktop file storage.
