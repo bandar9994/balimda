@@ -63,7 +63,7 @@ replace('content="width=device-width, initial-scale=1"', 'content="width=device-
 replace('../node_modules/marked/lib/marked.umd.js', 'vendor/marked.umd.js');
 replace('../node_modules/dompurify/dist/purify.min.js', 'vendor/purify.min.js');
 replace('<script src="app.js"></script>', '<script src="bridge.js"></script>\n  <script src="app.js"></script>');
-replace('<title>Pal Desktop</title>', '<title>Pal</title>\n  <meta name="theme-color" content="#5b5bd6" />\n  <link rel="icon" href="icon.png" />');
+replace('<title>Balimda</title>', '<title>Balimda</title>\n  <meta name="theme-color" content="#5b5bd6" />\n  <link rel="icon" href="icon.png" />');
 await fs.writeFile(path.join(out, 'index.html'), html);
 
 console.log('Built mobile web app into www/');

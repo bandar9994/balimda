@@ -1,8 +1,8 @@
 {
-  "name": "pal-desktop",
-  "productName": "Pal Desktop",
+  "name": "balimda",
+  "productName": "Balimda",
   "version": "1.0.0",
-  "description": "An AI chat app for desktop and mobile that remembers every session and chat. Works with on-device models, local servers (Ollama, LM Studio) and cloud APIs (Claude, OpenAI).",
+  "description": "Balimda: a private AI chat app for desktop and mobile that remembers every chat. Runs models on your device (with GPU acceleration on Snapdragon phones), on your own computer (Ollama, LM Studio) or in the cloud (Claude, OpenAI).",
   "main": "main.js",
   "author": "bandar9994",
   "license": "MIT",
@@ -39,8 +39,8 @@
     "esbuild": "^0.28.2"
   },
   "build": {
-    "appId": "com.bandar9994.paldesktop",
-    "productName": "Pal Desktop",
+    "appId": "com.bandar9994.balimda",
+    "productName": "Balimda",
     "files": [
       "main.js",
       "preload.js",

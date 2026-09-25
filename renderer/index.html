@@ -5,14 +5,14 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'none'; object-src 'none'; base-uri 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pal Desktop</title>
+  <title>Balimda</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div id="app">
     <aside id="sidebar">
       <div class="sidebar-head">
-        <div class="brand"><span class="brand-mark">◆</span> <span id="brandName">Pal</span></div>
+        <div class="brand"><span class="brand-mark">◆</span> <span id="brandName">Balimda</span></div>
         <button id="newChatBtn" class="btn primary block" title="New chat (Ctrl+N)">＋ New chat</button>
         <input id="searchInput" class="input" type="search" placeholder="Search all chats (Ctrl+K)" />
       </div>
@@ -29,7 +29,7 @@
         <button id="toggleSidebarBtn" class="icon-btn" title="Toggle sidebar (Ctrl+B)">☰</button>
         <h1 id="chatTitle" title="Click to rename">New chat</h1>
         <div class="topbar-controls">
-          <select id="palSelect" class="select" title="Pal (persona)"></select>
+          <select id="assistantSelect" class="select" title="Assistant"></select>
           <select id="modelSelect" class="select" title="Model"></select>
           <button id="refreshModelsBtn" class="icon-btn" title="Refresh model list">⟳</button>
           <div class="menu-wrap">
@@ -49,7 +49,7 @@
 
       <footer id="composer">
         <div class="composer-box">
-          <textarea id="input" rows="1" placeholder="Message your Pal…"></textarea>
+          <textarea id="input" rows="1" placeholder="Message Balimda…"></textarea>
           <button id="sendBtn" class="btn primary" title="Send">Send</button>
         </div>
         <div id="composerHint" class="hint">Enter to send · Shift+Enter for a new line · every chat is saved automatically</div>

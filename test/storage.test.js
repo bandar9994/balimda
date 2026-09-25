@@ -7,7 +7,7 @@ const { Storage } = require('../src/storage');
 const { nodeFsBackend } = require('../src/backends/node-fs');
 
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'pal-test-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'balimda-test-'));
 }
 
 async function tmpStorage(options) {
@@ -17,7 +17,7 @@ async function tmpStorage(options) {
 
 test('chats persist across restarts', async () => {
   const { dir, storage } = await tmpStorage();
-  const chat = await storage.createChat({ palId: 'default', model: { provider: 'ollama', model: 'llama3.2' } });
+  const chat = await storage.createChat({ assistantId: 'default', model: { provider: 'ollama', model: 'llama3.2' } });
   chat.title = 'Trip planning';
   chat.messages.push({ id: 'm1', role: 'user', content: 'Plan a trip to Riyadh' });
   await storage.saveChat(chat);
@@ -82,7 +82,7 @@ test('delete removes chat file and index entry', async () => {
 
 test('rejects path traversal ids', async () => {
   const { storage } = await tmpStorage();
-  assert.throws(() => storage.getChat('../settings'));
+  await assert.rejects(storage.getChat('../settings'));
   await assert.rejects(storage.deleteChat('../settings'));
   await assert.rejects(nodeFsBackend(tmpDir()).read('../../etc/passwd'));
 });
@@ -140,4 +140,26 @@ test('preview hides reasoning blocks', async () => {
   chat.messages.push({ role: 'assistant', content: '<think>secret plan</think>\n\n**Final**   answer' });
   await storage.saveChat(chat);
   assert.strictEqual((await storage.listChats())[0].preview, 'Final answer');
+});
+
+test('data saved before the rename (pals / palId) still loads', async () => {
+  const { dir, storage } = await tmpStorage();
+  // settings and a chat as the old "Pal" app wrote them
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ pals: [{ id: 'mine', name: 'My helper', systemPrompt: 'x' }] }));
+  fs.writeFileSync(path.join(dir, 'chats', 'old-1.json'), JSON.stringify({ id: 'old-1', title: 'Old chat', palId: 'mine', messages: [] }));
+  const reopened = await Storage.open(nodeFsBackend(dir));
+  await reopened.rebuildIndex();
+  const s = await reopened.getSettings();
+  assert.deepStrictEqual(s.assistants.map((a) => a.id), ['mine']);
+  assert.strictEqual(s.pals, undefined);
+  const chat = await reopened.getChat('old-1');
+  assert.strictEqual(chat.assistantId, 'mine');
+  assert.strictEqual(chat.palId, undefined);
+  assert.strictEqual((await reopened.listChats())[0].assistantId, 'mine');
+
+  // importing an old backup file
+  const other = (await tmpStorage()).storage;
+  await other.importAll({ app: 'pal', chats: [{ id: 'b1', title: 'From backup', palId: 'writer', messages: [] }] });
+  assert.strictEqual((await other.getChat('b1')).assistantId, 'writer');
+  void storage;
 });

@@ -1,7 +1,7 @@
 /* global marked, DOMPurify */
 'use strict';
 
-const api = window.pal;
+const api = window.balimda;
 
 const S = {
   settings: null,
@@ -14,7 +14,7 @@ const S = {
   requests: new Map(),  // requestId -> { chat, msg }
   models: {},           // provider id -> [model names]
   modelErrors: {},
-  newChatPalId: null,
+  newChatAssistantId: null,
   newChatModel: null
 };
 
@@ -24,7 +24,7 @@ const el = {
   chatList: $('#chatList'),
   search: $('#searchInput'),
   title: $('#chatTitle'),
-  palSelect: $('#palSelect'),
+  assistantSelect: $('#assistantSelect'),
   modelSelect: $('#modelSelect'),
   messages: $('#messages'),
   input: $('#input'),
@@ -92,7 +92,7 @@ function displayModel(name) {
 }
 
 function appName() {
-  return (S.info && S.info.appName) || 'Pal';
+  return (S.info && S.info.appName) || 'Balimda';
 }
 
 function providerLabel(id) {
@@ -121,9 +121,9 @@ function renderMarkdown(text) {
   return wrap;
 }
 
-function getPal(id) {
-  const pals = S.settings.pals;
-  return pals.find((p) => p.id === id) || pals[0] || { id: 'none', name: 'Assistant', emoji: '🤖', systemPrompt: '' };
+function getAssistant(id) {
+  const list = S.settings.assistants;
+  return list.find((p) => p.id === id) || list[0] || { id: 'none', name: 'Assistant', emoji: '🤖', systemPrompt: '' };
 }
 
 function isStreaming(chat) {
@@ -302,7 +302,7 @@ function renderSidebar() {
 }
 
 // ---------------------------------------------------------------------------
-// models & pals selectors
+// models & assistants selectors
 
 function errorText(err) {
   return String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -359,14 +359,14 @@ function ensureDefaultModel() {
 function currentModel() {
   if (S.current && S.current.model) return S.current.model;
   if (S.newChatModel) return S.newChatModel;
-  const pal = getPal(currentPalId());
-  if (pal.model && pal.model.model) return pal.model;
+  const assistant = getAssistant(currentAssistantId());
+  if (assistant.model && assistant.model.model) return assistant.model;
   return S.settings.defaultModel && S.settings.defaultModel.model ? S.settings.defaultModel : null;
 }
 
-function currentPalId() {
-  if (S.current) return S.current.palId || 'default';
-  return S.newChatPalId || S.state.lastPalId || S.settings.pals[0]?.id || 'default';
+function currentAssistantId() {
+  if (S.current) return S.current.assistantId || 'default';
+  return S.newChatAssistantId || S.state.lastAssistantId || S.settings.assistants[0]?.id || 'default';
 }
 
 function modelOptions(selected, { includeCustom = true } = {}) {
@@ -396,8 +396,8 @@ function renderSelectors() {
   el.modelSelect.replaceChildren(modelOptions(model));
   el.modelSelect.value = modelKey(model);
 
-  el.palSelect.replaceChildren(...S.settings.pals.map((p) => h('option', { value: p.id, text: `${p.emoji || '🤖'} ${p.name}` })));
-  el.palSelect.value = currentPalId();
+  el.assistantSelect.replaceChildren(...S.settings.assistants.map((p) => h('option', { value: p.id, text: `${p.emoji || '🤖'} ${p.name}` })));
+  el.assistantSelect.value = currentAssistantId();
 }
 
 async function pickCustomModel() {
@@ -452,17 +452,17 @@ async function onModelChange() {
   renderSelectors();
 }
 
-function onPalChange() {
-  const palId = el.palSelect.value;
-  S.state.lastPalId = palId;
-  api.state.save({ lastPalId: palId });
+function onAssistantChange() {
+  const assistantId = el.assistantSelect.value;
+  S.state.lastAssistantId = assistantId;
+  api.state.save({ lastAssistantId: assistantId });
   if (S.current) {
-    S.current.palId = palId;
+    S.current.assistantId = assistantId;
     saveChatNow(S.current);
   } else {
-    S.newChatPalId = palId;
-    const pal = getPal(palId);
-    if (pal.model && pal.model.model) S.newChatModel = pal.model;
+    S.newChatAssistantId = assistantId;
+    const assistant = getAssistant(assistantId);
+    if (assistant.model && assistant.model.model) S.newChatModel = assistant.model;
   }
   renderSelectors();
   renderChat();
@@ -489,11 +489,11 @@ function renderChat() {
 }
 
 function renderWelcome() {
-  const palId = currentPalId();
-  const cards = h('div', { class: 'pal-cards' }, S.settings.pals.map((p) =>
+  const assistantId = currentAssistantId();
+  const cards = h('div', { class: 'assistant-cards' }, S.settings.assistants.map((p) =>
     h('div', {
-      class: `pal-card ${p.id === palId ? 'selected' : ''}`,
-      onclick: () => { el.palSelect.value = p.id; onPalChange(); focusInput(); }
+      class: `assistant-card ${p.id === assistantId ? 'selected' : ''}`,
+      onclick: () => { el.assistantSelect.value = p.id; onAssistantChange(); focusInput(); }
     },
     h('div', { class: 'pc-name', text: `${p.emoji || '🤖'} ${p.name}` }),
     h('div', { class: 'pc-desc', text: p.systemPrompt || 'No instructions' }))));
@@ -520,14 +520,14 @@ function renderWelcome() {
 
   return h('div', { class: 'welcome' },
     h('h2', { text: 'Who would you like to talk to?' }),
-    h('p', { text: 'Pick a Pal, choose a model at the top, and start typing. Every chat is saved and remembered.' }),
+    h('p', { text: 'Pick an assistant, choose a model at the top, and start typing. Every chat is saved and remembered.' }),
     cards,
     notice);
 }
 
 function renderMessage(chat, msg, index) {
   const isUser = msg.role === 'user';
-  const pal = getPal(chat.palId);
+  const assistant = getAssistant(chat.assistantId);
   const content = h('div', { class: 'content' });
   fillContent(content, msg);
 
@@ -547,10 +547,10 @@ function renderMessage(chat, msg, index) {
 
   const when = msg.createdAt ? new Date(msg.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
   const node = h('div', { class: `msg ${msg.role}`, 'data-id': msg.id },
-    h('div', { class: 'avatar', text: isUser ? 'You' : (pal.emoji || '🤖') }),
+    h('div', { class: 'avatar', text: isUser ? 'You' : (assistant.emoji || '🤖') }),
     h('div', { class: 'body' },
       h('div', { class: 'meta' },
-        h('span', { text: isUser ? 'You' : pal.name }),
+        h('span', { text: isUser ? 'You' : assistant.name }),
         !isUser && msg.model ? h('span', { text: `· ${displayModel(msg.model.model)}` }) : null,
         !isUser && msg.stats ? statsBadge(msg.stats) : null,
         when ? h('span', { text: `· ${when}` }) : null),
@@ -679,7 +679,7 @@ async function openChat(id) {
 function newChat() {
   S.current = null;
   S.newChatModel = null;
-  S.newChatPalId = null;
+  S.newChatAssistantId = null;
   S.state.lastChatId = null;
   api.state.save({ lastChatId: null });
   renderChat();
@@ -722,7 +722,7 @@ async function editCustomInstructions() {
   if (!S.current) return;
   const text = await askText({
     title: 'Custom instructions for this chat',
-    label: 'Added to the Pal\'s instructions for this chat only',
+    label: 'Added to the assistant\'s instructions for this chat only',
     value: S.current.systemPrompt || '',
     multiline: true
   });
@@ -741,8 +741,8 @@ function rememberText(text) {
 
 function buildSystemPrompt(chat) {
   const parts = [];
-  const pal = getPal(chat.palId);
-  if (pal.systemPrompt) parts.push(pal.systemPrompt.trim());
+  const assistant = getAssistant(chat.assistantId);
+  if (assistant.systemPrompt) parts.push(assistant.systemPrompt.trim());
   if (chat.systemPrompt) parts.push(chat.systemPrompt.trim());
   if (S.settings.memoryEnabled && S.settings.memory.trim()) {
     parts.push(`Things to remember about the user (from previous sessions):\n${S.settings.memory.trim()}`);
@@ -774,7 +774,7 @@ async function send() {
 
   let chat = S.current;
   if (!chat) {
-    chat = await api.chats.create({ palId: currentPalId(), model });
+    chat = await api.chats.create({ assistantId: currentAssistantId(), model });
     chat.titleAuto = true;
     S.cache.set(chat.id, chat);
     S.current = chat;
@@ -923,7 +923,7 @@ function openSettings(tab = 'general') {
   const tabs = [
     ['general', 'General'],
     ['providers', 'Models & providers'],
-    ['pals', 'Pals'],
+    ['assistants', 'Assistants'],
     ['memory', 'Memory'],
     ['data', 'Data & backup']
   ];
@@ -1029,21 +1029,21 @@ function openSettings(tab = 'general') {
       return cards;
     },
 
-    pals() {
+    assistants() {
       const list = h('div');
       const draw = () => {
-        list.replaceChildren(...s.pals.map((p, i) => h('div', { class: 'pal-row' },
+        list.replaceChildren(...s.assistants.map((p, i) => h('div', { class: 'assistant-row' },
           h('div', { style: 'font-size:20px', text: p.emoji || '🤖' }),
           h('div', { class: 'grow' },
             h('div', { text: p.name }),
             h('div', { class: 'sub', text: p.systemPrompt || 'No instructions' })),
-          h('button', { class: 'btn', text: 'Edit', onclick: () => editPal(p, draw) }),
-          s.pals.length > 1 ? h('button', {
+          h('button', { class: 'btn', text: 'Edit', onclick: () => editAssistant(p, draw) }),
+          s.assistants.length > 1 ? h('button', {
             class: 'btn danger',
             text: 'Delete',
             onclick: async () => {
-              if (!(await confirmBox(`Delete the Pal "${p.name}"? Existing chats keep their messages.`))) return;
-              s.pals.splice(i, 1);
+              if (!(await confirmBox(`Delete the assistant "${p.name}"? Existing chats keep their messages.`))) return;
+              s.assistants.splice(i, 1);
               changed();
               draw();
               renderSelectors();
@@ -1052,15 +1052,15 @@ function openSettings(tab = 'general') {
       };
       draw();
       return [
-        h('p', { class: 'help', text: 'Pals are personalities with their own instructions (and optionally their own model). Pick one when starting a chat.' }),
+        h('p', { class: 'help', text: 'Assistants are personalities with their own instructions (and optionally their own model). Pick one when starting a chat.' }),
         list,
         h('button', {
           class: 'btn primary',
-          text: '＋ Add a Pal',
+          text: '＋ Add an assistant',
           onclick: () => {
-            const pal = { id: uid(), name: 'New Pal', emoji: '🙂', systemPrompt: '' };
-            editPal(pal, () => {
-              if (!s.pals.includes(pal)) s.pals.push(pal);
+            const assistant = { id: uid(), name: 'New assistant', emoji: '🙂', systemPrompt: '' };
+            editAssistant(assistant, () => {
+              if (!s.assistants.includes(assistant)) s.assistants.push(assistant);
               changed();
               draw();
             });
@@ -1072,7 +1072,7 @@ function openSettings(tab = 'general') {
     memory() {
       return [
         check('Use memory in every chat', s, 'memoryEnabled'),
-        field('What should your Pals always remember about you?',
+        field('What should your assistants always remember about you?',
           bind(h('textarea', { class: 'input', rows: 12, value: s.memory, placeholder: '- My name is …\n- I work as …\n- I prefer short answers' }), s, 'memory'),
           'This is shared with the model at the start of every chat. Tip: use "Remember" under any of your messages to add it here.')
       ];
@@ -1250,17 +1250,17 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
     gpuBox);
 }
 
-function editPal(pal, onSaved) {
-  const name = h('input', { class: 'input', value: pal.name });
-  const emoji = h('input', { class: 'input', value: pal.emoji || '', style: 'width:70px' });
-  const prompt = h('textarea', { class: 'input', rows: 8, value: pal.systemPrompt || '', placeholder: 'e.g. You are a patient math tutor who explains step by step.' });
+function editAssistant(assistant, onSaved) {
+  const name = h('input', { class: 'input', value: assistant.name });
+  const emoji = h('input', { class: 'input', value: assistant.emoji || '', style: 'width:70px' });
+  const prompt = h('textarea', { class: 'input', rows: 8, value: assistant.systemPrompt || '', placeholder: 'e.g. You are a patient math tutor who explains step by step.' });
   const model = h('select', { class: 'select' },
     h('option', { value: '', text: 'Use the model picked at the top' }),
-    modelOptions(pal.model, { includeCustom: false }));
-  model.value = modelKey(pal.model);
-  if (!pal.model) model.value = '';
+    modelOptions(assistant.model, { includeCustom: false }));
+  model.value = modelKey(assistant.model);
+  if (!assistant.model) model.value = '';
   openModal({
-    title: 'Edit Pal',
+    title: 'Edit assistant',
     body: h('div', {},
       h('div', { class: 'field' }, h('label', { text: 'Name' }), h('div', { class: 'field-row' }, emoji, name)),
       h('div', { class: 'field' }, h('label', { text: 'Instructions (system prompt)' }), prompt),
@@ -1271,10 +1271,10 @@ function editPal(pal, onSaved) {
         label: 'Save',
         primary: true,
         onClick: () => {
-          pal.name = name.value.trim() || 'Pal';
-          pal.emoji = emoji.value.trim() || '🤖';
-          pal.systemPrompt = prompt.value.trim();
-          pal.model = model.value ? parseModelKey(model.value) : null;
+          assistant.name = name.value.trim() || 'Assistant';
+          assistant.emoji = emoji.value.trim() || '🤖';
+          assistant.systemPrompt = prompt.value.trim();
+          assistant.model = model.value ? parseModelKey(model.value) : null;
           onSaved();
           renderSelectors();
         }
@@ -1359,7 +1359,7 @@ function bindEvents() {
   $('#refreshModelsBtn').addEventListener('click', async () => { await loadModels(); toast('Model list refreshed'); });
   el.title.addEventListener('click', renameChat);
   el.modelSelect.addEventListener('change', onModelChange);
-  el.palSelect.addEventListener('change', onPalChange);
+  el.assistantSelect.addEventListener('change', onAssistantChange);
   el.sendBtn.addEventListener('click', send);
 
   el.search.addEventListener('input', debounce(() => {

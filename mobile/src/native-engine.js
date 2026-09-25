@@ -1,10 +1,10 @@
 // Native on-device engine (Android): llama.cpp compiled for the phone, running
 // on the CPU or, on Snapdragon phones, the Adreno GPU via OpenCL. Talks to
-// PalLlamaPlugin.java. Same interface as the WebAssembly engine in on-device.js.
+// LlamaPlugin.java. Same interface as the WebAssembly engine in on-device.js.
 
 import { registerPlugin } from '@capacitor/core';
 
-const PalLlama = registerPlugin('PalLlama');
+const Llama = registerPlugin('Llama');
 
 // Q4_0 files run fastest on Adreno GPUs (llama.cpp's OpenCL kernels are tuned
 // for them) and also do well on the CPU. No 2 GB limit here, so bigger
@@ -78,14 +78,14 @@ let listening = false;
 export async function probe() {
   let info;
   try {
-    info = await PalLlama.info();
+    info = await Llama.info();
   } catch (err) {
     return { available: false, error: err.message || String(err), devices: [] };
   }
   if (info.available && !listening) {
     listening = true;
-    PalLlama.addListener('download', onDownloadEvent);
-    PalLlama.addListener('token', onTokenEvent);
+    Llama.addListener('download', onDownloadEvent);
+    Llama.addListener('token', onTokenEvent);
   }
   return info;
 }
@@ -123,7 +123,7 @@ export function downloadState() {
 }
 
 export async function listDownloaded() {
-  const { models } = await PalLlama.listModels();
+  const { models } = await Llama.listModels();
   const byName = new Map();
   for (const c of CATALOG) byName.set(modelName(c.url), c.url);
   for (const [url, name] of namesByUrl) byName.set(name, url);
@@ -136,7 +136,7 @@ export async function download(url) {
   downloads.set(url, { loaded: 0, total: 0 });
   emitProgress();
   try {
-    const { name } = await PalLlama.download({ url });
+    const { name } = await Llama.download({ url });
     namesByUrl.set(url, name);
   } catch (err) {
     downloads.set(url, { error: err.message || String(err) });
@@ -145,14 +145,14 @@ export async function download(url) {
 }
 
 export async function cancelDownload(url) {
-  await PalLlama.cancelDownload({ url });
+  await Llama.cancelDownload({ url });
   downloads.delete(url);
   emitProgress();
 }
 
 export async function remove(url) {
   const name = url.startsWith('local:') ? url.slice(6) : modelName(url);
-  await PalLlama.deleteModel({ name });
+  await Llama.deleteModel({ name });
 }
 
 // ---- chat ------------------------------------------------------------------
@@ -182,11 +182,11 @@ export const nativeEngine = {
       text += piece;
       onDelta(piece);
     });
-    const onAbort = () => PalLlama.stop({ requestId });
+    const onAbort = () => Llama.stop({ requestId });
     if (signal) signal.addEventListener('abort', onAbort);
     try {
       const temperature = req.temperature != null && !Number.isNaN(req.temperature) ? req.temperature : 0.7;
-      const { stopReason, stats } = await PalLlama.generate({
+      const { stopReason, stats } = await Llama.generate({
         requestId,
         model: req.model,
         messages,

@@ -1,9 +1,9 @@
-package com.bandar9994.pal;
+package com.bandar9994.balimda;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
 
-/** Thin wrapper around the native llama.cpp engine (pal_llama.cpp). */
+/** Thin wrapper around the native llama.cpp engine (balimda_llama.cpp). */
 public final class LlamaEngine {
 
     public interface TokenCallback {
@@ -19,7 +19,7 @@ public final class LlamaEngine {
             if (!cpuHasDotProd()) {
                 loadError = "This phone's processor is too old for the native engine.";
             } else {
-                System.loadLibrary("pal_llama");
+                System.loadLibrary("balimda_llama");
                 loaded = true;
             }
         } catch (Throwable t) {

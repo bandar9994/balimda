@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS = {
     anthropic: { enabled: true, apiKey: '' },
     openai: { enabled: true, baseUrl: 'https://api.openai.com/v1', apiKey: '' }
   },
-  pals: [
+  assistants: [
     {
       id: 'default',
       name: 'Assistant',
@@ -63,6 +63,16 @@ function previewText(text) {
     .slice(0, 140);
 }
 
+// Chats and settings saved before the rename used "pal" names; read them as
+// assistants so old data and backups keep working.
+function upgradeChat(chat) {
+  if (chat && 'palId' in chat) {
+    if (!chat.assistantId) chat.assistantId = chat.palId;
+    delete chat.palId;
+  }
+  return chat;
+}
+
 function isPlainObject(v) {
   return v && typeof v === 'object' && !Array.isArray(v);
 }
@@ -96,7 +106,7 @@ class Storage {
     this.encrypt = secrets.encrypt || ((s) => s);
     this.decrypt = secrets.decrypt || ((s) => s);
     this.defaults = mergeDefaults(DEFAULT_SETTINGS, defaults);
-    if (Array.isArray(defaults.pals)) this.defaults.pals = defaults.pals;
+    if (Array.isArray(defaults.assistants)) this.defaults.assistants = defaults.assistants;
     this.index = [];
     this._queue = Promise.resolve();
   }
@@ -134,7 +144,7 @@ class Storage {
       createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,
       pinned: !!chat.pinned,
-      palId: chat.palId || null,
+      assistantId: chat.assistantId || null,
       model: chat.model || null,
       messageCount: (chat.messages || []).length,
       preview: last ? previewText(last.content) : ''
@@ -155,7 +165,7 @@ class Storage {
     const chats = [];
     for (const f of await this.backend.list('chats')) {
       if (!f.endsWith('.json')) continue;
-      const chat = await this._readJson(`chats/${f}`, null);
+      const chat = upgradeChat(await this._readJson(`chats/${f}`, null));
       if (chat && chat.id) chats.push(this._meta(chat));
     }
     this.index = chats;
@@ -172,8 +182,8 @@ class Storage {
     });
   }
 
-  getChat(id) {
-    return this._readJson(this._chatFile(id), null);
+  async getChat(id) {
+    return upgradeChat(await this._readJson(this._chatFile(id), null));
   }
 
   createChat(init = {}) {
@@ -184,7 +194,7 @@ class Storage {
       createdAt: now,
       updatedAt: now,
       pinned: false,
-      palId: init.palId || null,
+      assistantId: init.assistantId || null,
       model: init.model || null,
       systemPrompt: init.systemPrompt || '',
       messages: []
@@ -199,6 +209,7 @@ class Storage {
     } catch (err) {
       return Promise.reject(err);
     }
+    upgradeChat(chat);
     return this._serial(async () => {
       chat.updatedAt = chat.updatedAt || Date.now();
       chat.createdAt = chat.createdAt || chat.updatedAt;
@@ -258,12 +269,12 @@ class Storage {
       const chat = await this.getChat(m.id);
       if (chat) chats.push(chat);
     }
-    return { app: 'pal', version: 1, exportedAt: new Date().toISOString(), chats };
+    return { app: 'balimda', version: 1, exportedAt: new Date().toISOString(), chats };
   }
 
   async importAll(data) {
     const chats = Array.isArray(data) ? data : data && data.chats;
-    if (!Array.isArray(chats)) throw new Error('Not a Pal backup file');
+    if (!Array.isArray(chats)) throw new Error('This is not a Balimda backup file');
     let imported = 0;
     for (const chat of chats) {
       if (!chat || !Array.isArray(chat.messages)) continue;
@@ -278,9 +289,11 @@ class Storage {
 
   async getSettings() {
     const saved = await this._readJson('settings.json', {});
+    if (Array.isArray(saved.pals) && !Array.isArray(saved.assistants)) saved.assistants = saved.pals;
+    delete saved.pals;
     const settings = mergeDefaults(this.defaults, saved);
-    // Keep the user's own pal list rather than merging it with defaults.
-    if (Array.isArray(saved.pals)) settings.pals = saved.pals;
+    // Keep the user's own assistant list rather than merging it with defaults.
+    if (Array.isArray(saved.assistants)) settings.assistants = saved.assistants;
     for (const p of Object.values(settings.providers)) {
       if (p.apiKey) p.apiKey = this.decrypt(p.apiKey);
     }

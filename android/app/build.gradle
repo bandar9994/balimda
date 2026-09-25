@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.bandar9994.pal"
+    namespace = "com.bandar9994.balimda"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.bandar9994.pal"
+        applicationId "com.bandar9994.balimda"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // CI sets the build number so each new APK installs as an update.
@@ -29,29 +29,30 @@ android {
     signingConfigs {
         // Every build must be signed with the same key, or Android refuses to
         // update the app (and you'd have to uninstall it, losing your chats).
-        // Set PAL_KEYSTORE_* (e.g. from GitHub secrets) to use your own key;
-        // otherwise the shared community key in this folder is used.
-        pal {
-            def ks = System.getenv("PAL_KEYSTORE_FILE")
+        // Set BALIMDA_KEYSTORE_* (e.g. from GitHub secrets) to sign with your
+        // own private key -- required before publishing. Otherwise the test key
+        // in this folder is used, which is only meant for your own devices.
+        balimda {
+            def ks = System.getenv("BALIMDA_KEYSTORE_FILE")
             if (ks) {
                 storeFile file(ks)
-                storePassword System.getenv("PAL_KEYSTORE_PASSWORD")
-                keyAlias System.getenv("PAL_KEY_ALIAS")
-                keyPassword System.getenv("PAL_KEY_PASSWORD")
+                storePassword System.getenv("BALIMDA_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("BALIMDA_KEY_ALIAS")
+                keyPassword System.getenv("BALIMDA_KEY_PASSWORD")
             } else {
-                storeFile file("pal-debug.keystore")
+                storeFile file("balimda-test.keystore")
                 storePassword "android"
-                keyAlias "pal"
+                keyAlias "balimda"
                 keyPassword "android"
             }
         }
     }
     buildTypes {
         debug {
-            signingConfig signingConfigs.pal
+            signingConfig signingConfigs.balimda
         }
         release {
-            signingConfig signingConfigs.pal
+            signingConfig signingConfigs.balimda
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
