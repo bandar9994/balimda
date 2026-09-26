@@ -281,7 +281,8 @@ window.balimda = {
             system: req.system,
             messages: normalizeMessages(req.messages),
             temperature: req.temperature,
-            maxTokens: req.maxTokens
+            maxTokens: req.maxTokens,
+            think: req.think
           },
           (text) => {
             for (const cb of aiListeners) cb({ requestId: req.requestId, type: 'delta', text });

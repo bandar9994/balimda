@@ -832,11 +832,70 @@ async function editCustomInstructions() {
   toast('Instructions saved');
 }
 
+const memoryKey = (line) => line.toLowerCase().replace(/^[-•*\s]+/, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+// Adds lines to memory, skipping ones it already has. Returns the new ones.
+function addToMemory(lines) {
+  const known = new Set(S.settings.memory.split('\n').map(memoryKey).filter(Boolean));
+  const added = [];
+  for (const raw of lines) {
+    const line = String(raw).trim().replace(/\s+/g, ' ').replace(/^[-•*]\s*/, '').slice(0, 500);
+    const key = memoryKey(line);
+    if (!key || known.has(key)) continue;
+    known.add(key);
+    added.push(line);
+  }
+  if (added.length) {
+    S.settings.memory = [S.settings.memory.trim(), ...added.map((l) => `- ${l}`)].filter(Boolean).join('\n');
+    saveSettings();
+  }
+  return added;
+}
+
 function rememberText(text) {
-  const line = String(text).trim().replace(/\s+/g, ' ').slice(0, 500);
-  S.settings.memory = [S.settings.memory.trim(), `- ${line}`].filter(Boolean).join('\n');
-  saveSettings();
+  addToMemory([text]);
   toast('Added to memory');
+}
+
+// Messages that might say something lasting about the user (English or Arabic).
+// Only statements about the user, not requests like "tell me" or "can I".
+const ABOUT_ME = /\b(i am|i'm|im|i was|i live|i work|i study|i have|i've|i like|i love|i prefer|i hate|i don't like|i do not like|i usually|i always|i never|i speak|my|mine|call me|we have|we live|our)\b|(أنا|انا|اسمي|عمري|عندي|أحب|احب|أعمل|اعمل|أسكن|اسكن|ساكن|زوجتي|زوجي|بنتي|ابني|أولادي|عائلتي|وظيفتي|شغلي|أفضل|افضل)/i;
+
+// After a reply, pull lasting facts about the user out of their message and
+// add them to memory. Uses the chat's model, without its thinking step.
+async function autoRemember(chat, userMsg, model) {
+  const text = String(userMsg.content || '').trim();
+  if (text.length < 12 || !ABOUT_ME.test(text)) return;
+  const res = await api.ai.chat({
+    requestId: uid(),
+    provider: model.provider,
+    model: model.model,
+    system: '',
+    think: false,
+    temperature: 0.1,
+    maxTokens: 0,
+    messages: [{
+      role: 'user',
+      content: [
+        'You maintain a short list of lasting facts about the user so future conversations can be personal.',
+        'From the user\'s message below, extract only facts about the user that will still be true later: name, family, where they live, work or studies, languages, preferences, dislikes, long-term goals or projects.',
+        'Do not include one-off requests, questions, temporary moods, or anything about other people unless it is about the user\'s relationship to them.',
+        'Skip anything already in the known facts.',
+        'Reply with one fact per line, each starting with "- ", written in the third person (e.g. "- Prefers short answers"), at most 3 lines.',
+        'If there is nothing new to remember, reply with exactly: NONE',
+        '',
+        `Known facts:\n${S.settings.memory.trim() || '(none)'}`,
+        '',
+        `User's message:\n${text.slice(0, 2000)}`
+      ].join('\n')
+    }]
+  });
+  if (!res.ok || !res.text) return;
+  const answer = splitThinking(res.text).answer.trim();
+  if (/^none\b/i.test(answer)) return;
+  const facts = answer.split('\n').map((l) => l.trim()).filter((l) => /^[-•*]\s+\S/.test(l)).slice(0, 3);
+  const added = addToMemory(facts);
+  if (added.length) toast(`Remembered: ${added.join(' · ')}`, 4500);
 }
 
 function buildSystemPrompt(chat) {
@@ -947,6 +1006,13 @@ async function runCompletion(chat) {
     if (stick) scrollToBottom();
   }
   updateComposer();
+
+  // Learn lasting facts from what the user just said. Skipped for on-device
+  // phone models, where a second run after every reply would slow the phone.
+  if (res.ok && !res.aborted && S.settings.memoryEnabled && S.settings.autoMemory && model.provider !== 'onDevice') {
+    const userMsg = [...chat.messages].reverse().find((m) => m.role === 'user');
+    if (userMsg) autoRemember(chat, userMsg, model).catch(() => {});
+  }
 
   if (res.ok && !res.aborted && chat.titleAuto && S.settings.autoTitle && model.provider !== 'onDevice' && chat.messages.filter((m) => m.role === 'assistant').length === 1) {
     generateTitle(chat);
@@ -1395,9 +1461,13 @@ function openSettings(tab = 'general') {
     memory() {
       return [
         check('Use memory in every chat', s, 'memoryEnabled'),
+        check('Remember things about me automatically', s, 'autoMemory'),
+        h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: S.info.mobile
+          ? 'After a reply, lasting facts you mention (your name, work, family, preferences…) are added below. This uses Ollama and cloud models; the models on this phone are skipped so replies stay fast. Memory syncs between your devices.'
+          : 'After a reply, lasting facts you mention (your name, work, family, preferences…) are added below, using the chat\'s model. On-device phone models skip this to stay fast.' }),
         field('What should your assistants always remember about you?',
           bind(h('textarea', { class: 'input', rows: 12, value: s.memory, placeholder: '- My name is …\n- I work as …\n- I prefer short answers' }), s, 'memory'),
-          'This is shared with the model at the start of every chat. Tip: use "Remember" under any of your messages to add it here.')
+          'This is shared with the model at the start of every chat. You can edit or delete anything here. "Remember" under any of your messages adds it by hand.')
       ];
     },
 

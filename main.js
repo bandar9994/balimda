@@ -289,7 +289,8 @@ function registerIpc() {
           system: req.system,
           messages: normalizeMessages(req.messages),
           temperature: req.temperature,
-          maxTokens: req.maxTokens
+          maxTokens: req.maxTokens,
+          think: req.think
         },
         (text) => send('ai:event', { requestId, type: 'delta', text }),
         controller.signal
