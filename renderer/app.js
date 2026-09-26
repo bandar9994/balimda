@@ -370,7 +370,7 @@ function ensureDefaultModel() {
 // A phone and a computer rarely have the same models, so each chat remembers
 // the model to use on each device (chat.models, keyed by this device's id).
 // chat.model is the model of the latest reply, from whichever device.
-const LOCAL_PROVIDERS = new Set(['ollama', 'openaiCompatible', 'onDevice']);
+const LOCAL_PROVIDERS = new Set(['ollama', 'openaiCompatible', 'onDevice', 'computer']);
 
 const sameModel = (a, b) => !!a && !!b && a.provider === b.provider && a.model === b.model;
 
@@ -407,7 +407,9 @@ function modelNote(chat, model) {
   const mine = (chat.models || {})[S.state.deviceId];
   if (!model) {
     const wanted = mine || chat.model;
-    return wanted ? `${displayModel(wanted.model)} isn't available right now. Check that ${providerLabel(wanted.provider)} is running, or pick another model at the top.` : '';
+    if (!wanted) return '';
+    if (wanted.provider === 'computer') return `${displayModel(wanted.model)} isn't available right now. Check that the computer is on with Balimda open and on the same Wi-Fi, or pick another model at the top.`;
+    return `${displayModel(wanted.model)} isn't available right now. Check that ${providerLabel(wanted.provider)} is running, or pick another model at the top.`;
   }
   if (mine && !sameModel(mine, model)) {
     return `${displayModel(mine.model)} isn't available right now, so this chat is using ${displayModel(model.model)}.`;
@@ -1280,8 +1282,10 @@ async function onSyncEvent(evt) {
   if (evt.type !== 'changed') return;
   if (evt.settings) {
     const fresh = await api.settings.get();
-    for (const k of ['assistants', 'memory', 'memoryEnabled', 'autoMemory', 'recallChats', 'sharedModifiedAt']) S.settings[k] = fresh[k];
+    const computersChanged = JSON.stringify(fresh.computers) !== JSON.stringify(S.settings.computers);
+    for (const k of ['assistants', 'memory', 'memoryEnabled', 'autoMemory', 'recallChats', 'computers', 'sharedModifiedAt']) S.settings[k] = fresh[k];
     renderSelectors();
+    if (computersChanged && S.settings.providers.computer) loadModels();
     for (const draw of memoryViews) draw();
   }
   for (const id of evt.deleted) {
@@ -1440,6 +1444,31 @@ function syncView(onCleanup, field) {
 // ---------------------------------------------------------------------------
 // settings
 
+// Desktop: let the phone chat with this computer's models (src/remote.js).
+function shareWithPhoneCard(s, check, onCleanup) {
+  const status = h('div', { class: 'help', style: 'margin-bottom:8px' });
+  const draw = (st) => {
+    if (!st) return;
+    if (st.error) status.textContent = st.error;
+    else if (!s.shareWithPhone) status.textContent = '';
+    else if (!st.syncReady) status.textContent = 'Set up sync (Settings → Sync) on this computer and your phone first. Sharing starts as soon as sync is on.';
+    else if (st.sharing) {
+      status.textContent = `Sharing as "${st.name}" on ${st.addrs.join(', ') || 'this computer'} (port ${st.port}). Your phone finds it through sync: on the phone, pick a model under "On your computer". If your system asks, allow Balimda to accept incoming network connections.`;
+    } else status.textContent = 'Starting…';
+  };
+  api.remote.status().then(draw);
+  onCleanup(api.remote.onStatus(draw));
+  const box = check('Let my phone use this computer\'s models', s, 'shareWithPhone');
+  box.querySelector('input').addEventListener('change', () => {
+    status.textContent = s.shareWithPhone ? 'Starting…' : '';
+  });
+  return h('div', { class: 'provider-card' },
+    h('h4', { text: 'Use from your phone' }),
+    box,
+    status,
+    h('div', { class: 'help', text: 'Your phone sends chats here and this computer answers with its models (Ollama, LM Studio, and your API keys, which never leave this computer). The connection is encrypted with your sync passphrase, so only your own devices can use it. Balimda needs to stay open.' }));
+}
+
 function openSettings(tab = 'general') {
   const s = S.settings;
   const changed = () => { saveSettings(); };
@@ -1507,6 +1536,7 @@ function openSettings(tab = 'general') {
         openaiCompatible: 'LM Studio, llama.cpp server, Jan, vLLM or any OpenAI-compatible server. LM Studio default: http://127.0.0.1:1234/v1'
       };
       Object.assign(help, {
+        computer: 'Chat with the models on your computer (Ollama, LM Studio, and Claude or OpenAI with the computer\'s API keys) while the computer does the work. In Balimda on the computer, turn on "Let my phone use this computer\'s models" in Settings → Models & providers. Both need sync set up with the same passphrase; that\'s how they find each other and keep the connection private. Works on the same Wi-Fi, or anywhere when both are on Tailscale.',
         anthropic: 'Claude models. Create an API key at console.anthropic.com.',
         openai: 'OpenAI models. Create an API key at platform.openai.com.'
       });
@@ -1538,9 +1568,13 @@ function openSettings(tab = 'general') {
             loadModels();
           }
         });
+        const shared = id === 'computer'
+          ? Object.values(s.computers || {}).filter((c) => c.enabled).map((c) => c.name)
+          : null;
         cards.push(h('div', { class: 'provider-card' },
           h('h4', {}, providerLabel(id), status),
           check('Enabled', p, 'enabled'),
+          shared ? h('div', { class: 'help', text: shared.length ? `Sharing: ${shared.join(', ')}` : 'No computer is sharing its models yet.' }) : null,
           'baseUrl' in p ? field('Server URL', bind(h('input', { class: 'input', value: p.baseUrl }), p, 'baseUrl')) : null,
           id === 'ollama' ? h('label', { class: 'check' },
             bind(h('input', { type: 'checkbox', checked: p.think !== false }), p, 'think'),
@@ -1549,6 +1583,7 @@ function openSettings(tab = 'general') {
           h('div', { class: 'help', text: help[id] || '' }),
           h('div', { style: 'margin-top:8px' }, test)));
       }
+      if (api.remote) cards.push(shareWithPhoneCard(s, check, onCleanup));
       cards.push(h('p', {
         class: 'help',
         text: S.info.mobile

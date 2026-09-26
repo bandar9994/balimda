@@ -409,6 +409,45 @@ for (const [kind, makeBackend] of Object.entries(BACKENDS)) {
     assert.strictEqual(await memory(phone.storage), expected);
   });
 
+  test(`${kind}: a computer sharing its models reaches the phone, even while memory changes there`, async () => {
+    const backend = makeBackend();
+    const pc = await device(backend, 'pc');
+    await pc.connect();
+    const phone = await device(backend, 'phone');
+    await phone.connect();
+
+    await pc.storage.publishComputer('desk', { id: 'desk', name: 'Desk', addrs: ['192.168.1.23'], port: 47811, enabled: true });
+    await new Promise((r) => setTimeout(r, 5));
+    const settings = await phone.storage.getSettings();
+    settings.memory = '- Likes kabsa';
+    await phone.storage.saveSettings(settings);
+
+    await pc.sync.run();
+    await phone.sync.run();
+    await pc.sync.run();
+    for (const d of [pc, phone]) {
+      const got = await d.storage.getSettings();
+      assert.strictEqual(got.computers.desk.addrs[0], '192.168.1.23');
+      assert.strictEqual(got.memory, '- Likes kabsa');
+    }
+    assert.strictEqual(pc.sync.linkKey(), phone.sync.linkKey(), 'both devices derive the same link key');
+  });
+
+  test(`${kind}: a settings change made while a sync is running goes up in the next one`, async () => {
+    const backend = makeBackend();
+    const pc = await device(backend, 'pc');
+    await pc.connect();
+    await pc.storage.createChat({ title: 'Busy' });
+    const running = pc.sync.run();
+    await new Promise((r) => setTimeout(r, 1));
+    await pc.storage.publishComputer('desk', { id: 'desk', name: 'Desk', addrs: ['192.168.1.23'], port: 47811, enabled: true });
+    await running;
+    await pc.sync.run();
+    const phone = await device(backend, 'phone');
+    await phone.connect();
+    assert.strictEqual((await phone.storage.getSettings()).computers.desk?.name, 'Desk');
+  });
+
   test(`${kind}: refuses a wrong passphrase`, async () => {
     const backend = makeBackend();
     const pc = await device(backend, 'pc');
