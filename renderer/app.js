@@ -100,6 +100,7 @@ function displayModel(name) {
 const AUTHOR = 'Bandar Altariqi';
 const PROJECT_URL = 'https://github.com/bandar9994/balimda';
 const COPYRIGHT = `© 2026 ${AUTHOR}. All rights reserved.`;
+const COMMERCIAL_URL = `${PROJECT_URL}/issues/new?template=commercial-license.yml`;
 
 function appName() {
   return (S.info && S.info.appName) || 'Balimda';
@@ -1687,7 +1688,8 @@ function openSettings(tab = 'general') {
         h('p', { class: 'help', text: COPYRIGHT }),
         h('p', { text: 'Balimda is a private AI chat app that remembers every chat. It runs models on your device, on your own computer, or in the cloud. Your chats stay on your device.' }),
         field('License', h('div', {},
-          h('p', { class: 'help', text: 'Free for personal, non-commercial use under the Balimda License. You may share or change it only if it keeps the Balimda name and the "Balimda by Bandar Altariqi" credit. It may not be rebranded or used commercially without written permission from Bandar Altariqi.' }),
+          h('p', { class: 'help', text: 'Free for personal, non-commercial use under the Balimda License. You may share or change it only if it keeps the Balimda name and the "Balimda by Bandar Altariqi" credit. It may not be rebranded. Use by or for a company or organisation, or any commercial use, needs a commercial license from Bandar Altariqi.' }),
+          h('p', { class: 'help' }, h('a', { href: COMMERCIAL_URL, target: '_blank', rel: 'noopener', text: 'Request a commercial license for your company' })),
           h('div', { class: 'field-row' },
             h('button', { class: 'btn', text: 'Read the license', onclick: () => showLegal('license', 'Balimda License') }),
             h('button', { class: 'btn', text: 'Open-source credits', onclick: () => showLegal('notices', 'Third-party notices') })))),
