@@ -226,6 +226,14 @@ public class LlamaPlugin extends Plugin {
         return Math.max(1, Math.min(4, cores));
     }
 
+    // When the GPU does the work, extra CPU threads only spin while they wait
+    // for it, heating the phone and slowing everything else down.
+    private static final int GPU_THREADS = 2;
+
+    // A short pause after each word on the GPU gives the screen a turn at the
+    // GPU, so the phone stays smooth while a reply is written.
+    private static final long GPU_YIELD_MS = 4;
+
     @PluginMethod
     public void generate(PluginCall call) {
         if (!LlamaEngine.isAvailable()) {
@@ -251,16 +259,24 @@ public class LlamaPlugin extends Plugin {
                 if (!key.equals(loadedKey)) {
                     unload();
                     emitStatus(requestId, "loading");
-                    handle = LlamaEngine.nativeLoad(file.getAbsolutePath(), nCtx, gpu ? 99 : 0, threadCount());
-                    loadedKey = key;
+                    handle = LlamaEngine.nativeLoad(file.getAbsolutePath(), nCtx, gpu ? 99 : 0, gpu ? GPU_THREADS : threadCount());
                     loadedOffload = LlamaEngine.nativeOffload(handle);
                     loadedDevice = describeDevice(loadedOffload);
+                    if (gpu && loadedDevice.equals("CPU")) {
+                        // The GPU couldn't take the model: load it again with all CPU threads.
+                        unload();
+                        handle = LlamaEngine.nativeLoad(file.getAbsolutePath(), nCtx, 0, threadCount());
+                        loadedOffload = LlamaEngine.nativeOffload(handle);
+                        loadedDevice = describeDevice(loadedOffload);
+                    }
+                    loadedKey = key;
                 }
                 if (stop.get()) {
                     resolveDone(call, "aborted");
                     return;
                 }
                 emitStatus(requestId, "thinking");
+                final boolean onGpu = loadedDevice.startsWith("GPU");
 
                 String[] roles = new String[messages.length()];
                 String[] contents = new String[messages.length()];
@@ -275,6 +291,13 @@ public class LlamaPlugin extends Plugin {
                         evt.put("requestId", requestId);
                         evt.put("text", text);
                         notifyListeners("token", evt);
+                    }
+                    if (onGpu) {
+                        try {
+                            Thread.sleep(GPU_YIELD_MS);
+                        } catch (InterruptedException ignored) {
+                            // just continue
+                        }
                     }
                     return !stop.get();
                 });
@@ -328,6 +351,8 @@ public class LlamaPlugin extends Plugin {
         JSObject evt = new JSObject();
         evt.put("requestId", requestId);
         evt.put("status", status);
+        // Once the model is loaded, say where it runs (e.g. "GPU · Adreno 740").
+        if ("thinking".equals(status) && loadedDevice != null) evt.put("device", loadedDevice);
         notifyListeners("status", evt);
     }
 
