@@ -43,6 +43,12 @@ jobs:
           BALIMDA_KEY_PASSWORD: ${{ secrets.BALIMDA_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon
       - run: cp android/app/build/outputs/apk/release/app-release.apk Balimda-android.apk
+      # The native AI engine must be inside the APK, or the app falls back to
+      # the much slower WebAssembly engine.
+      - name: Check the native engine is in the APK
+        run: |
+          unzip -l Balimda-android.apk | grep -E 'lib/.*\.so$' | tee native-libs.txt
+          grep -q 'libbalimda_llama.so' native-libs.txt || { echo "::error::libbalimda_llama.so is missing from the APK"; exit 1; }
       # Google sign-in (Drive sync) recognises the app by its package name and
       # this fingerprint, which goes into the Android OAuth client in Google
       # Cloud. It's public (anyone can read it from the APK).

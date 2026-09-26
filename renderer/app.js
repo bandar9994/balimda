@@ -635,10 +635,12 @@ function statsBadge(st) {
   const onGpu = /^GPU/.test(st.device || '');
   const details = [
     `Ran on: ${st.device}`,
-    st.offload ? `llama.cpp ${st.offload}` : 'All layers on the CPU',
+    st.engine ? `Engine: ${st.engine}` : null,
+    st.offload ? `llama.cpp ${st.offload}` : (st.engine === 'WebAssembly' ? null : 'All layers on the CPU'),
     `Reply: ${st.tokens} tokens in ${(st.ms / 1000).toFixed(1)} s (${speed.toFixed(1)} tokens/s)`,
-    st.promptTokens ? `Reading the chat: ${st.promptTokens} tokens in ${(st.promptMs / 1000).toFixed(1)} s` : 'Reading the chat: reused from memory'
-  ].join('\n');
+    st.promptTokens ? `Reading the chat: ${st.promptTokens} tokens in ${(st.promptMs / 1000).toFixed(1)} s`
+      : st.engine === 'WebAssembly' ? `Time before the first word: ${(st.promptMs / 1000).toFixed(1)} s` : 'Reading the chat: reused from memory'
+  ].filter(Boolean).join('\n');
   return h('span', {
     class: `stats ${onGpu ? 'gpu' : 'cpu'}`,
     title: details,
@@ -1476,7 +1478,9 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
           'Use the GPU'),
         h('div', { class: 'help', text: 'Runs the model on the phone\'s graphics chip (Adreno) for faster replies. Turn off to use the CPU only.' }));
     } else {
-      engineLine.textContent = 'Engine: WebAssembly (works everywhere, slower)';
+      engineLine.textContent = S.info.platform === 'android' && eng.error
+        ? `Engine: WebAssembly (slower). The faster native engine couldn't start on this phone: ${eng.error}`
+        : 'Engine: WebAssembly (works everywhere, slower)';
       customHelp.textContent = 'Q4_K_M files between 0.3 and 2 GB work best.';
       gpuBox.replaceChildren(
         h('label', { class: 'check' }, bind(h('input', { type: 'checkbox', checked: !!p.useGpu }), p, 'useGpu'),
