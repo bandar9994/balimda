@@ -63,6 +63,30 @@ function withSystem(system, messages) {
 
 // ---- Ollama (local) ------------------------------------------------------
 
+// Whether a model can think before answering (Qwen 3/3.5, DeepSeek-R1…).
+// Ollama rejects `think` for models that can't, so ask it once per model.
+const thinkingModels = new Map();
+async function supportsThinking(cfg, model) {
+  const key = `${trimSlash(cfg.baseUrl)}|${model}`;
+  if (!thinkingModels.has(key)) {
+    let yes = false;
+    try {
+      const res = await fetch(`${trimSlash(cfg.baseUrl)}/api/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model })
+      });
+      if (res.ok) yes = ((await res.json()).capabilities || []).includes('thinking');
+    } catch {
+      // unknown: leave thinking as the model's default
+    }
+    thinkingModels.set(key, yes);
+  }
+  return thinkingModels.get(key);
+}
+
+const ns = (v) => (Number(v) || 0) / 1e6;
+
 const ollama = {
   async listModels(cfg) {
     const res = await fetch(`${trimSlash(cfg.baseUrl)}/api/tags`);
@@ -75,32 +99,66 @@ const ollama = {
     const options = {};
     if (req.temperature != null) options.temperature = req.temperature;
     if (req.maxTokens > 0) options.num_predict = req.maxTokens;
+    const body = {
+      model: req.model,
+      messages: withSystem(req.system, req.messages),
+      stream: true,
+      // Keep the model in memory between messages; Ollama's default of
+      // 5 minutes means reloading it (slow for big models) after a pause.
+      keep_alive: '30m',
+      options
+    };
+    if (cfg.think === false && await supportsThinking(cfg, req.model)) body.think = false;
     const res = await fetch(`${trimSlash(cfg.baseUrl)}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: req.model,
-        messages: withSystem(req.system, req.messages),
-        stream: true,
-        options
-      }),
+      body: JSON.stringify(body),
       signal
     });
     if (!res.ok) throw await httpError(res);
     let text = '';
     let stopReason = 'end_turn';
+    let stats;
+    let thinking = false;
+    const out = (piece) => {
+      text += piece;
+      onDelta(piece);
+    };
     for await (const line of readLines(res.body)) {
       if (!line.trim()) continue;
       const evt = JSON.parse(line);
       if (evt.error) throw new Error(evt.error);
+      // Thinking models send their reasoning separately; show it the same way
+      // as other engines, in a <think> block, so the wait isn't silent.
+      const thought = evt.message && evt.message.thinking;
+      if (thought) {
+        if (!thinking) out('<think>');
+        thinking = true;
+        out(thought);
+      }
       const piece = evt.message && evt.message.content;
       if (piece) {
-        text += piece;
-        onDelta(piece);
+        if (thinking) out('</think>\n\n');
+        thinking = false;
+        out(piece);
       }
-      if (evt.done && evt.done_reason === 'length') stopReason = 'max_tokens';
+      if (evt.done) {
+        if (evt.done_reason === 'length') stopReason = 'max_tokens';
+        if (evt.eval_count) {
+          stats = {
+            engine: 'Ollama',
+            device: 'Ollama',
+            loadMs: ns(evt.load_duration),
+            promptTokens: evt.prompt_eval_count || 0,
+            promptMs: ns(evt.prompt_eval_duration),
+            tokens: evt.eval_count,
+            ms: ns(evt.eval_duration)
+          };
+        }
+      }
     }
-    return { text, stopReason };
+    if (thinking) out('</think>');
+    return { text, stopReason, stats };
   }
 };
 
