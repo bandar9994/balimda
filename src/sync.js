@@ -336,9 +336,10 @@ class DriveRemote {
   /**
    * @param token   async (force) => access token; force asks for a fresh one
    */
-  constructor({ token, account, fetch }) {
+  constructor({ token, account, metaId, fetch }) {
     this.token = token;
     this.account = account || null;
+    this.metaId = metaId || null;
     this.fetch = fetch || ((...args) => globalThis.fetch(...args));
     this.usesIndex = false;
   }
@@ -450,7 +451,27 @@ class DriveRemote {
     });
     const r = await this.req('GET', `${DRIVE}/files?${params}`);
     const f = r.files[0];
-    return f ? `${f.id}@${f.modifiedTime}` : null;
+    if (f) return `${f.id}@${f.modifiedTime}`;
+    // Drive's file list can lag a few seconds behind new files, so an empty
+    // list doesn't mean the data is gone. Ask for the setup file directly.
+    return (await this._metaExists()) ? 'listing' : null;
+  }
+
+  // Whether our setup file (balimda-sync.json) still exists. Looked up by id,
+  // which, unlike the file list, is always up to date.
+  async _metaExists() {
+    if (!this.metaId) {
+      const [first] = await this._metaFiles();
+      if (!first) return false;
+      this.metaId = first.id;
+    }
+    try {
+      const r = await this.req('GET', `${DRIVE}/files/${this.metaId}?fields=id,trashed`);
+      return !r.trashed;
+    } catch (err) {
+      if (err.status === 404) return false;
+      throw err;
+    }
   }
 
   async _metaFiles() {
@@ -460,15 +481,19 @@ class DriveRemote {
 
   async readMeta() {
     const [first] = await this._metaFiles();
-    return first ? this.read(first.id) : null;
+    if (!first) return null;
+    this.metaId = first.id;
+    return this.read(first.id);
   }
 
   async createMeta(text) {
     const mine = await this.create(META_FILE, text);
+    this.metaId = mine.id;
     // If two devices set up at the same moment, the older file wins.
     const [first] = await this._metaFiles();
     if (first && first.id !== mine.id) {
       await this.remove(mine.id).catch(() => {});
+      this.metaId = first.id;
       return this.read(first.id);
     }
     return text;
@@ -489,7 +514,9 @@ class DriveRemote {
         byName.set(f.name, keep);
       }
     }
-    if (!byName.has(META_FILE)) throw new SyncError('The sync data in Google Drive was removed. Set up sync again.');
+    if (!byName.has(META_FILE) && !(await this._metaExists())) {
+      throw new SyncError('The sync data in Google Drive was removed. Set up sync again.');
+    }
     await pool(extra, 4, (f) => this.remove(f.id).catch(() => {}));
 
     const chats = {};
@@ -665,6 +692,7 @@ class Sync {
     if (cfg.provider === 'gdrive') {
       return new DriveRemote({
         account: cfg.account,
+        metaId: cfg.metaId,
         fetch: this.fetch,
         token: (force) => {
           if (!this.googleAuth) throw new SyncError('Google sign-in is not available in this version of the app.');
@@ -703,6 +731,7 @@ class Sync {
     let meta = await remote.readMeta();
     if (!meta) meta = await remote.createMeta(await newMeta(passphrase));
     const keyBytes = await keyFromMeta(meta, passphrase);
+    if (remote.metaId) cfg.metaId = remote.metaId;
 
     this.config = { ...cfg, key: toBase64(keyBytes) };
     this.remote = remote;
