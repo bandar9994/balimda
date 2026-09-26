@@ -1,0 +1,65 @@
+<!doctype html>
+<!-- Balimda — © 2026 Bandar Altariqi. All rights reserved. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy policy — Balimda</title>
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <a href="./"><img src="icon.png" alt="Balimda home"></a>
+      <strong>Balimda</strong>
+      <nav><a href="./">Home</a></nav>
+    </div>
+  </header>
+
+  <main class="wrap doc">
+    <h1>Balimda privacy policy</h1>
+    <p><em>Last updated: 25 September 2026</em></p>
+    <p>Balimda, by Bandar Altariqi, is a chat app that keeps your data on your own devices. Balimda has no servers and does not collect, sell or share any personal data.</p>
+
+    <h2>What stays on your device</h2>
+    <p>Your chats, assistants, memory, settings, and any API keys you enter are stored only on your device. On desktop, API keys are encrypted with your system's keychain when one is available.</p>
+
+    <h2>AI models you choose</h2>
+    <p>When you send a message, it goes only to the model you picked:</p>
+    <ul>
+      <li><strong>On-device models</strong> run entirely on your phone or computer. Nothing leaves your device.</li>
+      <li><strong>Your own servers</strong> (Ollama, LM Studio and similar) receive your messages directly from the app.</li>
+      <li><strong>Cloud models</strong> (Anthropic, OpenAI) receive your messages directly from the app, using your own API key. Their privacy policies apply.</li>
+    </ul>
+
+    <h2>Sync (optional)</h2>
+    <p>If you turn on sync, your chats, assistants and memory are copied to storage <strong>you</strong> own:</p>
+    <ul>
+      <li><strong>Google Drive</strong>: a hidden app folder in your Drive. Balimda asks only for the <code>drive.appdata</code> permission, so it can use its own folder and cannot see any of your other files.</li>
+      <li><strong>GitHub</strong>: a private repository you create.</li>
+    </ul>
+    <p>Before anything is uploaded, it is encrypted on your device with a key made from your sync passphrase (AES-256-GCM). Google and GitHub store only encrypted data and cannot read your chats. Balimda's author has no access to it either.</p>
+
+    <h2>Google user data</h2>
+    <p>Balimda uses Google user data only to store and read back your own encrypted sync files in its hidden Drive app folder. It does not transfer Google user data to anyone else, use it for advertising, or let people read it. Balimda's use of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+    <h2>Stopping sync and deleting data</h2>
+    <p>To stop syncing, open <strong>Settings → Sync → Stop syncing</strong>. For Google Drive, this also removes Balimda's access to your Google account. You can remove the stored sync data at any time:</p>
+    <ul>
+      <li>In Google Drive, go to <strong>Settings → Manage apps → Balimda → Delete hidden app data</strong>.</li>
+      <li>For GitHub, delete your sync repository.</li>
+    </ul>
+
+    <h2>Contact</h2>
+    <p>Questions about this policy: <a href="https://github.com/bandar9994">github.com/bandar9994</a></p>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>© 2026 Bandar Altariqi</span>
+      <a href="./">Home</a>
+    </div>
+  </footer>
+</body>
+</html>
