@@ -661,14 +661,16 @@ function fillContent(container, msg) {
   }
   const { thinking, done, answer } = splitThinking(msg.content);
   if (thinking != null) {
+    const words = thinking ? thinking.split(/\s+/).length : 0;
     const details = h('details', { class: 'thinking' },
       h('summary', {
-        text: done ? 'Thought process' : 'Thinking…',
+        text: done ? 'Thought process' : `Thinking…${words ? ` (${words} words)` : ''}`,
         // Remember the reader's choice so redraws don't reopen or close it.
         onclick: () => thinkingOpen.set(msg, !details.open)
       }),
       h('div', { style: 'white-space: pre-wrap', text: thinking }));
-    details.open = thinkingOpen.has(msg) ? thinkingOpen.get(msg) : !done;
+    // Collapsed unless the reader opens it.
+    details.open = thinkingOpen.get(msg) === true;
     container.append(details);
   }
   const body = renderMarkdown(answer);
