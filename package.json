@@ -80,7 +80,9 @@
         "AppImage",
         "deb"
       ],
-      "category": "Utility"
+      "category": "Utility",
+      "maintainer": "Bandar Altariqi <bandar9994@users.noreply.github.com>",
+      "synopsis": "Balimda by Bandar Altariqi: private AI chat that remembers every chat"
     },
     "copyright": "Copyright \u00a9 2026 Bandar Altariqi"
   },
