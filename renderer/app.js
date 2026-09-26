@@ -1280,8 +1280,9 @@ async function onSyncEvent(evt) {
   if (evt.type !== 'changed') return;
   if (evt.settings) {
     const fresh = await api.settings.get();
-    for (const k of ['assistants', 'memory', 'memoryEnabled', 'sharedModifiedAt']) S.settings[k] = fresh[k];
+    for (const k of ['assistants', 'memory', 'memoryEnabled', 'autoMemory', 'recallChats', 'sharedModifiedAt']) S.settings[k] = fresh[k];
     renderSelectors();
+    for (const draw of memoryViews) draw();
   }
   for (const id of evt.deleted) {
     const cached = S.cache.get(id);
