@@ -210,7 +210,7 @@ export const nativeEngine = {
         temperature
       });
       if (stopReason === 'aborted') throw new DOMException('Aborted', 'AbortError');
-      return { text, stopReason, stats };
+      return { text, stopReason, stats: stats ? { engine: 'llama.cpp (native)', ...stats } : stats };
     } finally {
       tokenListeners.delete(requestId);
       statusListeners.delete(requestId);
