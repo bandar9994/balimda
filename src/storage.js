@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS = {
   maxTokens: 0,
   historyLimit: 0,
   memoryEnabled: true,
+  autoMemory: true,
   memory: '',
   providers: {
     ollama: { enabled: true, baseUrl: 'http://127.0.0.1:11434', think: true },
@@ -55,7 +56,7 @@ const ID_RE = /^[A-Za-z0-9-]+$/;
 
 // Settings that follow the user between devices when sync is on. Server
 // addresses and API keys differ per device, so they stay local.
-const SHARED_SETTINGS = ['assistants', 'memory', 'memoryEnabled'];
+const SHARED_SETTINGS = ['assistants', 'memory', 'memoryEnabled', 'autoMemory'];
 
 function pickShared(settings) {
   return Object.fromEntries(SHARED_SETTINGS.map((k) => [k, settings[k]]));

@@ -108,7 +108,9 @@ const ollama = {
       keep_alive: '30m',
       options
     };
-    if (cfg.think === false && await supportsThinking(cfg, req.model)) body.think = false;
+    // Thinking can be switched off in settings, or per request (quick
+    // background jobs like titles and memory don't need it).
+    if ((cfg.think === false || req.think === false) && await supportsThinking(cfg, req.model)) body.think = false;
     const res = await fetch(`${trimSlash(cfg.baseUrl)}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
