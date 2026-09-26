@@ -189,7 +189,7 @@ button { font: inherit; color: inherit; }
 .msg .content :not(pre) > code { background: var(--bg-code); padding: 1px 5px; border-radius: 4px; }
 .msg .content table { border-collapse: collapse; }
 .msg .content th, .msg .content td { border: 1px solid var(--border); padding: 4px 8px; }
-.msg .content blockquote { margin: 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--text-dim); }
+.msg .content blockquote { margin: 0; padding-inline-start: 12px; border-inline-start: 3px solid var(--border); color: var(--text-dim); }
 .msg .content a { color: var(--accent); }
 .copy-code {
   position: absolute;

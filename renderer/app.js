@@ -119,7 +119,11 @@ function renderMarkdown(text) {
   const html = DOMPurify.sanitize(marked.parse(text || ''));
   const wrap = h('div');
   wrap.innerHTML = html;
+  // Arabic (and other right-to-left) paragraphs read right to left, each on
+  // its own, so a mixed reply lays out naturally. Code stays left to right.
+  for (const block of wrap.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th')) block.setAttribute('dir', 'auto');
   for (const pre of wrap.querySelectorAll('pre')) {
+    pre.setAttribute('dir', 'ltr');
     const btn = h('button', { class: 'copy-code', text: 'Copy' });
     btn.addEventListener('click', () => {
       navigator.clipboard.writeText(pre.querySelector('code')?.innerText ?? pre.innerText.replace(/Copy$/, ''));
@@ -298,8 +302,8 @@ function renderSidebar() {
       onkeydown: (e) => { if (e.key === 'Enter') openChat(c.id); }
     },
     h('div', { class: 'ci-body' },
-      h('div', { class: 'ci-title', text: c.title }),
-      c.preview ? h('div', { class: 'ci-preview', text: c.preview }) : null),
+      h('div', { class: 'ci-title', dir: 'auto', text: c.title }),
+      c.preview ? h('div', { class: 'ci-preview', dir: 'auto', text: c.preview }) : null),
     cached && isStreaming(cached) ? h('span', { class: 'ci-dot', title: 'Replying…' }) : null,
     h('button', {
       class: 'ci-del',
@@ -591,7 +595,7 @@ function renderWelcome() {
 function renderMessage(chat, msg, index) {
   const isUser = msg.role === 'user';
   const assistant = getAssistant(chat.assistantId);
-  const content = h('div', { class: 'content' });
+  const content = h('div', { class: 'content', dir: isUser ? 'auto' : null });
   fillContent(content, msg);
 
   const actions = h('div', { class: 'actions' });
