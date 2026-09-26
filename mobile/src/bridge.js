@@ -199,6 +199,7 @@ window.balimda = {
   chats: {
     list: withStorage((s) => s.listChats()),
     search: withStorage((s, q) => s.searchChats(q)),
+    recall: withStorage((s, q, opts) => s.recall(q, opts)),
     get: withStorage((s, id) => s.getChat(id)),
     create: withStorage((s, init) => s.createChat(init)),
     save: withStorage((s, chat) => s.saveChat(structuredClone(chat))),

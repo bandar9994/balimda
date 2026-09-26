@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('balimda', {
   chats: {
     list: invoke('chats:list'),
     search: invoke('chats:search'),
+    recall: invoke('chats:recall'),
     get: invoke('chats:get'),
     create: invoke('chats:create'),
     save: invoke('chats:save'),
