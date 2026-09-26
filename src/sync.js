@@ -595,7 +595,16 @@ function mergeMemory(base, mine, theirs) {
 // the other settings come from whichever side changed last.
 function mergeShared(base, mine, theirs) {
   const newer = mine.modifiedAt > theirs.modifiedAt ? mine.data : theirs.data;
-  return { ...newer, memory: mergeMemory(base, mine.data.memory, theirs.data.memory) };
+  const merged = { ...newer, memory: mergeMemory(base, mine.data.memory, theirs.data.memory) };
+  // Each computer updates only its own entry: keep the latest of each.
+  if (mine.data.computers || theirs.data.computers) {
+    const computers = { ...(theirs.data.computers || {}) };
+    for (const [id, c] of Object.entries(mine.data.computers || {})) {
+      if (!computers[id] || (c.updatedAt || 0) > (computers[id].updatedAt || 0)) computers[id] = c;
+    }
+    merged.computers = computers;
+  }
+  return merged;
 }
 
 const msgKey = (m) => m.id || `${m.role}|${m.createdAt}|${String(m.content || '').slice(0, 80)}`;
@@ -706,6 +715,12 @@ class Sync {
   // Which destinations this build can use.
   providers() {
     return { github: true, gdrive: !!this.googleAuth };
+  }
+
+  // The sync key (base64), which "use my computer's models" derives its own
+  // key from. Null when sync isn't set up.
+  linkKey() {
+    return this.config ? this.config.key : null;
   }
 
   status() {
@@ -972,9 +987,13 @@ class Sync {
     const rs = remoteIdx.shared;
     const localChanged = shared.modifiedAt > 0 && shared.modifiedAt !== this.state.shared;
     const remoteChanged = !!rs && rs.m !== this.state.shared;
+    // What this run leaves in sync; a change made while it runs is picked
+    // up by the next run.
+    let synced = { m: shared.modifiedAt, memory: shared.data.memory };
     const push = async (data, m) => {
       sharedWrite = { m, text: await seal(key, data) };
       next.shared = { m };
+      synced = { m, memory: data.memory };
     };
     if (localChanged && remoteChanged && rs.m !== shared.modifiedAt) {
       const rsText = await snap.readShared();
@@ -984,6 +1003,7 @@ class Sync {
         .every((k) => JSON.stringify(a[k] ?? null) === JSON.stringify(b[k] ?? null));
       if (theirs && same(merged, theirs.data)) {
         await storage.applySharedSettings(theirs.data, rs.m);
+        synced = { m: rs.m, memory: theirs.data.memory };
         settingsChanged = true;
       } else if (!theirs || same(merged, shared.data)) {
         const m = Math.max(shared.modifiedAt, rs.m + 1);
@@ -998,7 +1018,9 @@ class Sync {
     } else if (rs && rs.m > shared.modifiedAt) {
       const rsText = await snap.readShared();
       if (rsText) {
-        await storage.applySharedSettings(await unseal(key, rsText), rs.m);
+        const data = await unseal(key, rsText);
+        await storage.applySharedSettings(data, rs.m);
+        synced = { m: rs.m, memory: data.memory };
         settingsChanged = true;
       }
     } else if (!rs || shared.modifiedAt > rs.m) {
@@ -1018,15 +1040,14 @@ class Sync {
     }
 
     // Everything on this device now matches the synced copy.
-    const synced = await storage.getSharedSettings();
     const nextBase = {};
     for (const c of storage.index) nextBase[c.id] = c.rev;
     this.state = {
       ...this.state,
       head: newHead,
       chats: nextBase,
-      shared: synced.modifiedAt,
-      sharedMemory: synced.data.memory || '',
+      shared: synced.m,
+      sharedMemory: synced.memory || '',
       lastSync: Date.now()
     };
     const handled = Object.keys(tomb).filter((id) => !local.has(id));
@@ -1038,4 +1059,4 @@ class Sync {
   }
 }
 
-module.exports = { Sync, SyncError, GitHub, GitHubRemote, DriveRemote, mergeChats, mergeMemory, parseRepo, seal, unseal, importKey, deriveKeyBytes };
+module.exports = { Sync, SyncError, GitHub, GitHubRemote, DriveRemote, mergeChats, mergeMemory, toBase64, fromBase64, parseRepo, seal, unseal, importKey, deriveKeyBytes };

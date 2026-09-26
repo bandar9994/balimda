@@ -55,6 +55,15 @@ contextBridge.exposeInMainWorld('balimda', {
       return () => ipcRenderer.removeListener('sync:event', listener);
     }
   },
+  // Sharing this computer's models with the phone.
+  remote: {
+    status: invoke('remote:status'),
+    onStatus(cb) {
+      const listener = (_e, status) => cb(status);
+      ipcRenderer.on('remote:status', listener);
+      return () => ipcRenderer.removeListener('remote:status', listener);
+    }
+  },
   onMenu(cb) {
     ipcRenderer.on('menu', (_e, action) => cb(action));
   }

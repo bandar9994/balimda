@@ -48,10 +48,18 @@ You can also paste a link to any `.gguf` file.
 
 ### Using the models on your PC from your phone
 
+The easy way: let the Balimda desktop app answer for your phone.
+
+1. Set up sync on both devices with the same passphrase (Settings → Sync).
+2. On the computer, open Settings → Models & providers and turn on **Let my phone use this computer's models**. If your system asks, allow Balimda to accept incoming network connections (on Windows, allow **Private networks**).
+3. On the phone, pick a model under **On your computer** at the top of a chat.
+
+The phone finds the computer through sync, so there are no addresses to type. Everything the computer can use works: Ollama, LM Studio, and Claude or OpenAI with the computer's API keys, which never leave the computer. The connection is encrypted with a key derived from your sync passphrase, so only your own devices can use it. Balimda must be open on the computer, and both devices must be on the same Wi-Fi, or anywhere if both are on [Tailscale](https://tailscale.com).
+
+Or connect to the servers directly, on the same Wi-Fi:
+
 - **Ollama**: on the PC, set the environment variables `OLLAMA_HOST=0.0.0.0` and `OLLAMA_ORIGINS=*`, then restart Ollama. In Balimda on the phone, enable **Ollama** and enter `http://<your PC's IP>:11434`.
 - **LM Studio**: in the Developer tab turn on **Serve on Local Network** and **Enable CORS**. In Balimda, enable **LM Studio / OpenAI-compatible** and enter `http://<your PC's IP>:1234/v1`.
-
-The phone and PC must be on the same Wi-Fi network.
 
 ## Desktop (Windows, macOS, Linux)
 

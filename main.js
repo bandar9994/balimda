@@ -10,6 +10,9 @@ const { nodeFsBackend } = require('./src/backends/node-fs');
 const { PROVIDERS, normalizeMessages } = require('./src/providers');
 const { Sync } = require('./src/sync');
 const { desktopGoogleAuth } = require('./src/google-auth-desktop');
+const { linkKey } = require('./src/remote');
+const { startRemoteServer, localAddresses } = require('./src/remote-server');
+const os = require('os');
 
 // Allow a custom data folder (e.g. a synced folder) via BALIMDA_DATA_DIR.
 const dataDir = process.env.BALIMDA_DATA_DIR || path.join(app.getPath('userData'), 'data');
@@ -146,6 +149,124 @@ async function createWindow() {
   });
 }
 
+// ---- "Use my computer's models" from the phone ------------------------------
+// When turned on (settings.shareWithPhone) and sync is set up, a small
+// encrypted server answers the phone's chat requests with this computer's
+// models, and this computer's addresses are published through sync.
+
+let remote = null;        // { port, close } while sharing
+let remoteKey = null;     // { syncKey, key }
+let remoteError = null;
+let shareWanted = false;  // settings.shareWithPhone, as last read
+
+async function currentLinkKey() {
+  const syncKey = sync && sync.linkKey();
+  if (!syncKey) return null;
+  if (!remoteKey || remoteKey.syncKey !== syncKey) remoteKey = { syncKey, key: await linkKey(syncKey) };
+  return remoteKey.key;
+}
+
+function computerName() {
+  return os.hostname().replace(/\.(local|lan|home)$/i, '') || 'My computer';
+}
+
+async function computerId() {
+  const state = await storage.getState();
+  if (state.computerId) return state.computerId;
+  const id = globalThis.crypto.randomUUID();
+  await storage.saveState({ computerId: id });
+  return id;
+}
+
+async function enabledProviders(settings) {
+  return Object.keys(PROVIDERS).filter((id) => {
+    const p = settings.providers[id];
+    return p && p.enabled !== false && ((id !== 'anthropic' && id !== 'openai') || p.apiKey);
+  });
+}
+
+async function runChat(providerId, req, onDelta, signal) {
+  const provider = PROVIDERS[providerId];
+  if (!provider) throw new Error(`Unknown provider: ${providerId}`);
+  const cfg = (await storage.getSettings()).providers[providerId] || {};
+  return provider.impl.streamChat(
+    cfg,
+    {
+      model: req.model,
+      system: req.system,
+      messages: normalizeMessages(req.messages || []),
+      temperature: req.temperature,
+      maxTokens: req.maxTokens,
+      think: req.think
+    },
+    onDelta,
+    signal
+  );
+}
+
+const remoteHandlers = {
+  hello: async () => ({ app: 'balimda', name: computerName(), version: app.getVersion() }),
+  models: async () => {
+    const settings = await storage.getSettings();
+    const out = [];
+    await Promise.all((await enabledProviders(settings)).map(async (id) => {
+      try {
+        const models = await PROVIDERS[id].impl.listModels(settings.providers[id]);
+        const short = PROVIDERS[id].label.replace(/\s*\(.*\)$/, '');
+        if (models.length) out.push({ provider: id, label: PROVIDERS[id].label, short, models });
+      } catch {
+        // not running: leave it out
+      }
+    }));
+    return out;
+  },
+  chat: async (msg, { emit, signal }) => {
+    if (!(await enabledProviders(await storage.getSettings())).includes(msg.provider)) {
+      throw new Error(`${PROVIDERS[msg.provider] ? PROVIDERS[msg.provider].label : 'This provider'} is turned off on ${computerName()}.`);
+    }
+    return runChat(msg.provider, msg.req || {}, (text) => emit({ t: 'delta', text }), signal);
+  }
+};
+
+async function updateRemote() {
+  const settings = await storage.getSettings();
+  shareWanted = !!settings.shareWithPhone;
+  const wanted = shareWanted && !!sync.linkKey();
+  try {
+    if (wanted && !remote) {
+      remote = await startRemoteServer({ getKey: currentLinkKey, handlers: remoteHandlers });
+    } else if (!wanted && remote) {
+      await remote.close();
+      remote = null;
+    }
+    remoteError = null;
+  } catch (err) {
+    remote = null;
+    remoteError = `Couldn't start sharing: ${err.message}`;
+  }
+  if (sync.linkKey()) {
+    const id = await computerId();
+    const known = (settings.computers || {})[id];
+    if (remote) {
+      await storage.publishComputer(id, { id, name: computerName(), addrs: localAddresses(), port: remote.port, enabled: true });
+    } else if (known && known.enabled) {
+      await storage.publishComputer(id, { ...known, enabled: false });
+    }
+  }
+  send('remote:status', remoteStatus());
+}
+
+function remoteStatus() {
+  return {
+    sharing: !!remote,
+    syncReady: !!(sync && sync.linkKey()),
+    name: computerName(),
+    addrs: remote ? localAddresses() : [],
+    port: remote ? remote.port : null,
+    error: remoteError
+  };
+}
+
 function send(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
@@ -200,7 +321,13 @@ function registerIpc() {
   ipcMain.handle('chats:delete', (_e, id) => storage.deleteChat(id));
 
   ipcMain.handle('settings:get', () => storage.getSettings());
-  ipcMain.handle('settings:save', (_e, s) => storage.saveSettings(s));
+  ipcMain.handle('settings:save', async (_e, s) => {
+    const saved = await storage.saveSettings(s);
+    const was = !!remote;
+    if (!!saved.shareWithPhone !== was) await updateRemote();
+    return saved;
+  });
+  ipcMain.handle('remote:status', () => remoteStatus());
   ipcMain.handle('state:get', () => storage.getState());
   ipcMain.handle('state:save', (_e, patch) => storage.saveState(patch));
 
@@ -277,25 +404,11 @@ function registerIpc() {
   // Streams a reply. Deltas are pushed to the renderer as 'ai:event' messages.
   ipcMain.handle('ai:chat', async (_e, req) => {
     const { requestId, provider: providerId } = req;
-    const provider = PROVIDERS[providerId];
-    if (!provider) throw new Error(`Unknown provider: ${providerId}`);
-    const cfg = (await storage.getSettings()).providers[providerId] || {};
+    if (!PROVIDERS[providerId]) throw new Error(`Unknown provider: ${providerId}`);
     const controller = new AbortController();
     activeRequests.set(requestId, controller);
     try {
-      const result = await provider.impl.streamChat(
-        cfg,
-        {
-          model: req.model,
-          system: req.system,
-          messages: normalizeMessages(req.messages),
-          temperature: req.temperature,
-          maxTokens: req.maxTokens,
-          think: req.think
-        },
-        (text) => send('ai:event', { requestId, type: 'delta', text }),
-        controller.signal
-      );
+      const result = await runChat(providerId, req, (text) => send('ai:event', { requestId, type: 'delta', text }), controller.signal);
       return { ok: true, ...result };
     } catch (err) {
       if (controller.signal.aborted) return { ok: true, aborted: true };
@@ -321,7 +434,11 @@ app.whenReady().then(async () => {
     secrets: secrets(),
     fetch: (url, opts) => net.fetch(url, opts),
     googleAuth: googleAuth(),
-    onEvent: (evt) => send('sync:event', evt)
+    onEvent: (evt) => {
+      send('sync:event', evt);
+      // Sync was just set up or removed: start or stop sharing with the phone.
+      if (evt.type === 'status' && !remoteError && !!remote !== !!(sync.linkKey() && shareWanted)) updateRemote();
+    }
   });
   await sync.load();
   registerIpc();
@@ -334,6 +451,13 @@ app.whenReady().then(async () => {
 
   sync.run();
   setInterval(() => sync.run(), 60 * 1000);
+
+  // Share with the phone if turned on; keep the published addresses current
+  // (Wi-Fi changes, laptop moves between networks).
+  await updateRemote();
+  setInterval(() => {
+    if (remote) updateRemote();
+  }, 60 * 1000);
 });
 
 // Push the last changes before quitting, so they're on the phone right away.

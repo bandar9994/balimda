@@ -25,6 +25,8 @@ const DEFAULT_SETTINGS = {
   autoMemory: true,
   recallChats: true,
   memory: '',
+  computers: {},
+  shareWithPhone: false,
   providers: {
     ollama: { enabled: true, baseUrl: 'http://127.0.0.1:11434', think: true },
     openaiCompatible: { enabled: true, baseUrl: 'http://127.0.0.1:1234/v1', apiKey: '' },
@@ -56,8 +58,10 @@ const DEFAULT_SETTINGS = {
 const ID_RE = /^[A-Za-z0-9-]+$/;
 
 // Settings that follow the user between devices when sync is on. Server
-// addresses and API keys differ per device, so they stay local.
-const SHARED_SETTINGS = ['assistants', 'memory', 'memoryEnabled', 'autoMemory', 'recallChats'];
+// addresses and API keys differ per device, so they stay local. `computers`
+// lists the computers that share their models with the phone (see
+// src/remote.js); only publishComputer changes it.
+const SHARED_SETTINGS = ['assistants', 'memory', 'memoryEnabled', 'autoMemory', 'recallChats', 'computers'];
 
 function pickShared(settings) {
   return Object.fromEntries(SHARED_SETTINGS.map((k) => [k, settings[k]]));
@@ -490,7 +494,9 @@ class Storage {
     let sharedChanged = false;
     await this._serial(async () => {
       const before = await this.getSettings();
-      sharedChanged = JSON.stringify(pickShared(before)) !== JSON.stringify(pickShared(settings));
+      // The app window may hold an older list of computers; keep the saved one.
+      copy.computers = before.computers;
+      sharedChanged = JSON.stringify(pickShared(before)) !== JSON.stringify(pickShared({ ...settings, computers: before.computers }));
       copy.sharedModifiedAt = sharedChanged ? Date.now() : before.sharedModifiedAt || 0;
       await this._writeJson('settings.json', copy);
     });
@@ -512,6 +518,26 @@ class Storage {
       delete saved.pals;
       await this._writeJson('settings.json', saved);
     });
+  }
+
+  // A computer announces (or stops) sharing its models with the phone.
+  // Returns whether anything changed.
+  async publishComputer(id, info) {
+    let changed = false;
+    await this._serial(async () => {
+      const saved = await this._readJson('settings.json', {});
+      const computers = { ...(saved.computers || {}) };
+      const { updatedAt: _a, ...before } = computers[id] || {};
+      const { updatedAt: _b, ...after } = info;
+      if (JSON.stringify(before) === JSON.stringify(after)) return;
+      computers[id] = { ...info, updatedAt: Date.now() };
+      saved.computers = computers;
+      saved.sharedModifiedAt = Date.now();
+      await this._writeJson('settings.json', saved);
+      changed = true;
+    });
+    if (changed) this._changed('settings');
+    return changed;
   }
 
   // Small JSON files owned by other modules (sync config and state).
