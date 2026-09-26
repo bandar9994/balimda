@@ -59,3 +59,42 @@ jobs:
             dist/*.AppImage
             dist/*.deb
           if-no-files-found: error
+
+  # Newest installers under fixed names, so the README can link straight to
+  # them: https://github.com/<owner>/<repo>/releases/tag/desktop-latest
+  publish:
+    needs: build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: balimda-desktop-*
+          merge-multiple: true
+      - name: Give the installers fixed names
+        run: |
+          mkdir out
+          for f in artifacts/*; do
+            case "$f" in
+              *.exe) cp "$f" out/Balimda-Windows-Setup.exe ;;
+              *arm64*.dmg) cp "$f" out/Balimda-macOS-AppleSilicon.dmg ;;
+              *.dmg) cp "$f" out/Balimda-macOS-Intel.dmg ;;
+              *.AppImage) cp "$f" out/Balimda-Linux.AppImage ;;
+              *.deb) cp "$f" out/Balimda-Linux.deb ;;
+            esac
+          done
+          ls -la out
+      - name: Publish to the desktop-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          notes="Newest desktop build (from ${GITHUB_SHA::7}, $(date -u '+%Y-%m-%d %H:%M UTC')). Windows: Balimda-Windows-Setup.exe. Mac: Balimda-macOS-AppleSilicon.dmg (M1 and newer) or Balimda-macOS-Intel.dmg. Linux: Balimda-Linux.AppImage or Balimda-Linux.deb."
+          if ! gh release view desktop-latest >/dev/null 2>&1; then
+            gh release create desktop-latest --prerelease --target "$GITHUB_SHA" --title "Balimda for Windows, macOS and Linux (latest build)" --notes "$notes"
+          fi
+          gh release upload desktop-latest out/* --clobber
+          gh release edit desktop-latest --notes "$notes"

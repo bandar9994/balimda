@@ -558,6 +558,55 @@ const chatPath = (id) => `chats/${id}.enc`;
 
 // ---- merging -------------------------------------------------------------------
 
+const factKey = (line) => line.toLowerCase().replace(/^[-•*\s]+/, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+// Memory changed on two devices before they synced. Compare each side with
+// the memory both last agreed on (base): keep the lines either side added,
+// drop the lines either side removed. An updated fact is a removed line plus
+// an added one, so updates carry over too.
+function mergeMemory(base, mine, theirs) {
+  const keys = (text) => new Set(String(text || '').split('\n').map(factKey).filter(Boolean));
+  const was = keys(base);
+  const mineKeys = keys(mine);
+  const theirKeys = keys(theirs);
+  const out = [];
+  const seen = new Set();
+  for (const line of String(mine || '').split('\n')) {
+    const k = factKey(line);
+    if (!k) {
+      if (line.trim() === '' && out.length && out.at(-1).trim() !== '') out.push('');
+      continue;
+    }
+    if (seen.has(k) || (was.has(k) && !theirKeys.has(k))) continue;
+    seen.add(k);
+    out.push(line);
+  }
+  for (const line of String(theirs || '').split('\n')) {
+    const k = factKey(line);
+    if (!k || seen.has(k) || mineKeys.has(k) || was.has(k)) continue;
+    seen.add(k);
+    out.push(line);
+  }
+  while (out.length && out.at(-1).trim() === '') out.pop();
+  return out.join('\n');
+}
+
+// Shared settings changed on both devices: memory is merged line by line,
+// the other settings come from whichever side changed last.
+function mergeShared(base, mine, theirs) {
+  const newer = mine.modifiedAt > theirs.modifiedAt ? mine.data : theirs.data;
+  const merged = { ...newer, memory: mergeMemory(base, mine.data.memory, theirs.data.memory) };
+  // Each computer updates only its own entry: keep the latest of each.
+  if (mine.data.computers || theirs.data.computers) {
+    const computers = { ...(theirs.data.computers || {}) };
+    for (const [id, c] of Object.entries(mine.data.computers || {})) {
+      if (!computers[id] || (c.updatedAt || 0) > (computers[id].updatedAt || 0)) computers[id] = c;
+    }
+    merged.computers = computers;
+  }
+  return merged;
+}
+
 const msgKey = (m) => m.id || `${m.role}|${m.createdAt}|${String(m.content || '').slice(0, 80)}`;
 
 // The same chat changed on two devices before they synced: keep the newer
@@ -666,6 +715,12 @@ class Sync {
   // Which destinations this build can use.
   providers() {
     return { github: true, gdrive: !!this.googleAuth };
+  }
+
+  // The sync key (base64), which "use my computer's models" derives its own
+  // key from. Null when sync isn't set up.
+  linkKey() {
+    return this.config ? this.config.key : null;
   }
 
   status() {
@@ -925,17 +980,51 @@ class Sync {
       return { id, m };
     });
 
-    // Shared settings: newest wins.
+    // Shared settings: newest wins, except that memory changed on both
+    // devices since they last synced is merged.
     let settingsChanged = false;
     let sharedWrite = null;
     const rs = remoteIdx.shared;
-    const rsText = rs && rs.m > shared.modifiedAt ? await snap.readShared() : null;
-    if (rsText) {
-      await storage.applySharedSettings(await unseal(key, rsText), rs.m);
-      settingsChanged = true;
+    const localChanged = shared.modifiedAt > 0 && shared.modifiedAt !== this.state.shared;
+    const remoteChanged = !!rs && rs.m !== this.state.shared;
+    // What this run leaves in sync; a change made while it runs is picked
+    // up by the next run.
+    let synced = { m: shared.modifiedAt, memory: shared.data.memory };
+    const push = async (data, m) => {
+      sharedWrite = { m, text: await seal(key, data) };
+      next.shared = { m };
+      synced = { m, memory: data.memory };
+    };
+    if (localChanged && remoteChanged && rs.m !== shared.modifiedAt) {
+      const rsText = await snap.readShared();
+      const theirs = rsText ? { modifiedAt: rs.m, data: await unseal(key, rsText) } : null;
+      const merged = theirs ? mergeShared(this.state.sharedMemory, shared, theirs) : shared.data;
+      const same = (a, b) => [...new Set([...Object.keys(a), ...Object.keys(b)])]
+        .every((k) => JSON.stringify(a[k] ?? null) === JSON.stringify(b[k] ?? null));
+      if (theirs && same(merged, theirs.data)) {
+        await storage.applySharedSettings(theirs.data, rs.m);
+        synced = { m: rs.m, memory: theirs.data.memory };
+        settingsChanged = true;
+      } else if (!theirs || same(merged, shared.data)) {
+        const m = Math.max(shared.modifiedAt, rs.m + 1);
+        if (m !== shared.modifiedAt) await storage.applySharedSettings(shared.data, m);
+        await push(shared.data, m);
+      } else {
+        const m = Math.max(Date.now(), shared.modifiedAt + 1, rs.m + 1);
+        await storage.applySharedSettings(merged, m);
+        await push(merged, m);
+        settingsChanged = true;
+      }
+    } else if (rs && rs.m > shared.modifiedAt) {
+      const rsText = await snap.readShared();
+      if (rsText) {
+        const data = await unseal(key, rsText);
+        await storage.applySharedSettings(data, rs.m);
+        synced = { m: rs.m, memory: data.memory };
+        settingsChanged = true;
+      }
     } else if (!rs || shared.modifiedAt > rs.m) {
-      sharedWrite = { m: shared.modifiedAt, text: await seal(key, shared.data) };
-      next.shared = { m: shared.modifiedAt };
+      await push(shared.data, shared.modifiedAt);
     }
 
     let newHead = head;
@@ -957,7 +1046,8 @@ class Sync {
       ...this.state,
       head: newHead,
       chats: nextBase,
-      shared: (await storage.getSharedSettings()).modifiedAt,
+      shared: synced.m,
+      sharedMemory: synced.memory || '',
       lastSync: Date.now()
     };
     const handled = Object.keys(tomb).filter((id) => !local.has(id));
@@ -969,4 +1059,4 @@ class Sync {
   }
 }
 
-module.exports = { Sync, SyncError, GitHub, GitHubRemote, DriveRemote, mergeChats, parseRepo, seal, unseal, importKey, deriveKeyBytes };
+module.exports = { Sync, SyncError, GitHub, GitHubRemote, DriveRemote, mergeChats, mergeMemory, toBase64, fromBase64, parseRepo, seal, unseal, importKey, deriveKeyBytes };

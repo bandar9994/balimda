@@ -13,6 +13,7 @@ import { Share } from '@capacitor/share';
 import { Storage } from '../../src/storage.js';
 import { PROVIDERS, normalizeMessages } from '../../src/providers.js';
 import { Sync, SyncError } from '../../src/sync.js';
+import { remoteComputers } from '../../src/remote.js';
 import * as local from './on-device.js';
 import * as native from './native-engine.js';
 
@@ -66,6 +67,7 @@ const MOBILE_DEFAULTS = {
   historyLimit: 0,
   providers: {
     onDevice: { enabled: true, contextSize: 4096, useGpu: false, nativeGpu: true },
+    computer: { enabled: true },
     ollama: { enabled: false, baseUrl: 'http://192.168.1.10:11434' },
     openaiCompatible: { enabled: false, baseUrl: 'http://192.168.1.10:1234/v1', apiKey: '' }
   }
@@ -133,6 +135,12 @@ const nativeInfo = isNative && Capacitor.isPluginAvailable('Llama')
 const engine = async () => ((await nativeInfo).available ? native : local);
 const chatEngine = async () => ((await nativeInfo).available ? native.nativeEngine : local.onDevice);
 
+// The models of the user's computers, over Wi-Fi (see src/remote.js).
+const computers = remoteComputers({
+  getKey: async () => (await syncReady).linkKey(),
+  getComputers: async () => (await (await ready).getSettings()).computers
+});
+
 const providers = {
   onDevice: {
     label: 'On this device (offline)',
@@ -140,6 +148,10 @@ const providers = {
       listModels: async (cfg) => (await chatEngine()).listModels(cfg),
       streamChat: async (...args) => (await chatEngine()).streamChat(...args)
     }
+  },
+  computer: {
+    label: 'On your computer',
+    impl: computers
   },
   ...PROVIDERS
 };
@@ -199,6 +211,7 @@ window.balimda = {
   chats: {
     list: withStorage((s) => s.listChats()),
     search: withStorage((s, q) => s.searchChats(q)),
+    recall: withStorage((s, q, opts) => s.recall(q, opts)),
     get: withStorage((s, id) => s.getChat(id)),
     create: withStorage((s, init) => s.createChat(init)),
     save: withStorage((s, chat) => s.saveChat(structuredClone(chat))),
@@ -281,12 +294,16 @@ window.balimda = {
             system: req.system,
             messages: normalizeMessages(req.messages),
             temperature: req.temperature,
-            maxTokens: req.maxTokens
+            maxTokens: req.maxTokens,
+            think: req.think
           },
           (text) => {
             for (const cb of aiListeners) cb({ requestId: req.requestId, type: 'delta', text });
           },
-          controller.signal
+          controller.signal,
+          (info) => {
+            for (const cb of aiListeners) cb({ requestId: req.requestId, type: 'info', ...info });
+          }
         );
         return { ok: true, ...result };
       } catch (err) {

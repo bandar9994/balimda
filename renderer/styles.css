@@ -189,7 +189,7 @@ button { font: inherit; color: inherit; }
 .msg .content :not(pre) > code { background: var(--bg-code); padding: 1px 5px; border-radius: 4px; }
 .msg .content table { border-collapse: collapse; }
 .msg .content th, .msg .content td { border: 1px solid var(--border); padding: 4px 8px; }
-.msg .content blockquote { margin: 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--text-dim); }
+.msg .content blockquote { margin: 0; padding-inline-start: 12px; border-inline-start: 3px solid var(--border); color: var(--text-dim); }
 .msg .content a { color: var(--accent); }
 .copy-code {
   position: absolute;
@@ -601,3 +601,10 @@ textarea.input { resize: vertical; }
 .about-by { margin: 4px 0 0; font-size: 15px; }
 .legal { white-space: pre-wrap; font-size: 12px; line-height: 1.5; margin: 0; font-family: ui-monospace, Menlo, Consolas, monospace; }
 .settings-pane a { color: var(--accent); overflow-wrap: anywhere; }
+.hint.model-note { color: var(--accent); }
+.msg .meta .stats.live { cursor: default; }
+.msg .waiting { margin-top: 6px; font-size: 13px; color: var(--text-dim); }
+.msg .recalled { margin-top: 8px; font-size: 12px; color: var(--text-dim); }
+.msg .recalled a { color: var(--accent); }
+.memory-count { margin-top: 4px; }
+.memory-count.over { color: var(--danger); }

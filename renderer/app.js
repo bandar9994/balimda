@@ -119,7 +119,11 @@ function renderMarkdown(text) {
   const html = DOMPurify.sanitize(marked.parse(text || ''));
   const wrap = h('div');
   wrap.innerHTML = html;
+  // Arabic (and other right-to-left) paragraphs read right to left, each on
+  // its own, so a mixed reply lays out naturally. Code stays left to right.
+  for (const block of wrap.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th')) block.setAttribute('dir', 'auto');
   for (const pre of wrap.querySelectorAll('pre')) {
+    pre.setAttribute('dir', 'ltr');
     const btn = h('button', { class: 'copy-code', text: 'Copy' });
     btn.addEventListener('click', () => {
       navigator.clipboard.writeText(pre.querySelector('code')?.innerText ?? pre.innerText.replace(/Copy$/, ''));
@@ -298,8 +302,8 @@ function renderSidebar() {
       onkeydown: (e) => { if (e.key === 'Enter') openChat(c.id); }
     },
     h('div', { class: 'ci-body' },
-      h('div', { class: 'ci-title', text: c.title }),
-      c.preview ? h('div', { class: 'ci-preview', text: c.preview }) : null),
+      h('div', { class: 'ci-title', dir: 'auto', text: c.title }),
+      c.preview ? h('div', { class: 'ci-preview', dir: 'auto', text: c.preview }) : null),
     cached && isStreaming(cached) ? h('span', { class: 'ci-dot', title: 'Replying…' }) : null,
     h('button', {
       class: 'ci-del',
@@ -345,6 +349,7 @@ async function loadModels() {
   S.modelErrors = errors;
   ensureDefaultModel();
   renderSelectors();
+  updateComposer();
   if (!S.current) renderChat();
 }
 
@@ -366,12 +371,64 @@ function ensureDefaultModel() {
   }
 }
 
+// A phone and a computer rarely have the same models, so each chat remembers
+// the model to use on each device (chat.models, keyed by this device's id).
+// chat.model is the model of the latest reply, from whichever device.
+const LOCAL_PROVIDERS = new Set(['ollama', 'openaiCompatible', 'onDevice', 'computer']);
+
+const sameModel = (a, b) => !!a && !!b && a.provider === b.provider && a.model === b.model;
+
+// Whether this device can use a model right now. Until the model lists have
+// loaded, any enabled provider counts.
+function modelAvailable(m) {
+  if (!m || !m.provider || !m.model) return false;
+  if (!S.info.providers[m.provider]) return false;
+  const cfg = S.settings.providers[m.provider];
+  if (!cfg || cfg.enabled === false) return false;
+  if ((m.provider === 'anthropic' || m.provider === 'openai') && !cfg.apiKey) return false;
+  if (S.modelErrors[m.provider]) return false;
+  const list = S.models[m.provider];
+  if (LOCAL_PROVIDERS.has(m.provider) && Array.isArray(list) && list.length) return list.includes(m.model);
+  return true;
+}
+
+// The model a chat uses on this device: this device's own choice for the
+// chat, else the chat's latest model, the assistant's model or this device's
+// default -- whichever this device can actually run.
+function chatModel(chat) {
+  const assistant = getAssistant(chat.assistantId);
+  return [(chat.models || {})[S.state.deviceId], chat.model, assistant.model, S.settings.defaultModel].find(modelAvailable) || null;
+}
+
+function useModel(chat, model) {
+  chat.model = model;
+  chat.models = { ...(chat.models || {}), [S.state.deviceId]: model };
+}
+
+// Explains why a chat isn't using the model it used last time.
+function modelNote(chat, model) {
+  if (!chat) return '';
+  const mine = (chat.models || {})[S.state.deviceId];
+  if (!model) {
+    const wanted = mine || chat.model;
+    if (!wanted) return '';
+    if (wanted.provider === 'computer') return `${displayModel(wanted.model)} isn't available right now. Check that the computer is on with Balimda open and on the same Wi-Fi, or pick another model at the top.`;
+    return `${displayModel(wanted.model)} isn't available right now. Check that ${providerLabel(wanted.provider)} is running, or pick another model at the top.`;
+  }
+  if (mine && !sameModel(mine, model)) {
+    return `${displayModel(mine.model)} isn't available right now, so this chat is using ${displayModel(model.model)}.`;
+  }
+  if (!mine && chat.model && !sameModel(chat.model, model) && chat.messages.length) {
+    return `The last reply used ${displayModel(chat.model.model)}, which isn't on this device. Continuing here with ${displayModel(model.model)}.`;
+  }
+  return '';
+}
+
 function currentModel() {
-  if (S.current && S.current.model) return S.current.model;
-  if (S.newChatModel) return S.newChatModel;
+  if (S.current) return chatModel(S.current);
   const assistant = getAssistant(currentAssistantId());
-  if (assistant.model && assistant.model.model) return assistant.model;
-  return S.settings.defaultModel && S.settings.defaultModel.model ? S.settings.defaultModel : null;
+  const candidates = [S.newChatModel, assistant.model, S.settings.defaultModel];
+  return candidates.find(modelAvailable) || candidates.find((m) => m && m.model) || null;
 }
 
 function currentAssistantId() {
@@ -451,7 +508,7 @@ async function onModelChange() {
   }
   if (!chosen) return;
   if (S.current) {
-    S.current.model = chosen;
+    useModel(S.current, chosen);
     saveChatNow(S.current);
   } else {
     S.newChatModel = chosen;
@@ -538,7 +595,7 @@ function renderWelcome() {
 function renderMessage(chat, msg, index) {
   const isUser = msg.role === 'user';
   const assistant = getAssistant(chat.assistantId);
-  const content = h('div', { class: 'content' });
+  const content = h('div', { class: 'content', dir: isUser ? 'auto' : null });
   fillContent(content, msg);
 
   const actions = h('div', { class: 'actions' });
@@ -563,31 +620,44 @@ function renderMessage(chat, msg, index) {
         h('span', { text: isUser ? 'You' : assistant.name }),
         !isUser && msg.model ? h('span', { text: `· ${displayModel(msg.model.model)}` }) : null,
         !isUser && msg.stats ? statsBadge(msg.stats) : null,
+        !isUser && !msg.stats && msg.pending && msg.runningOn ? liveBadge(msg.runningOn) : null,
         when ? h('span', { text: `· ${when}` }) : null),
       content,
+      msg.recalled && msg.recalled.length ? h('div', { class: 'recalled' }, 'Used earlier chats: ',
+        ...msg.recalled.flatMap((r, i) => [i ? ', ' : null, h('a', { href: '#', text: r.title, onclick: (e) => { e.preventDefault(); openChat(r.chatId); } })])) : null,
       msg.error ? h('div', { class: 'error', text: msg.error }) : null,
       msg.notice ? h('div', { class: 'msg-notice', text: msg.notice }) : null,
       msg.pending ? null : actions));
   return node;
 }
 
+// "GPU…" while an on-device reply is being written.
+function liveBadge(device) {
+  const onGpu = /^GPU/.test(device || '');
+  return h('span', { class: `stats live ${onGpu ? 'gpu' : 'cpu'}`, title: `Running on ${device}`, text: `· ${onGpu ? 'GPU' : 'CPU'}…` });
+}
+
 // "GPU · 24 tok/s" under on-device replies, with details on tap/hover.
 function statsBadge(st) {
   const speed = st.ms > 0 ? st.tokens / (st.ms / 1000) : 0;
   const onGpu = /^GPU/.test(st.device || '');
+  const kind = onGpu ? 'GPU' : /^CPU/.test(st.device || '') ? 'CPU' : '';
   const details = [
     `Ran on: ${st.device}`,
-    st.offload ? `llama.cpp ${st.offload}` : 'All layers on the CPU',
+    st.engine && st.engine !== st.device ? `Engine: ${st.engine}` : null,
+    st.offload ? `llama.cpp ${st.offload}` : (st.device === 'CPU' && !st.engine ? 'All layers on the CPU' : null),
+    st.loadMs > 300 ? `Loading the model: ${(st.loadMs / 1000).toFixed(1)} s` : null,
     `Reply: ${st.tokens} tokens in ${(st.ms / 1000).toFixed(1)} s (${speed.toFixed(1)} tokens/s)`,
-    st.promptTokens ? `Reading the chat: ${st.promptTokens} tokens in ${(st.promptMs / 1000).toFixed(1)} s` : 'Reading the chat: reused from memory'
-  ].join('\n');
+    st.promptTokens ? `Reading the chat: ${st.promptTokens} tokens in ${(st.promptMs / 1000).toFixed(1)} s`
+      : st.engine === 'WebAssembly' ? `Time before the first word: ${(st.promptMs / 1000).toFixed(1)} s` : 'Reading the chat: reused from memory'
+  ].filter(Boolean).join('\n');
   return h('span', {
     class: `stats ${onGpu ? 'gpu' : 'cpu'}`,
     title: details,
     role: 'button',
     tabindex: 0,
     onclick: () => openModal({ title: 'How this reply ran', body: h('div', { style: 'white-space: pre-wrap', text: details }) }),
-    text: `· ${onGpu ? 'GPU' : 'CPU'}${speed ? ` · ${speed.toFixed(1)} tok/s` : ''}`
+    text: `·${kind ? ` ${kind}` : ''}${speed ? `${kind ? ' ·' : ''} ${speed.toFixed(1)} tok/s` : ''}`
   });
 }
 
@@ -599,16 +669,27 @@ function fillContent(container, msg) {
   }
   const { thinking, done, answer } = splitThinking(msg.content);
   if (thinking != null) {
+    const words = thinking ? thinking.split(/\s+/).length : 0;
     const details = h('details', { class: 'thinking' },
-      h('summary', { text: done ? 'Thought process' : 'Thinking…' }),
+      h('summary', {
+        text: done ? 'Thought process' : `Thinking…${words ? ` (${words} words)` : ''}`,
+        // Remember the reader's choice so redraws don't reopen or close it.
+        onclick: () => thinkingOpen.set(msg, !details.open)
+      }),
       h('div', { style: 'white-space: pre-wrap', text: thinking }));
-    if (!done) details.open = true;
+    // Collapsed unless the reader opens it.
+    details.open = thinkingOpen.get(msg) === true;
     container.append(details);
   }
   const body = renderMarkdown(answer);
   if (msg.pending) body.classList.add('typing');
   container.append(...body.childNodes.length ? [body] : []);
-  if (msg.pending && !answer && thinking == null) container.append(h('span', { class: 'typing' }));
+  if (msg.pending && !answer && thinking == null) {
+    container.append(h('span', { class: 'typing' }));
+    if (msg.waiting && msg.model) {
+      container.append(h('div', { class: 'waiting', text: `Waiting for ${displayModel(msg.model.model)} to start. Large models can take a minute to load the first time.` }));
+    }
+  }
 }
 
 function nearBottom() {
@@ -620,12 +701,20 @@ function scrollToBottom() {
   el.messages.scrollTop = el.messages.scrollHeight;
 }
 
+const thinkingOpen = new WeakMap();  // message -> thinking box open?
 const pendingRender = new Set();
+let renderQueued = false;
+
+// Redraw streaming replies in batches. Each redraw re-formats the whole
+// reply, so on phones (where the model is also busy with the GPU) redraw a
+// few times a second instead of every frame.
 function scheduleMessageRender(chat, msg) {
   if (!S.current || S.current !== chat) return;
   pendingRender.add(msg);
-  if (pendingRender.size > 1) return;
-  requestAnimationFrame(() => {
+  if (renderQueued) return;
+  renderQueued = true;
+  const run = () => {
+    renderQueued = false;
     const stick = nearBottom();
     for (const m of pendingRender) {
       const node = el.messages.querySelector(`.msg[data-id="${m.id}"] .content`);
@@ -633,14 +722,19 @@ function scheduleMessageRender(chat, msg) {
     }
     pendingRender.clear();
     if (stick) scrollToBottom();
-  });
+  };
+  if (S.info.mobile) setTimeout(() => requestAnimationFrame(run), 250);
+  else requestAnimationFrame(run);
 }
 
 function updateComposer() {
   const streaming = isStreaming(S.current);
   el.sendBtn.textContent = streaming ? 'Stop' : 'Send';
   el.sendBtn.classList.toggle('danger', streaming);
-  if (S.info.mobile) el.hint.textContent = S.sync && S.sync.configured ? 'Every chat is saved on this phone and synced' : 'Every chat is saved on this phone';
+  const note = S.current ? modelNote(S.current, chatModel(S.current)) : '';
+  el.hint.classList.toggle('model-note', !!note);
+  if (note) el.hint.textContent = note;
+  else if (S.info.mobile) el.hint.textContent = S.sync && S.sync.configured ? 'Every chat is saved on this phone and synced' : 'Every chat is saved on this phone';
   else {
     el.hint.textContent = S.settings.sendOnEnter
       ? 'Enter to send · Shift+Enter for a new line · every chat is saved automatically'
@@ -746,20 +840,187 @@ async function editCustomInstructions() {
   toast('Instructions saved');
 }
 
-function rememberText(text) {
-  const line = String(text).trim().replace(/\s+/g, ' ').slice(0, 500);
-  S.settings.memory = [S.settings.memory.trim(), `- ${line}`].filter(Boolean).join('\n');
+const memoryKey = (line) => line.toLowerCase().replace(/^[-•*\s]+/, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+// Memory is kept small so it doesn't crowd out the conversation, especially
+// for the phone's small models. When it grows past this, it's merged.
+const MEMORY_LIMIT = 1500;
+
+const memoryLines = () => S.settings.memory.split('\n').map((l) => l.trim().replace(/^[-•*]\s*/, '')).filter(Boolean);
+const cleanFact = (raw) => String(raw).trim().replace(/\s+/g, ' ').replace(/^[-•*]\s*/, '').slice(0, 300);
+
+function setMemory(lines) {
+  S.settings.memory = lines.map((l) => `- ${l}`).join('\n');
   saveSettings();
-  toast('Added to memory');
+  for (const draw of memoryViews) draw();
 }
 
-function buildSystemPrompt(chat) {
+// Adds lines to memory, skipping ones it already has. Returns the new ones.
+function addToMemory(lines) {
+  const current = memoryLines();
+  const known = new Set(current.map(memoryKey));
+  const added = [];
+  for (const raw of lines) {
+    const line = cleanFact(raw);
+    const key = memoryKey(line);
+    if (!key || known.has(key)) continue;
+    known.add(key);
+    added.push(line);
+  }
+  if (added.length) setMemory([...current, ...added]);
+  return added;
+}
+
+// A model this device can use for background jobs (not the phone's own
+// models, which would slow the phone down).
+function backgroundModel(preferred) {
+  const candidates = [preferred, S.current && chatModel(S.current), S.settings.defaultModel];
+  return candidates.find((m) => modelAvailable(m) && m.provider !== 'onDevice') || null;
+}
+
+async function askModel(model, prompt) {
+  const res = await api.ai.chat({
+    requestId: uid(),
+    provider: model.provider,
+    model: model.model,
+    system: '',
+    think: false,
+    temperature: 0.1,
+    maxTokens: 0,
+    messages: [{ role: 'user', content: prompt }]
+  });
+  return res.ok && res.text ? splitThinking(res.text).answer.trim() : null;
+}
+
+// Merges memory down to the size limit when it has grown past it.
+async function compactMemory(model) {
+  const lines = memoryLines();
+  const size = () => lines.join('\n').length + lines.length * 2;
+  if (size() <= MEMORY_LIMIT) return false;
+  const target = Math.floor(MEMORY_LIMIT * 0.8);
+  let merged = null;
+  if (model) {
+    const answer = await askModel(model, [
+      `Here is a list of facts about the user. It is too long: rewrite it in at most ${target} characters.`,
+      'Merge related facts, keep the most useful ones (name, family, home, work, languages, strong preferences, long-term goals), drop trivial, outdated or duplicate ones.',
+      'Keep the third person. One fact per line, each starting with "- ". Reply with the list only.',
+      '',
+      lines.map((l) => `- ${l}`).join('\n')
+    ].join('\n'));
+    const out = (answer || '').split('\n').map((l) => l.trim()).filter((l) => /^[-•*]\s+\S/.test(l)).map(cleanFact);
+    if (out.length && out.join('\n').length + out.length * 2 <= MEMORY_LIMIT) merged = out;
+  }
+  // No model, or its answer didn't fit: drop the oldest facts after the first few.
+  if (!merged) {
+    merged = [...lines];
+    while (merged.length > 3 && merged.join('\n').length + merged.length * 2 > MEMORY_LIMIT) merged.splice(3, 1);
+  }
+  setMemory(merged);
+  return true;
+}
+
+function rememberText(text) {
+  addToMemory([text]);
+  toast('Added to memory');
+  compactMemory(backgroundModel()).then((done) => done && toast('Memory was getting long, so it was tidied up.')).catch(() => {});
+}
+
+// Messages that state something about the user (English or Arabic), not
+// requests like "tell me" or "can I".
+const ABOUT_ME = /\b(i am|i'm|im|i was|i live|i work|i study|i have|i've|i like|i love|i prefer|i hate|i don't like|i do not like|i usually|i always|i never|i speak|i moved|i got|i quit|i started|i changed|i no longer|no longer|not anymore|my|mine|call me|we have|we live|our)\b|(أنا|انا|اسمي|عمري|عندي|أحب|احب|أعمل|اعمل|أسكن|اسكن|ساكن|زوجتي|زوجي|بنتي|ابني|أولادي|عائلتي|وظيفتي|شغلي|أفضل|افضل|انتقلت|تزوجت|صرت|ما عدت|لم أعد|تركت)/i;
+
+// After a reply, update memory from what the user said: add new lasting
+// facts, correct ones that changed and drop ones that are no longer true.
+async function autoRemember(chat, userMsg, model) {
+  const text = String(userMsg.content || '').trim();
+  if (text.length < 12 || !ABOUT_ME.test(text)) return;
+  const lines = memoryLines();
+  const answer = await askModel(model, [
+    'You keep a short list of lasting facts about the user so future conversations can be personal.',
+    '',
+    'Known facts:',
+    lines.length ? lines.map((l, i) => `${i + 1}. ${l}`).join('\n') : '(none)',
+    '',
+    "The user's message:",
+    text.slice(0, 2000),
+    '',
+    'Decide what should change. Reply with one operation per line:',
+    'ADD: <new fact>            for something new about the user',
+    'UPDATE <number>: <fact>    when the message changes or corrects a known fact',
+    'REMOVE <number>            when the message says a known fact is no longer true',
+    'Only lasting facts: name, family, where they live, work or studies, languages, preferences, dislikes, long-term goals or projects.',
+    'Ignore one-off requests, questions and temporary moods. Write facts in the third person, short (e.g. "Prefers short answers"). At most 3 lines.',
+    'If nothing should change, reply exactly: NONE'
+  ].join('\n'));
+  if (!answer || /^none\b/i.test(answer)) return;
+
+  const next = [...lines];
+  const changes = [];
+  const adds = [];
+  for (const raw of answer.split('\n').slice(0, 5)) {
+    const line = raw.trim().replace(/^[-•*]\s*/, '');
+    let m;
+    if ((m = line.match(/^UPDATE\s*#?(\d+)\s*[:.-]\s*(.+)$/i))) {
+      const i = Number(m[1]) - 1;
+      if (next[i] != null && memoryKey(next[i]) !== memoryKey(m[2])) {
+        changes.push(`Updated: ${cleanFact(m[2])} (was: ${next[i]})`);
+        next[i] = cleanFact(m[2]);
+      }
+    } else if ((m = line.match(/^REMOVE\s*#?(\d+)/i))) {
+      const i = Number(m[1]) - 1;
+      if (next[i] != null) {
+        changes.push(`Forgot: ${next[i]}`);
+        next[i] = null;
+      }
+    } else if ((m = line.match(/^ADD\s*[:.-]\s*(.+)$/i))) {
+      adds.push(m[1]);
+    } else if (raw.trim().match(/^[-•*]\s+\S/) && !/^(update|remove|add)\b/i.test(line)) {
+      adds.push(line); // a plain "- fact" line
+    }
+  }
+  const kept = next.filter((l) => l != null);
+  const known = new Set(kept.map(memoryKey));
+  const remembered = [];
+  for (const a of adds) {
+    const fact = cleanFact(a);
+    if (!memoryKey(fact) || known.has(memoryKey(fact))) continue;
+    known.add(memoryKey(fact));
+    kept.push(fact);
+    remembered.push(`Remembered: ${fact}`);
+  }
+  const all = [...remembered, ...changes];
+  if (!all.length) return;
+  setMemory(kept);
+  const tidied = await compactMemory(model).catch(() => false);
+  const short = (t) => (t.length > 80 ? `${t.slice(0, 79)}…` : t);
+  toast(all.map(short).join(' · ') + (tidied ? ' · Memory tidied up to stay short' : ''), 5000);
+}
+
+// Earlier chats that match what the user just asked, for the model.
+async function recallFor(chat, model) {
+  if (!S.settings.recallChats || !api.chats.recall) return [];
+  const userTexts = chat.messages.filter((m) => m.role === 'user').slice(-2).map((m) => m.content);
+  if (!userTexts.length) return [];
+  const small = model.provider === 'onDevice';
+  const search = api.chats.recall(userTexts.join('\n'), { excludeId: chat.id, limit: small ? 2 : 3, maxChars: small ? 600 : 1500 }).catch(() => []);
+  // Never hold up a reply for long; the search keeps warming its cache.
+  return Promise.race([search, new Promise((r) => setTimeout(() => r([]), 1500))]);
+}
+
+function buildSystemPrompt(chat, recalled = []) {
   const parts = [];
   const assistant = getAssistant(chat.assistantId);
   if (assistant.systemPrompt) parts.push(assistant.systemPrompt.trim());
   if (chat.systemPrompt) parts.push(chat.systemPrompt.trim());
   if (S.settings.memoryEnabled && S.settings.memory.trim()) {
     parts.push(`Things to remember about the user (from previous sessions):\n${S.settings.memory.trim()}`);
+  }
+  if (recalled.length) {
+    const when = (t) => (t ? new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
+    parts.push([
+      'Excerpts from the user\'s earlier chats that may be relevant. Use them only if they help; don\'t mention them otherwise:',
+      ...recalled.map((r) => `- [${r.title}${r.updatedAt ? `, ${when(r.updatedAt)}` : ''}] ${r.role === 'user' ? 'User' : 'Assistant'}: ${r.text}`)
+    ].join('\n'));
   }
   return parts.join('\n\n');
 }
@@ -796,7 +1057,6 @@ async function send() {
     api.state.save({ lastChatId: chat.id });
     saveDraft('__new__', '');
   }
-  if (!chat.model) chat.model = model;
 
   if (!chat.messages.length) chat.title = text.replace(/\s+/g, ' ').slice(0, 60);
   chat.messages.push({ id: uid(), role: 'user', content: text, createdAt: Date.now() });
@@ -807,9 +1067,13 @@ async function send() {
 }
 
 async function runCompletion(chat) {
-  const model = chat.model;
+  const model = chatModel(chat);
+  if (!model) {
+    toast('Choose a model first (top right).');
+    return;
+  }
+  useModel(chat, model);
   const msg = { id: uid(), role: 'assistant', content: '', createdAt: Date.now(), model, pending: true };
-  const system = buildSystemPrompt(chat);
   const history = historyFor(chat, chat.messages.length);
   chat.messages.push(msg);
   chat.updatedAt = Date.now();
@@ -819,8 +1083,22 @@ async function runCompletion(chat) {
   }
   await saveChatNow(chat);
 
+  const recalled = await recallFor(chat, model);
+  if (recalled.length) {
+    msg.recalled = [...new Map(recalled.map((r) => [r.chatId, { chatId: r.chatId, title: r.title }])).values()];
+    scheduleMessageRender(chat, msg);
+  }
+  const system = buildSystemPrompt(chat, recalled);
+
   const requestId = uid();
   S.requests.set(requestId, { chat, msg });
+  // Say what's happening if the model is slow to start (loading into memory).
+  const waitTimer = setTimeout(() => {
+    if (msg.pending && !msg.content) {
+      msg.waiting = true;
+      scheduleMessageRender(chat, msg);
+    }
+  }, 4000);
   updateComposer();
   renderSidebar();
 
@@ -835,7 +1113,10 @@ async function runCompletion(chat) {
   });
 
   S.requests.delete(requestId);
+  clearTimeout(waitTimer);
   msg.pending = false;
+  delete msg.runningOn;
+  delete msg.waiting;
   if (!res.ok) msg.error = `Error: ${res.error}`;
   if (res.stats) msg.stats = res.stats;
   if (res.ok && res.stopReason === 'max_tokens') msg.notice = 'The reply was cut off at the length limit. Ask it to continue, or raise "Max tokens" in Settings.';
@@ -847,6 +1128,13 @@ async function runCompletion(chat) {
     if (stick) scrollToBottom();
   }
   updateComposer();
+
+  // Learn lasting facts from what the user just said. Skipped for on-device
+  // phone models, where a second run after every reply would slow the phone.
+  if (res.ok && !res.aborted && S.settings.memoryEnabled && S.settings.autoMemory && model.provider !== 'onDevice') {
+    const userMsg = [...chat.messages].reverse().find((m) => m.role === 'user');
+    if (userMsg) autoRemember(chat, userMsg, model).catch(() => {});
+  }
 
   if (res.ok && !res.aborted && chat.titleAuto && S.settings.autoTitle && model.provider !== 'onDevice' && chat.messages.filter((m) => m.role === 'assistant').length === 1) {
     generateTitle(chat);
@@ -890,6 +1178,10 @@ function stopCurrent() {
 
 async function regenerate(chat) {
   if (isStreaming(chat)) return;
+  if (!chatModel(chat)) {
+    toast('Choose a model first (top right).');
+    return;
+  }
   const last = chat.messages[chat.messages.length - 1];
   if (last && last.role === 'assistant') chat.messages.pop();
   if (!chat.messages.length) return;
@@ -930,7 +1222,30 @@ function startEdit(chat, msg, node) {
 // ---------------------------------------------------------------------------
 // sync between devices
 
-const syncViews = new Set();  // open Settings > Sync panes to redraw on changes
+const syncViews = new Set();
+const memoryViews = new Set();  // open Settings > Memory panes to refresh on changes
+
+// The memory text box, with a character count against the size limit.
+function memoryBox(onCleanup, field, bind, s) {
+  const area = bind(h('textarea', { class: 'input', rows: 12, value: s.memory, placeholder: '- My name is …\n- I work as …\n- I prefer short answers' }), s, 'memory');
+  const count = h('div', { class: 'help memory-count' });
+  const update = () => {
+    const n = s.memory.length;
+    count.textContent = `${n.toLocaleString()} / ${MEMORY_LIMIT.toLocaleString()} characters` +
+      (n > MEMORY_LIMIT ? ' · longer memory leaves less room for the conversation; it is tidied up the next time something is remembered' : '');
+    count.classList.toggle('over', n > MEMORY_LIMIT);
+  };
+  area.addEventListener('input', update);
+  const draw = () => {
+    if (document.activeElement !== area) area.value = s.memory;
+    update();
+  };
+  memoryViews.add(draw);
+  onCleanup(() => memoryViews.delete(draw));
+  update();
+  return field('What should your assistants always remember about you?', h('div', {}, area, count),
+    'Shared with the model at the start of every chat. Edit or delete anything here. "Remember" under any of your messages adds it by hand.');
+}  // open Settings > Sync panes to redraw on changes
 
 function timeAgo(ts) {
   const sec = Math.round((Date.now() - ts) / 1000);
@@ -971,8 +1286,11 @@ async function onSyncEvent(evt) {
   if (evt.type !== 'changed') return;
   if (evt.settings) {
     const fresh = await api.settings.get();
-    for (const k of ['assistants', 'memory', 'memoryEnabled', 'sharedModifiedAt']) S.settings[k] = fresh[k];
+    const computersChanged = JSON.stringify(fresh.computers) !== JSON.stringify(S.settings.computers);
+    for (const k of ['assistants', 'memory', 'memoryEnabled', 'autoMemory', 'recallChats', 'computers', 'sharedModifiedAt']) S.settings[k] = fresh[k];
     renderSelectors();
+    if (computersChanged && S.settings.providers.computer) loadModels();
+    for (const draw of memoryViews) draw();
   }
   for (const id of evt.deleted) {
     const cached = S.cache.get(id);
@@ -1130,6 +1448,31 @@ function syncView(onCleanup, field) {
 // ---------------------------------------------------------------------------
 // settings
 
+// Desktop: let the phone chat with this computer's models (src/remote.js).
+function shareWithPhoneCard(s, check, onCleanup) {
+  const status = h('div', { class: 'help', style: 'margin-bottom:8px' });
+  const draw = (st) => {
+    if (!st) return;
+    if (st.error) status.textContent = st.error;
+    else if (!s.shareWithPhone) status.textContent = '';
+    else if (!st.syncReady) status.textContent = 'Set up sync (Settings → Sync) on this computer and your phone first. Sharing starts as soon as sync is on.';
+    else if (st.sharing) {
+      status.textContent = `Sharing as "${st.name}" on ${st.addrs.join(', ') || 'this computer'} (port ${st.port}). Your phone finds it through sync: on the phone, pick a model under "On your computer". If your system asks, allow Balimda to accept incoming network connections.`;
+    } else status.textContent = 'Starting…';
+  };
+  api.remote.status().then(draw);
+  onCleanup(api.remote.onStatus(draw));
+  const box = check('Let my phone use this computer\'s models', s, 'shareWithPhone');
+  box.querySelector('input').addEventListener('change', () => {
+    status.textContent = s.shareWithPhone ? 'Starting…' : '';
+  });
+  return h('div', { class: 'provider-card' },
+    h('h4', { text: 'Use from your phone' }),
+    box,
+    status,
+    h('div', { class: 'help', text: 'Your phone sends chats here and this computer answers with its models (Ollama, LM Studio, and your API keys, which never leave this computer). The connection is encrypted with your sync passphrase, so only your own devices can use it. Balimda needs to stay open.' }));
+}
+
 function openSettings(tab = 'general') {
   const s = S.settings;
   const changed = () => { saveSettings(); };
@@ -1197,6 +1540,7 @@ function openSettings(tab = 'general') {
         openaiCompatible: 'LM Studio, llama.cpp server, Jan, vLLM or any OpenAI-compatible server. LM Studio default: http://127.0.0.1:1234/v1'
       };
       Object.assign(help, {
+        computer: 'Chat with the models on your computer (Ollama, LM Studio, and Claude or OpenAI with the computer\'s API keys) while the computer does the work. In Balimda on the computer, turn on "Let my phone use this computer\'s models" in Settings → Models & providers. Both need sync set up with the same passphrase; that\'s how they find each other and keep the connection private. Works on the same Wi-Fi, or anywhere when both are on Tailscale.',
         anthropic: 'Claude models. Create an API key at console.anthropic.com.',
         openai: 'OpenAI models. Create an API key at platform.openai.com.'
       });
@@ -1228,14 +1572,22 @@ function openSettings(tab = 'general') {
             loadModels();
           }
         });
+        const shared = id === 'computer'
+          ? Object.values(s.computers || {}).filter((c) => c.enabled).map((c) => c.name)
+          : null;
         cards.push(h('div', { class: 'provider-card' },
           h('h4', {}, providerLabel(id), status),
           check('Enabled', p, 'enabled'),
+          shared ? h('div', { class: 'help', text: shared.length ? `Sharing: ${shared.join(', ')}` : 'No computer is sharing its models yet.' }) : null,
           'baseUrl' in p ? field('Server URL', bind(h('input', { class: 'input', value: p.baseUrl }), p, 'baseUrl')) : null,
+          id === 'ollama' ? h('label', { class: 'check' },
+            bind(h('input', { type: 'checkbox', checked: p.think !== false }), p, 'think'),
+            'Let thinking models think first (better answers; turn off for faster replies)') : null,
           'apiKey' in p ? field('API key', bind(h('input', { class: 'input', type: 'password', value: p.apiKey, placeholder: id === 'openaiCompatible' ? 'Optional' : 'Paste your key' }), p, 'apiKey', (v) => v.trim())) : null,
           h('div', { class: 'help', text: help[id] || '' }),
           h('div', { style: 'margin-top:8px' }, test)));
       }
+      if (api.remote) cards.push(shareWithPhoneCard(s, check, onCleanup));
       cards.push(h('p', {
         class: 'help',
         text: S.info.mobile
@@ -1288,9 +1640,13 @@ function openSettings(tab = 'general') {
     memory() {
       return [
         check('Use memory in every chat', s, 'memoryEnabled'),
-        field('What should your assistants always remember about you?',
-          bind(h('textarea', { class: 'input', rows: 12, value: s.memory, placeholder: '- My name is …\n- I work as …\n- I prefer short answers' }), s, 'memory'),
-          'This is shared with the model at the start of every chat. Tip: use "Remember" under any of your messages to add it here.')
+        check('Remember things about me automatically', s, 'autoMemory'),
+        h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: S.info.mobile
+          ? 'After a reply, lasting facts you mention (your name, work, family, preferences…) are added below. This uses Ollama and cloud models; the models on this phone are skipped so replies stay fast. Memory syncs between your devices.'
+          : 'After a reply, lasting facts you mention (your name, work, family, preferences…) are added below, using the chat\'s model. On-device phone models skip this to stay fast.' }),
+        memoryBox(onCleanup, field, bind, s),
+        check('Look through my earlier chats for relevant details', s, 'recallChats'),
+        h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: 'Before each reply, the best-matching bits of your other chats are given to the model (a little less for phone models, to stay fast). Replies that used them say so underneath, with links to those chats.' })
       ];
     },
 
@@ -1392,7 +1748,9 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
           'Use the GPU'),
         h('div', { class: 'help', text: 'Runs the model on the phone\'s graphics chip (Adreno) for faster replies. Turn off to use the CPU only.' }));
     } else {
-      engineLine.textContent = 'Engine: WebAssembly (works everywhere, slower)';
+      engineLine.textContent = S.info.platform === 'android' && eng.error
+        ? `Engine: WebAssembly (slower). The faster native engine couldn't start on this phone: ${eng.error}`
+        : 'Engine: WebAssembly (works everywhere, slower)';
       customHelp.textContent = 'Q4_K_M files between 0.3 and 2 GB work best.';
       gpuBox.replaceChildren(
         h('label', { class: 'check' }, bind(h('input', { type: 'checkbox', checked: !!p.useGpu }), p, 'useGpu'),
@@ -1661,10 +2019,19 @@ function bindEvents() {
 
   api.ai.onEvent((evt) => {
     const r = S.requests.get(evt.requestId);
-    if (!r || evt.type !== 'delta') return;
+    if (!r) return;
+    if (evt.type === 'info' && evt.device) {
+      // Show GPU/CPU as soon as the model is ready, not only at the end.
+      r.msg.runningOn = evt.device;
+      const meta = el.messages.querySelector(`.msg[data-id="${r.msg.id}"] .meta`);
+      if (meta && !meta.querySelector('.stats')) meta.children[1]?.after(liveBadge(evt.device));
+      return;
+    }
+    if (evt.type !== 'delta') return;
     r.msg.content += evt.text;
     scheduleMessageRender(r.chat, r.msg);
-    saveChatSoon(r.chat, 1500);
+    // Saving rewrites the whole chat, so phones save a streaming reply less often.
+    saveChatSoon(r.chat, S.info.mobile ? 5000 : 1500);
   });
 
   api.onMenu((action) => {
@@ -1693,6 +2060,11 @@ async function init() {
   [S.settings, S.info, S.state, S.sync] = await Promise.all([
     api.settings.get(), api.app.info(), api.state.get(), api.sync ? api.sync.status() : null
   ]);
+  // Identifies this device in chats' per-device model choices (not synced).
+  if (!S.state.deviceId) {
+    S.state.deviceId = uid();
+    api.state.save({ deviceId: S.state.deviceId });
+  }
   $('#brandName').textContent = appName();
   if (S.info.mobile) el.search.placeholder = 'Search all chats';
   document.body.classList.toggle('is-mobile', !!S.info.mobile);

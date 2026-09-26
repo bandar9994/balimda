@@ -207,10 +207,15 @@ export const onDevice = {
       let text = '';
       let thinking = false;
       let stopReason = 'end_turn';
+      let pieces = 0;
+      let firstAt = 0;
       const out = (piece) => {
+        if (!firstAt) firstAt = performance.now();
+        pieces++;
         text += piece;
         onDelta(piece);
       };
+      const started = performance.now();
       const stream = await w.createChatCompletion(params);
       for await (const chunk of stream) {
         const choice = chunk.choices && chunk.choices[0];
@@ -230,7 +235,17 @@ export const onDevice = {
         if (choice.finish_reason === 'length') stopReason = 'max_tokens';
       }
       if (thinking) out('</think>');
-      return { text, stopReason };
+      // Streamed pieces are about one token each.
+      const stats = {
+        engine: 'WebAssembly',
+        device: cfg.useGpu ? 'GPU (WebGPU)' : 'CPU',
+        offload: '',
+        promptTokens: 0,
+        promptMs: firstAt ? firstAt - started : 0,
+        tokens: pieces,
+        ms: firstAt ? performance.now() - firstAt : 0
+      };
+      return { text, stopReason, stats };
     });
   }
 };
