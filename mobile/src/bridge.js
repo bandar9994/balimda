@@ -286,7 +286,10 @@ window.balimda = {
           (text) => {
             for (const cb of aiListeners) cb({ requestId: req.requestId, type: 'delta', text });
           },
-          controller.signal
+          controller.signal,
+          (info) => {
+            for (const cb of aiListeners) cb({ requestId: req.requestId, type: 'info', ...info });
+          }
         );
         return { ok: true, ...result };
       } catch (err) {

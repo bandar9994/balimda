@@ -90,6 +90,7 @@ export async function probe() {
     listening = true;
     Llama.addListener('download', onDownloadEvent);
     Llama.addListener('token', onTokenEvent);
+    Llama.addListener('status', onStatusEvent);
   }
   return info;
 }
@@ -162,6 +163,11 @@ export async function remove(url) {
 // ---- chat ------------------------------------------------------------------
 
 const tokenListeners = new Map(); // requestId -> fn
+const statusListeners = new Map(); // requestId -> fn
+function onStatusEvent(evt) {
+  const fn = statusListeners.get(evt.requestId);
+  if (fn) fn(evt);
+}
 function onTokenEvent(evt) {
   const fn = tokenListeners.get(evt.requestId);
   if (fn) fn(evt.text);
@@ -174,7 +180,8 @@ export const nativeEngine = {
     return (await listDownloaded()).map((m) => m.name);
   },
 
-  async streamChat(cfg, req, onDelta, signal) {
+  // onInfo({ device }) says where the reply runs as soon as the model is ready.
+  async streamChat(cfg, req, onDelta, signal, onInfo) {
     const ctx = Number(cfg.contextSize) || 4096;
     const replyTokens = req.maxTokens > 0 ? req.maxTokens : Math.min(DEFAULT_REPLY_TOKENS, Math.floor(ctx / 2));
     const history = fitToContext(req.messages, req.system, ctx, replyTokens);
@@ -185,6 +192,9 @@ export const nativeEngine = {
     tokenListeners.set(requestId, (piece) => {
       text += piece;
       onDelta(piece);
+    });
+    statusListeners.set(requestId, (evt) => {
+      if (evt.device && onInfo) onInfo({ device: evt.device });
     });
     const onAbort = () => Llama.stop({ requestId });
     if (signal) signal.addEventListener('abort', onAbort);
@@ -203,6 +213,7 @@ export const nativeEngine = {
       return { text, stopReason, stats };
     } finally {
       tokenListeners.delete(requestId);
+      statusListeners.delete(requestId);
       if (signal) signal.removeEventListener('abort', onAbort);
     }
   }

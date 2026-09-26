@@ -614,12 +614,19 @@ function renderMessage(chat, msg, index) {
         h('span', { text: isUser ? 'You' : assistant.name }),
         !isUser && msg.model ? h('span', { text: `· ${displayModel(msg.model.model)}` }) : null,
         !isUser && msg.stats ? statsBadge(msg.stats) : null,
+        !isUser && !msg.stats && msg.pending && msg.runningOn ? liveBadge(msg.runningOn) : null,
         when ? h('span', { text: `· ${when}` }) : null),
       content,
       msg.error ? h('div', { class: 'error', text: msg.error }) : null,
       msg.notice ? h('div', { class: 'msg-notice', text: msg.notice }) : null,
       msg.pending ? null : actions));
   return node;
+}
+
+// "GPU…" while an on-device reply is being written.
+function liveBadge(device) {
+  const onGpu = /^GPU/.test(device || '');
+  return h('span', { class: `stats live ${onGpu ? 'gpu' : 'cpu'}`, title: `Running on ${device}`, text: `· ${onGpu ? 'GPU' : 'CPU'}…` });
 }
 
 // "GPU · 24 tok/s" under on-device replies, with details on tap/hover.
@@ -651,9 +658,13 @@ function fillContent(container, msg) {
   const { thinking, done, answer } = splitThinking(msg.content);
   if (thinking != null) {
     const details = h('details', { class: 'thinking' },
-      h('summary', { text: done ? 'Thought process' : 'Thinking…' }),
+      h('summary', {
+        text: done ? 'Thought process' : 'Thinking…',
+        // Remember the reader's choice so redraws don't reopen or close it.
+        onclick: () => thinkingOpen.set(msg, !details.open)
+      }),
       h('div', { style: 'white-space: pre-wrap', text: thinking }));
-    if (!done) details.open = true;
+    details.open = thinkingOpen.has(msg) ? thinkingOpen.get(msg) : !done;
     container.append(details);
   }
   const body = renderMarkdown(answer);
@@ -671,12 +682,20 @@ function scrollToBottom() {
   el.messages.scrollTop = el.messages.scrollHeight;
 }
 
+const thinkingOpen = new WeakMap();  // message -> thinking box open?
 const pendingRender = new Set();
+let renderQueued = false;
+
+// Redraw streaming replies in batches. Each redraw re-formats the whole
+// reply, so on phones (where the model is also busy with the GPU) redraw a
+// few times a second instead of every frame.
 function scheduleMessageRender(chat, msg) {
   if (!S.current || S.current !== chat) return;
   pendingRender.add(msg);
-  if (pendingRender.size > 1) return;
-  requestAnimationFrame(() => {
+  if (renderQueued) return;
+  renderQueued = true;
+  const run = () => {
+    renderQueued = false;
     const stick = nearBottom();
     for (const m of pendingRender) {
       const node = el.messages.querySelector(`.msg[data-id="${m.id}"] .content`);
@@ -684,7 +703,9 @@ function scheduleMessageRender(chat, msg) {
     }
     pendingRender.clear();
     if (stick) scrollToBottom();
-  });
+  };
+  if (S.info.mobile) setTimeout(() => requestAnimationFrame(run), 250);
+  else requestAnimationFrame(run);
 }
 
 function updateComposer() {
@@ -894,6 +915,7 @@ async function runCompletion(chat) {
 
   S.requests.delete(requestId);
   msg.pending = false;
+  delete msg.runningOn;
   if (!res.ok) msg.error = `Error: ${res.error}`;
   if (res.stats) msg.stats = res.stats;
   if (res.ok && res.stopReason === 'max_tokens') msg.notice = 'The reply was cut off at the length limit. Ask it to continue, or raise "Max tokens" in Settings.';
@@ -1723,10 +1745,19 @@ function bindEvents() {
 
   api.ai.onEvent((evt) => {
     const r = S.requests.get(evt.requestId);
-    if (!r || evt.type !== 'delta') return;
+    if (!r) return;
+    if (evt.type === 'info' && evt.device) {
+      // Show GPU/CPU as soon as the model is ready, not only at the end.
+      r.msg.runningOn = evt.device;
+      const meta = el.messages.querySelector(`.msg[data-id="${r.msg.id}"] .meta`);
+      if (meta && !meta.querySelector('.stats')) meta.children[1]?.after(liveBadge(evt.device));
+      return;
+    }
+    if (evt.type !== 'delta') return;
     r.msg.content += evt.text;
     scheduleMessageRender(r.chat, r.msg);
-    saveChatSoon(r.chat, 1500);
+    // Saving rewrites the whole chat, so phones save a streaming reply less often.
+    saveChatSoon(r.chat, S.info.mobile ? 5000 : 1500);
   });
 
   api.onMenu((action) => {
