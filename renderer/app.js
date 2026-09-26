@@ -345,6 +345,7 @@ async function loadModels() {
   S.modelErrors = errors;
   ensureDefaultModel();
   renderSelectors();
+  updateComposer();
   if (!S.current) renderChat();
 }
 
@@ -366,12 +367,62 @@ function ensureDefaultModel() {
   }
 }
 
+// A phone and a computer rarely have the same models, so each chat remembers
+// the model to use on each device (chat.models, keyed by this device's id).
+// chat.model is the model of the latest reply, from whichever device.
+const LOCAL_PROVIDERS = new Set(['ollama', 'openaiCompatible', 'onDevice']);
+
+const sameModel = (a, b) => !!a && !!b && a.provider === b.provider && a.model === b.model;
+
+// Whether this device can use a model right now. Until the model lists have
+// loaded, any enabled provider counts.
+function modelAvailable(m) {
+  if (!m || !m.provider || !m.model) return false;
+  if (!S.info.providers[m.provider]) return false;
+  const cfg = S.settings.providers[m.provider];
+  if (!cfg || cfg.enabled === false) return false;
+  if ((m.provider === 'anthropic' || m.provider === 'openai') && !cfg.apiKey) return false;
+  if (S.modelErrors[m.provider]) return false;
+  const list = S.models[m.provider];
+  if (LOCAL_PROVIDERS.has(m.provider) && Array.isArray(list) && list.length) return list.includes(m.model);
+  return true;
+}
+
+// The model a chat uses on this device: this device's own choice for the
+// chat, else the chat's latest model, the assistant's model or this device's
+// default -- whichever this device can actually run.
+function chatModel(chat) {
+  const assistant = getAssistant(chat.assistantId);
+  return [(chat.models || {})[S.state.deviceId], chat.model, assistant.model, S.settings.defaultModel].find(modelAvailable) || null;
+}
+
+function useModel(chat, model) {
+  chat.model = model;
+  chat.models = { ...(chat.models || {}), [S.state.deviceId]: model };
+}
+
+// Explains why a chat isn't using the model it used last time.
+function modelNote(chat, model) {
+  if (!chat) return '';
+  const mine = (chat.models || {})[S.state.deviceId];
+  if (!model) {
+    const wanted = mine || chat.model;
+    return wanted ? `${displayModel(wanted.model)} isn't available right now. Check that ${providerLabel(wanted.provider)} is running, or pick another model at the top.` : '';
+  }
+  if (mine && !sameModel(mine, model)) {
+    return `${displayModel(mine.model)} isn't available right now, so this chat is using ${displayModel(model.model)}.`;
+  }
+  if (!mine && chat.model && !sameModel(chat.model, model) && chat.messages.length) {
+    return `The last reply used ${displayModel(chat.model.model)}, which isn't on this device. Continuing here with ${displayModel(model.model)}.`;
+  }
+  return '';
+}
+
 function currentModel() {
-  if (S.current && S.current.model) return S.current.model;
-  if (S.newChatModel) return S.newChatModel;
+  if (S.current) return chatModel(S.current);
   const assistant = getAssistant(currentAssistantId());
-  if (assistant.model && assistant.model.model) return assistant.model;
-  return S.settings.defaultModel && S.settings.defaultModel.model ? S.settings.defaultModel : null;
+  const candidates = [S.newChatModel, assistant.model, S.settings.defaultModel];
+  return candidates.find(modelAvailable) || candidates.find((m) => m && m.model) || null;
 }
 
 function currentAssistantId() {
@@ -451,7 +502,7 @@ async function onModelChange() {
   }
   if (!chosen) return;
   if (S.current) {
-    S.current.model = chosen;
+    useModel(S.current, chosen);
     saveChatNow(S.current);
   } else {
     S.newChatModel = chosen;
@@ -640,7 +691,10 @@ function updateComposer() {
   const streaming = isStreaming(S.current);
   el.sendBtn.textContent = streaming ? 'Stop' : 'Send';
   el.sendBtn.classList.toggle('danger', streaming);
-  if (S.info.mobile) el.hint.textContent = S.sync && S.sync.configured ? 'Every chat is saved on this phone and synced' : 'Every chat is saved on this phone';
+  const note = S.current ? modelNote(S.current, chatModel(S.current)) : '';
+  el.hint.classList.toggle('model-note', !!note);
+  if (note) el.hint.textContent = note;
+  else if (S.info.mobile) el.hint.textContent = S.sync && S.sync.configured ? 'Every chat is saved on this phone and synced' : 'Every chat is saved on this phone';
   else {
     el.hint.textContent = S.settings.sendOnEnter
       ? 'Enter to send · Shift+Enter for a new line · every chat is saved automatically'
@@ -796,7 +850,6 @@ async function send() {
     api.state.save({ lastChatId: chat.id });
     saveDraft('__new__', '');
   }
-  if (!chat.model) chat.model = model;
 
   if (!chat.messages.length) chat.title = text.replace(/\s+/g, ' ').slice(0, 60);
   chat.messages.push({ id: uid(), role: 'user', content: text, createdAt: Date.now() });
@@ -807,7 +860,12 @@ async function send() {
 }
 
 async function runCompletion(chat) {
-  const model = chat.model;
+  const model = chatModel(chat);
+  if (!model) {
+    toast('Choose a model first (top right).');
+    return;
+  }
+  useModel(chat, model);
   const msg = { id: uid(), role: 'assistant', content: '', createdAt: Date.now(), model, pending: true };
   const system = buildSystemPrompt(chat);
   const history = historyFor(chat, chat.messages.length);
@@ -890,6 +948,10 @@ function stopCurrent() {
 
 async function regenerate(chat) {
   if (isStreaming(chat)) return;
+  if (!chatModel(chat)) {
+    toast('Choose a model first (top right).');
+    return;
+  }
   const last = chat.messages[chat.messages.length - 1];
   if (last && last.role === 'assistant') chat.messages.pop();
   if (!chat.messages.length) return;
@@ -1693,6 +1755,11 @@ async function init() {
   [S.settings, S.info, S.state, S.sync] = await Promise.all([
     api.settings.get(), api.app.info(), api.state.get(), api.sync ? api.sync.status() : null
   ]);
+  // Identifies this device in chats' per-device model choices (not synced).
+  if (!S.state.deviceId) {
+    S.state.deviceId = uid();
+    api.state.save({ deviceId: S.state.deviceId });
+  }
   $('#brandName').textContent = appName();
   if (S.info.mobile) el.search.placeholder = 'Search all chats';
   document.body.classList.toggle('is-mobile', !!S.info.mobile);
