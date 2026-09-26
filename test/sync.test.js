@@ -89,11 +89,16 @@ function fakeGitHub({ isPrivate = true } = {}) {
 }
 
 // A small in-memory stand-in for the Google Drive API (appDataFolder only).
+// With `lag`, new files are left out of file listings until settle() is
+// called, like Drive's list, which can trail new files by a few seconds.
 function fakeDrive({ expireFirstToken = false } = {}) {
   const files = new Map();
   let clock = Date.parse('2026-01-01T00:00:00Z');
   let n = 0;
-  const drive = { requests: 0, files, email: 'bandar@example.com', expired: expireFirstToken };
+  const drive = { requests: 0, files, email: 'bandar@example.com', expired: expireFirstToken, lag: false };
+  drive.settle = () => {
+    for (const f of files.values()) f.hidden = false;
+  };
   const reply = (status, body) => ({ ok: status < 300, status, text: async () => (body == null ? '' : typeof body === 'string' ? body : JSON.stringify(body)) });
   const stamp = () => new Date(clock++).toISOString();
   const parseMultipart = (contentType, body) => {
@@ -115,7 +120,7 @@ function fakeDrive({ expireFirstToken = false } = {}) {
     if (method === 'GET' && u.pathname === '/drive/v3/about') return reply(200, { user: { emailAddress: drive.email } });
     if (method === 'GET' && u.pathname === '/drive/v3/files') {
       assert.strictEqual(u.searchParams.get('spaces'), 'appDataFolder');
-      let list = [...files.values()];
+      let list = [...files.values()].filter((f) => !f.hidden);
       const q = u.searchParams.get('q');
       if (q) list = list.filter((f) => f.name === q.match(/name = '(.+)'/)[1]);
       if (u.searchParams.get('orderBy') === 'modifiedTime desc') list.sort((a, b) => b.modifiedTime.localeCompare(a.modifiedTime));
@@ -128,14 +133,15 @@ function fakeDrive({ expireFirstToken = false } = {}) {
         files.delete(f.id);
         return reply(204, null);
       }
-      return reply(200, f.content);
+      if (u.searchParams.get('alt') === 'media') return reply(200, f.content);
+      return reply(200, { id: f.id, trashed: false });
     }
     if (method === 'POST' && u.pathname === '/upload/drive/v3/files') {
       const { meta, content } = parseMultipart(opts.headers['Content-Type'], opts.body);
       assert.deepStrictEqual(meta.parents, ['appDataFolder']);
       const id = `f${++n}`;
       const t = stamp();
-      files.set(id, { id, name: meta.name, content, appProperties: meta.appProperties || {}, createdTime: t, modifiedTime: t });
+      files.set(id, { id, name: meta.name, content, appProperties: meta.appProperties || {}, createdTime: t, modifiedTime: t, hidden: drive.lag });
       return reply(200, { id });
     }
     if (method === 'PATCH' && (m = u.pathname.match(/^\/upload\/drive\/v3\/files\/(\w+)$/))) {
@@ -409,6 +415,29 @@ test('gdrive: shows the Google account, renews an expired sign-in and signs out'
 
   await pc.sync.disconnect();
   assert.ok(backend.googleAuth.signedOut);
+});
+
+test('gdrive: works while Drive\'s file list is still catching up', async () => {
+  const backend = BACKENDS.gdrive();
+  backend.server.lag = true;
+  const pc = await device(backend, 'pc');
+  const chat = await pc.storage.createChat({ title: 'Fresh' });
+  await addMessage(pc.storage, chat.id, 'first message');
+  const status = await pc.connect();
+  assert.strictEqual(status.error, null);
+  assert.strictEqual((await pc.sync.run()).error, null);
+
+  // Once the list catches up, another device sees everything.
+  backend.server.lag = false;
+  backend.server.settle();
+  const phone = await device(backend, 'phone');
+  assert.strictEqual((await phone.connect()).error, null);
+  assert.deepStrictEqual(await contents(phone.storage, chat.id), ['first message']);
+
+  // Removing the setup file really is reported.
+  const meta = [...backend.server.files.values()].find((f) => f.name === 'balimda-sync.json');
+  backend.server.files.delete(meta.id);
+  assert.match((await phone.sync.run()).error, /removed|gone/);
 });
 
 test('gdrive: cleans up a chat file created twice at the same moment', async () => {
