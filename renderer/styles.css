@@ -601,3 +601,4 @@ textarea.input { resize: vertical; }
 .about-by { margin: 4px 0 0; font-size: 15px; }
 .legal { white-space: pre-wrap; font-size: 12px; line-height: 1.5; margin: 0; font-family: ui-monospace, Menlo, Consolas, monospace; }
 .settings-pane a { color: var(--accent); overflow-wrap: anywhere; }
+.hint.model-note { color: var(--accent); }
