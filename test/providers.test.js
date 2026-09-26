@@ -37,6 +37,37 @@ test('normalizeMessages merges roles and starts with user', () => {
   ]);
 });
 
+test('ollama shows a thinking model\'s reasoning, keeps it loaded and reports speed', async () => {
+  const bodies = [];
+  const s = await server(async (req, res) => {
+    const body = await readBody(req);
+    if (req.url === '/api/show') return res.end(JSON.stringify({ capabilities: body.model === 'qwen3.5:9b' ? ['completion', 'thinking'] : ['completion'] }));
+    bodies.push(body);
+    if (body.think !== false) {
+      res.write(JSON.stringify({ message: { role: 'assistant', content: '', thinking: 'Let me ' }, done: false }) + '\n');
+      res.write(JSON.stringify({ message: { role: 'assistant', content: '', thinking: 'think.' }, done: false }) + '\n');
+    }
+    res.write(JSON.stringify({ message: { content: 'Answer' }, done: false }) + '\n');
+    res.end(JSON.stringify({ message: { content: '' }, done: true, done_reason: 'stop', load_duration: 2.5e9,
+      prompt_eval_count: 30, prompt_eval_duration: 0.5e9, eval_count: 40, eval_duration: 2e9 }) + '\n');
+  });
+  const ask = (cfg, model) => PROVIDERS.ollama.impl.streamChat({ baseUrl: s.url, ...cfg }, { model, messages: [{ role: 'user', content: 'hi' }] }, () => {});
+
+  const r = await ask({}, 'qwen3.5:9b');
+  assert.strictEqual(r.text, '<think>Let me think.</think>\n\nAnswer');
+  assert.strictEqual(bodies[0].keep_alive, '30m');
+  assert.ok(!('think' in bodies[0]), 'thinking left on by default');
+  assert.deepStrictEqual(r.stats, { engine: 'Ollama', device: 'Ollama', loadMs: 2500, promptTokens: 30, promptMs: 500, tokens: 40, ms: 2000 });
+
+  // Thinking switched off: sent only to models that can think.
+  const fast = await ask({ think: false }, 'qwen3.5:9b');
+  assert.strictEqual(fast.text, 'Answer');
+  assert.strictEqual(bodies[1].think, false);
+  await ask({ think: false }, 'llama3.2');
+  assert.ok(!('think' in bodies[2]), 'never sent to models without thinking');
+  s.close();
+});
+
 test('ollama lists models and streams NDJSON', async () => {
   let seen;
   const s = await server(async (req, res) => {

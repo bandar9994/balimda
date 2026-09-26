@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 const { Storage } = require('../src/storage');
 const { nodeFsBackend } = require('../src/backends/node-fs');
-const { Sync, mergeChats, parseRepo } = require('../src/sync');
+const { Sync, mergeChats, mergeMemory, parseRepo } = require('../src/sync');
 
 const TOKEN = 'github_pat_test';
 const PASS = 'correct horse battery';
@@ -367,6 +367,87 @@ for (const [kind, makeBackend] of Object.entries(BACKENDS)) {
     assert.ok(phone.events.at(-1).settings);
   });
 
+  test(`${kind}: memory changed on both devices before syncing keeps both changes`, async () => {
+    const backend = makeBackend();
+    const setMemory = async (storage, memory) => {
+      const settings = await storage.getSettings();
+      settings.memory = memory;
+      await storage.saveSettings(settings);
+    };
+    const memory = async (storage) => (await storage.getSettings()).memory;
+    const pc = await device(backend, 'pc');
+    await setMemory(pc.storage, '- Lives in Riyadh\n- Prefers short answers\n- Has a cat');
+    await pc.connect();
+    const phone = await device(backend, 'phone');
+    await phone.connect();
+
+    // The PC learns something new and updates a fact; the phone, offline,
+    // learns something else and forgets one.
+    await setMemory(pc.storage, '- Lives in Jeddah\n- Prefers short answers\n- Has a cat\n- Works as a nurse');
+    await new Promise((r) => setTimeout(r, 5));
+    await setMemory(phone.storage, '- Lives in Riyadh\n- Prefers short answers\n- Likes kabsa');
+    const phoneSettings = await phone.storage.getSettings();
+    phoneSettings.autoMemory = false;
+    await phone.storage.saveSettings(phoneSettings);
+
+    await pc.sync.run();
+    await phone.sync.run();
+    await pc.sync.run();
+    const expected = '- Prefers short answers\n- Likes kabsa\n- Lives in Jeddah\n- Works as a nurse';
+    assert.strictEqual(await memory(phone.storage), expected);
+    assert.strictEqual(await memory(pc.storage), expected);
+    // Other settings: the newer change wins.
+    assert.strictEqual((await pc.storage.getSettings()).autoMemory, false);
+    assert.ok(pc.events.at(-1).settings);
+
+    // Settled: another round changes nothing and costs one request.
+    await phone.sync.run();
+    const before = backend.requests();
+    await phone.sync.run();
+    await pc.sync.run();
+    assert.strictEqual(backend.requests() - before, 2);
+    assert.strictEqual(await memory(phone.storage), expected);
+  });
+
+  test(`${kind}: a computer sharing its models reaches the phone, even while memory changes there`, async () => {
+    const backend = makeBackend();
+    const pc = await device(backend, 'pc');
+    await pc.connect();
+    const phone = await device(backend, 'phone');
+    await phone.connect();
+
+    await pc.storage.publishComputer('desk', { id: 'desk', name: 'Desk', addrs: ['192.168.1.23'], port: 47811, enabled: true });
+    await new Promise((r) => setTimeout(r, 5));
+    const settings = await phone.storage.getSettings();
+    settings.memory = '- Likes kabsa';
+    await phone.storage.saveSettings(settings);
+
+    await pc.sync.run();
+    await phone.sync.run();
+    await pc.sync.run();
+    for (const d of [pc, phone]) {
+      const got = await d.storage.getSettings();
+      assert.strictEqual(got.computers.desk.addrs[0], '192.168.1.23');
+      assert.strictEqual(got.memory, '- Likes kabsa');
+    }
+    assert.strictEqual(pc.sync.linkKey(), phone.sync.linkKey(), 'both devices derive the same link key');
+  });
+
+  test(`${kind}: a settings change made while a sync is running goes up in the next one`, async () => {
+    const backend = makeBackend();
+    const pc = await device(backend, 'pc');
+    await pc.connect();
+    await pc.storage.createChat({ title: 'Busy' });
+    const running = pc.sync.run();
+    await new Promise((r) => setTimeout(r, 1));
+    await pc.storage.publishComputer('desk', { id: 'desk', name: 'Desk', addrs: ['192.168.1.23'], port: 47811, enabled: true });
+    await running;
+    await pc.sync.run();
+    const phone = await device(backend, 'phone');
+    await phone.connect();
+    assert.strictEqual((await phone.storage.getSettings()).computers.desk?.name, 'Desk');
+  });
+
   test(`${kind}: refuses a wrong passphrase`, async () => {
     const backend = makeBackend();
     const pc = await device(backend, 'pc');
@@ -466,4 +547,15 @@ test('mergeChats keeps every message once, in time order', () => {
   const a = { modifiedAt: 2, updatedAt: 2, messages: [{ id: '1', createdAt: 1 }, { id: '3', createdAt: 3 }] };
   const b = { modifiedAt: 1, updatedAt: 1, messages: [{ id: '1', createdAt: 1 }, { id: '2', createdAt: 2 }] };
   assert.deepStrictEqual(mergeChats(a, b).messages.map((m) => m.id), ['1', '2', '3']);
+});
+
+test('mergeMemory keeps additions and applies removals from both sides', () => {
+  const base = '- A\n- B\n- C';
+  assert.strictEqual(mergeMemory(base, '- A\n- B\n- C\n- D', '- A\n- C\n- E'), '- A\n- C\n- D\n- E');
+  // Same fact added on both devices, spelled a little differently, is kept once.
+  assert.strictEqual(mergeMemory('', '- Likes tea', '* likes tea.'), '- Likes tea');
+  // No shared history yet: nothing is dropped.
+  assert.strictEqual(mergeMemory(undefined, '- A', '- B'), '- A\n- B');
+  // Arabic and free text.
+  assert.strictEqual(mergeMemory('يسكن في الرياض', 'يسكن في جدة', 'يسكن في الرياض\nيحب القهوة'), 'يسكن في جدة\nيحب القهوة');
 });

@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('balimda', {
   chats: {
     list: invoke('chats:list'),
     search: invoke('chats:search'),
+    recall: invoke('chats:recall'),
     get: invoke('chats:get'),
     create: invoke('chats:create'),
     save: invoke('chats:save'),
@@ -52,6 +53,15 @@ contextBridge.exposeInMainWorld('balimda', {
       const listener = (_e, evt) => cb(evt);
       ipcRenderer.on('sync:event', listener);
       return () => ipcRenderer.removeListener('sync:event', listener);
+    }
+  },
+  // Sharing this computer's models with the phone.
+  remote: {
+    status: invoke('remote:status'),
+    onStatus(cb) {
+      const listener = (_e, status) => cb(status);
+      ipcRenderer.on('remote:status', listener);
+      return () => ipcRenderer.removeListener('remote:status', listener);
     }
   },
   onMenu(cb) {

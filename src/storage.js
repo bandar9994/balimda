@@ -22,9 +22,13 @@ const DEFAULT_SETTINGS = {
   maxTokens: 0,
   historyLimit: 0,
   memoryEnabled: true,
+  autoMemory: true,
+  recallChats: true,
   memory: '',
+  computers: {},
+  shareWithPhone: false,
   providers: {
-    ollama: { enabled: true, baseUrl: 'http://127.0.0.1:11434' },
+    ollama: { enabled: true, baseUrl: 'http://127.0.0.1:11434', think: true },
     openaiCompatible: { enabled: true, baseUrl: 'http://127.0.0.1:1234/v1', apiKey: '' },
     anthropic: { enabled: true, apiKey: '' },
     openai: { enabled: true, baseUrl: 'https://api.openai.com/v1', apiKey: '' }
@@ -54,8 +58,10 @@ const DEFAULT_SETTINGS = {
 const ID_RE = /^[A-Za-z0-9-]+$/;
 
 // Settings that follow the user between devices when sync is on. Server
-// addresses and API keys differ per device, so they stay local.
-const SHARED_SETTINGS = ['assistants', 'memory', 'memoryEnabled'];
+// addresses and API keys differ per device, so they stay local. `computers`
+// lists the computers that share their models with the phone (see
+// src/remote.js); only publishComputer changes it.
+const SHARED_SETTINGS = ['assistants', 'memory', 'memoryEnabled', 'autoMemory', 'recallChats', 'computers'];
 
 function pickShared(settings) {
   return Object.fromEntries(SHARED_SETTINGS.map((k) => [k, settings[k]]));
@@ -83,6 +89,44 @@ function upgradeChat(chat) {
     delete chat.palId;
   }
   return chat;
+}
+
+// ---- recall: finding relevant bits of earlier chats ----------------------
+
+const STOPWORDS = new Set((
+  'the and for are but not you your yours with this that these those have has had was were will would could should ' +
+  'can what when where which who why how all any some from into onto about than then them they their there here ' +
+  'just also very more most much many such only own same too out off over under again once been being does did ' +
+  'doing its it\'s i\'m you\'re let make like want need please tell give show help thanks thank okay yes one two ' +
+  'في من على الى إلى عن مع هذا هذه ذلك تلك التي الذي الذين ما ماذا هل ان أن إن او أو كان كانت يكون لكن ثم قد لا لم لن ' +
+  'كل بعض عند كيف متى اين أين لماذا انا أنا انت أنت هو هي نحن هم لي لك له لها'
+).split(/\s+/));
+
+// Lower-case words of 3+ letters, with light Arabic normalisation.
+function terms(text) {
+  const words = String(text || '')
+    .toLowerCase()
+    .replace(/[\u064B-\u0652\u0640]/g, '')          // Arabic diacritics and tatweel
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .match(/[\p{L}\p{N}]{3,}/gu) || [];
+  return words
+    .map((w) => (/^ال[\u0600-\u06FF]{3,}$/.test(w) ? w.slice(2) : w))
+    .filter((w) => !STOPWORDS.has(w));
+}
+
+// A short excerpt of `text` around the first word that matched.
+function excerpt(text, hits, max) {
+  const clean = String(text).replace(/^\s*<think>[\s\S]*?(<\/think>|$)/, '').replace(/\s+/g, ' ').trim();
+  if (clean.length <= max) return clean;
+  const lower = clean.toLowerCase();
+  let at = -1;
+  for (const h of hits) {
+    const i = lower.indexOf(h);
+    if (i >= 0 && (at < 0 || i < at)) at = i;
+  }
+  const start = Math.max(0, Math.min(at - Math.floor(max / 3), clean.length - max));
+  return `${start > 0 ? '…' : ''}${clean.slice(start, start + max).trim()}${start + max < clean.length ? '…' : ''}`;
 }
 
 function isPlainObject(v) {
@@ -322,6 +366,64 @@ class Storage {
     await this._writeJson('deleted.json', tomb);
   }
 
+  // Finds the parts of earlier chats that best match `query`, for giving the
+  // model context from past conversations. Scores each message by the rare
+  // words it shares with the query; chats are read once and cached.
+  //   -> [{ chatId, title, updatedAt, role, text }]
+  async recall(query, { excludeId = null, limit = 3, maxChars = 1500 } = {}) {
+    const want = [...new Set(terms(query))];
+    if (!want.length) return [];
+    if (!this._recallCache) this._recallCache = new Map();
+    const docs = [];
+    for (const meta of [...this.index].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 500)) {
+      if (meta.id === excludeId) continue;
+      let entry = this._recallCache.get(meta.id);
+      if (!entry || entry.rev !== meta.rev) {
+        const chat = await this.getChat(meta.id).catch(() => null);
+        if (!chat) continue;
+        entry = {
+          rev: meta.rev,
+          title: chat.title || 'Chat',
+          updatedAt: chat.updatedAt || 0,
+          messages: (chat.messages || [])
+            .filter((m) => m.content && !m.error)
+            .map((m) => ({ role: m.role, text: m.content, words: new Set(terms(m.content)) }))
+        };
+        this._recallCache.set(meta.id, entry);
+      }
+      for (const m of entry.messages) docs.push({ chatId: meta.id, entry, m });
+    }
+    if (!docs.length) return [];
+
+    // Inverse document frequency: rare words count more.
+    const df = new Map(want.map((w) => [w, 0]));
+    for (const d of docs) for (const w of want) if (d.m.words.has(w)) df.set(w, df.get(w) + 1);
+    const idf = (w) => Math.log(1 + docs.length / (1 + df.get(w)));
+    const needed = Math.min(2, want.length);
+    const scored = [];
+    for (const d of docs) {
+      const hits = want.filter((w) => d.m.words.has(w));
+      if (hits.length < needed) continue;
+      scored.push({ d, hits, score: hits.reduce((sum, w) => sum + idf(w), 0) });
+    }
+    scored.sort((a, b) => b.score - a.score);
+
+    // Best message per chat, then fit the budget.
+    const out = [];
+    const used = new Set();
+    let budget = maxChars;
+    const per = Math.max(120, Math.floor(maxChars / limit));
+    for (const { d, hits } of scored) {
+      if (out.length >= limit || budget < 80) break;
+      if (used.has(d.chatId)) continue;
+      used.add(d.chatId);
+      const text = excerpt(d.m.text, hits, Math.min(per, budget));
+      budget -= text.length;
+      out.push({ chatId: d.chatId, title: d.entry.title, updatedAt: d.entry.updatedAt, role: d.m.role, text });
+    }
+    return out;
+  }
+
   // Full-text search over titles and message contents.
   async searchChats(query) {
     const q = String(query || '').trim().toLowerCase();
@@ -392,7 +494,9 @@ class Storage {
     let sharedChanged = false;
     await this._serial(async () => {
       const before = await this.getSettings();
-      sharedChanged = JSON.stringify(pickShared(before)) !== JSON.stringify(pickShared(settings));
+      // The app window may hold an older list of computers; keep the saved one.
+      copy.computers = before.computers;
+      sharedChanged = JSON.stringify(pickShared(before)) !== JSON.stringify(pickShared({ ...settings, computers: before.computers }));
       copy.sharedModifiedAt = sharedChanged ? Date.now() : before.sharedModifiedAt || 0;
       await this._writeJson('settings.json', copy);
     });
@@ -414,6 +518,26 @@ class Storage {
       delete saved.pals;
       await this._writeJson('settings.json', saved);
     });
+  }
+
+  // A computer announces (or stops) sharing its models with the phone.
+  // Returns whether anything changed.
+  async publishComputer(id, info) {
+    let changed = false;
+    await this._serial(async () => {
+      const saved = await this._readJson('settings.json', {});
+      const computers = { ...(saved.computers || {}) };
+      const { updatedAt: _a, ...before } = computers[id] || {};
+      const { updatedAt: _b, ...after } = info;
+      if (JSON.stringify(before) === JSON.stringify(after)) return;
+      computers[id] = { ...info, updatedAt: Date.now() };
+      saved.computers = computers;
+      saved.sharedModifiedAt = Date.now();
+      await this._writeJson('settings.json', saved);
+      changed = true;
+    });
+    if (changed) this._changed('settings');
+    return changed;
   }
 
   // Small JSON files owned by other modules (sync config and state).
