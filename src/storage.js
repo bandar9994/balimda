@@ -24,7 +24,7 @@ const DEFAULT_SETTINGS = {
   memoryEnabled: true,
   memory: '',
   providers: {
-    ollama: { enabled: true, baseUrl: 'http://127.0.0.1:11434' },
+    ollama: { enabled: true, baseUrl: 'http://127.0.0.1:11434', think: true },
     openaiCompatible: { enabled: true, baseUrl: 'http://127.0.0.1:1234/v1', apiKey: '' },
     anthropic: { enabled: true, apiKey: '' },
     openai: { enabled: true, baseUrl: 'https://api.openai.com/v1', apiKey: '' }

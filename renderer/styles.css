@@ -603,3 +603,4 @@ textarea.input { resize: vertical; }
 .settings-pane a { color: var(--accent); overflow-wrap: anywhere; }
 .hint.model-note { color: var(--accent); }
 .msg .meta .stats.live { cursor: default; }
+.msg .waiting { margin-top: 6px; font-size: 13px; color: var(--text-dim); }

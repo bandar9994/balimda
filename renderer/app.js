@@ -633,10 +633,12 @@ function liveBadge(device) {
 function statsBadge(st) {
   const speed = st.ms > 0 ? st.tokens / (st.ms / 1000) : 0;
   const onGpu = /^GPU/.test(st.device || '');
+  const kind = onGpu ? 'GPU' : /^CPU/.test(st.device || '') ? 'CPU' : '';
   const details = [
     `Ran on: ${st.device}`,
-    st.engine ? `Engine: ${st.engine}` : null,
-    st.offload ? `llama.cpp ${st.offload}` : (st.engine === 'WebAssembly' ? null : 'All layers on the CPU'),
+    st.engine && st.engine !== st.device ? `Engine: ${st.engine}` : null,
+    st.offload ? `llama.cpp ${st.offload}` : (st.device === 'CPU' && !st.engine ? 'All layers on the CPU' : null),
+    st.loadMs > 300 ? `Loading the model: ${(st.loadMs / 1000).toFixed(1)} s` : null,
     `Reply: ${st.tokens} tokens in ${(st.ms / 1000).toFixed(1)} s (${speed.toFixed(1)} tokens/s)`,
     st.promptTokens ? `Reading the chat: ${st.promptTokens} tokens in ${(st.promptMs / 1000).toFixed(1)} s`
       : st.engine === 'WebAssembly' ? `Time before the first word: ${(st.promptMs / 1000).toFixed(1)} s` : 'Reading the chat: reused from memory'
@@ -647,7 +649,7 @@ function statsBadge(st) {
     role: 'button',
     tabindex: 0,
     onclick: () => openModal({ title: 'How this reply ran', body: h('div', { style: 'white-space: pre-wrap', text: details }) }),
-    text: `· ${onGpu ? 'GPU' : 'CPU'}${speed ? ` · ${speed.toFixed(1)} tok/s` : ''}`
+    text: `·${kind ? ` ${kind}` : ''}${speed ? `${kind ? ' ·' : ''} ${speed.toFixed(1)} tok/s` : ''}`
   });
 }
 
@@ -672,7 +674,12 @@ function fillContent(container, msg) {
   const body = renderMarkdown(answer);
   if (msg.pending) body.classList.add('typing');
   container.append(...body.childNodes.length ? [body] : []);
-  if (msg.pending && !answer && thinking == null) container.append(h('span', { class: 'typing' }));
+  if (msg.pending && !answer && thinking == null) {
+    container.append(h('span', { class: 'typing' }));
+    if (msg.waiting && msg.model) {
+      container.append(h('div', { class: 'waiting', text: `Waiting for ${displayModel(msg.model.model)} to start. Large models can take a minute to load the first time.` }));
+    }
+  }
 }
 
 function nearBottom() {
@@ -902,6 +909,13 @@ async function runCompletion(chat) {
 
   const requestId = uid();
   S.requests.set(requestId, { chat, msg });
+  // Say what's happening if the model is slow to start (loading into memory).
+  const waitTimer = setTimeout(() => {
+    if (msg.pending && !msg.content) {
+      msg.waiting = true;
+      scheduleMessageRender(chat, msg);
+    }
+  }, 4000);
   updateComposer();
   renderSidebar();
 
@@ -916,8 +930,10 @@ async function runCompletion(chat) {
   });
 
   S.requests.delete(requestId);
+  clearTimeout(waitTimer);
   msg.pending = false;
   delete msg.runningOn;
+  delete msg.waiting;
   if (!res.ok) msg.error = `Error: ${res.error}`;
   if (res.stats) msg.stats = res.stats;
   if (res.ok && res.stopReason === 'max_tokens') msg.notice = 'The reply was cut off at the length limit. Ask it to continue, or raise "Max tokens" in Settings.';
@@ -1318,6 +1334,9 @@ function openSettings(tab = 'general') {
           h('h4', {}, providerLabel(id), status),
           check('Enabled', p, 'enabled'),
           'baseUrl' in p ? field('Server URL', bind(h('input', { class: 'input', value: p.baseUrl }), p, 'baseUrl')) : null,
+          id === 'ollama' ? h('label', { class: 'check' },
+            bind(h('input', { type: 'checkbox', checked: p.think !== false }), p, 'think'),
+            'Let thinking models think first (better answers; turn off for faster replies)') : null,
           'apiKey' in p ? field('API key', bind(h('input', { class: 'input', type: 'password', value: p.apiKey, placeholder: id === 'openaiCompatible' ? 'Optional' : 'Paste your key' }), p, 'apiKey', (v) => v.trim())) : null,
           h('div', { class: 'help', text: help[id] || '' }),
           h('div', { style: 'margin-top:8px' }, test)));
