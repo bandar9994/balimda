@@ -167,3 +167,42 @@ test('data saved before the rename (pals / palId) still loads', async () => {
   assert.strictEqual((await other.getChat('b1')).assistantId, 'writer');
   void storage;
 });
+
+test('recall finds relevant parts of earlier chats', async () => {
+  const { storage } = await tmpStorage();
+  const add = async (title, pairs) => {
+    const chat = await storage.createChat({ title });
+    for (const [role, content] of pairs) chat.messages.push({ id: `${role}${Math.random()}`, role, content });
+    return storage.saveChat(chat);
+  };
+  const trip = await add('Weekend trip', [
+    ['user', 'Plan a weekend in AlUla for my family'],
+    ['assistant', '<think>they want a plan</think>Stay at the Habitas AlUla resort, visit Hegra and Elephant Rock.']
+  ]);
+  await add('Email', [['user', 'Write a budget email to my manager'], ['assistant', 'Here is the budget email draft.']]);
+  const food = await add('طبخ', [['user', 'أعطني وصفة الكبسة باللحم'], ['assistant', 'وصفة الكبسة: أرز بسمتي ولحم وبهارات.']]);
+  const current = await add('Now', [['user', 'Which AlUla resort did we pick?']]);
+
+  const hits = await storage.recall('Which resort in AlUla did we pick?', { excludeId: current.id });
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].chatId, trip.id);
+  assert.match(hits[0].text, /Habitas AlUla resort/);
+  assert.ok(!hits[0].text.includes('<think>'), 'thinking is left out');
+
+  const ar = await storage.recall('كيف أطبخ الكبسة؟ أريد الوصفة');
+  assert.strictEqual(ar[0].chatId, food.id);
+
+  assert.deepStrictEqual(await storage.recall('quantum physics homework'), []);
+  assert.deepStrictEqual(await storage.recall('tell me'), []);
+
+  // Edited chats are read again.
+  const again = await storage.getChat(trip.id);
+  again.messages.push({ id: 'u9', role: 'user', content: 'Change the AlUla resort to Banyan Tree' });
+  await storage.saveChat(again);
+  const hits2 = await storage.recall('AlUla resort Banyan', { excludeId: current.id });
+  assert.match(hits2[0].text, /Banyan Tree/);
+
+  // Stays within the size budget.
+  const small = await storage.recall('AlUla resort Hegra', { maxChars: 150 });
+  assert.ok(small.reduce((n, h) => n + h.text.length, 0) <= 150);
+});

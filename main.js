@@ -193,6 +193,7 @@ function buildMenu() {
 function registerIpc() {
   ipcMain.handle('chats:list', () => storage.listChats());
   ipcMain.handle('chats:search', (_e, q) => storage.searchChats(q));
+  ipcMain.handle('chats:recall', (_e, q, opts) => storage.recall(q, opts));
   ipcMain.handle('chats:get', (_e, id) => storage.getChat(id));
   ipcMain.handle('chats:create', (_e, init) => storage.createChat(init));
   ipcMain.handle('chats:save', (_e, chat) => storage.saveChat(chat));

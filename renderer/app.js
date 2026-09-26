@@ -617,6 +617,8 @@ function renderMessage(chat, msg, index) {
         !isUser && !msg.stats && msg.pending && msg.runningOn ? liveBadge(msg.runningOn) : null,
         when ? h('span', { text: `· ${when}` }) : null),
       content,
+      msg.recalled && msg.recalled.length ? h('div', { class: 'recalled' }, 'Used earlier chats: ',
+        ...msg.recalled.flatMap((r, i) => [i ? ', ' : null, h('a', { href: '#', text: r.title, onclick: (e) => { e.preventDefault(); openChat(r.chatId); } })])) : null,
       msg.error ? h('div', { class: 'error', text: msg.error }) : null,
       msg.notice ? h('div', { class: 'msg-notice', text: msg.notice }) : null,
       msg.pending ? null : actions));
@@ -834,38 +836,43 @@ async function editCustomInstructions() {
 
 const memoryKey = (line) => line.toLowerCase().replace(/^[-•*\s]+/, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
+// Memory is kept small so it doesn't crowd out the conversation, especially
+// for the phone's small models. When it grows past this, it's merged.
+const MEMORY_LIMIT = 1500;
+
+const memoryLines = () => S.settings.memory.split('\n').map((l) => l.trim().replace(/^[-•*]\s*/, '')).filter(Boolean);
+const cleanFact = (raw) => String(raw).trim().replace(/\s+/g, ' ').replace(/^[-•*]\s*/, '').slice(0, 300);
+
+function setMemory(lines) {
+  S.settings.memory = lines.map((l) => `- ${l}`).join('\n');
+  saveSettings();
+  for (const draw of memoryViews) draw();
+}
+
 // Adds lines to memory, skipping ones it already has. Returns the new ones.
 function addToMemory(lines) {
-  const known = new Set(S.settings.memory.split('\n').map(memoryKey).filter(Boolean));
+  const current = memoryLines();
+  const known = new Set(current.map(memoryKey));
   const added = [];
   for (const raw of lines) {
-    const line = String(raw).trim().replace(/\s+/g, ' ').replace(/^[-•*]\s*/, '').slice(0, 500);
+    const line = cleanFact(raw);
     const key = memoryKey(line);
     if (!key || known.has(key)) continue;
     known.add(key);
     added.push(line);
   }
-  if (added.length) {
-    S.settings.memory = [S.settings.memory.trim(), ...added.map((l) => `- ${l}`)].filter(Boolean).join('\n');
-    saveSettings();
-  }
+  if (added.length) setMemory([...current, ...added]);
   return added;
 }
 
-function rememberText(text) {
-  addToMemory([text]);
-  toast('Added to memory');
+// A model this device can use for background jobs (not the phone's own
+// models, which would slow the phone down).
+function backgroundModel(preferred) {
+  const candidates = [preferred, S.current && chatModel(S.current), S.settings.defaultModel];
+  return candidates.find((m) => modelAvailable(m) && m.provider !== 'onDevice') || null;
 }
 
-// Messages that might say something lasting about the user (English or Arabic).
-// Only statements about the user, not requests like "tell me" or "can I".
-const ABOUT_ME = /\b(i am|i'm|im|i was|i live|i work|i study|i have|i've|i like|i love|i prefer|i hate|i don't like|i do not like|i usually|i always|i never|i speak|my|mine|call me|we have|we live|our)\b|(أنا|انا|اسمي|عمري|عندي|أحب|احب|أعمل|اعمل|أسكن|اسكن|ساكن|زوجتي|زوجي|بنتي|ابني|أولادي|عائلتي|وظيفتي|شغلي|أفضل|افضل)/i;
-
-// After a reply, pull lasting facts about the user out of their message and
-// add them to memory. Uses the chat's model, without its thinking step.
-async function autoRemember(chat, userMsg, model) {
-  const text = String(userMsg.content || '').trim();
-  if (text.length < 12 || !ABOUT_ME.test(text)) return;
+async function askModel(model, prompt) {
   const res = await api.ai.chat({
     requestId: uid(),
     provider: model.provider,
@@ -874,37 +881,140 @@ async function autoRemember(chat, userMsg, model) {
     think: false,
     temperature: 0.1,
     maxTokens: 0,
-    messages: [{
-      role: 'user',
-      content: [
-        'You maintain a short list of lasting facts about the user so future conversations can be personal.',
-        'From the user\'s message below, extract only facts about the user that will still be true later: name, family, where they live, work or studies, languages, preferences, dislikes, long-term goals or projects.',
-        'Do not include one-off requests, questions, temporary moods, or anything about other people unless it is about the user\'s relationship to them.',
-        'Skip anything already in the known facts.',
-        'Reply with one fact per line, each starting with "- ", written in the third person (e.g. "- Prefers short answers"), at most 3 lines.',
-        'If there is nothing new to remember, reply with exactly: NONE',
-        '',
-        `Known facts:\n${S.settings.memory.trim() || '(none)'}`,
-        '',
-        `User's message:\n${text.slice(0, 2000)}`
-      ].join('\n')
-    }]
+    messages: [{ role: 'user', content: prompt }]
   });
-  if (!res.ok || !res.text) return;
-  const answer = splitThinking(res.text).answer.trim();
-  if (/^none\b/i.test(answer)) return;
-  const facts = answer.split('\n').map((l) => l.trim()).filter((l) => /^[-•*]\s+\S/.test(l)).slice(0, 3);
-  const added = addToMemory(facts);
-  if (added.length) toast(`Remembered: ${added.join(' · ')}`, 4500);
+  return res.ok && res.text ? splitThinking(res.text).answer.trim() : null;
 }
 
-function buildSystemPrompt(chat) {
+// Merges memory down to the size limit when it has grown past it.
+async function compactMemory(model) {
+  const lines = memoryLines();
+  const size = () => lines.join('\n').length + lines.length * 2;
+  if (size() <= MEMORY_LIMIT) return false;
+  const target = Math.floor(MEMORY_LIMIT * 0.8);
+  let merged = null;
+  if (model) {
+    const answer = await askModel(model, [
+      `Here is a list of facts about the user. It is too long: rewrite it in at most ${target} characters.`,
+      'Merge related facts, keep the most useful ones (name, family, home, work, languages, strong preferences, long-term goals), drop trivial, outdated or duplicate ones.',
+      'Keep the third person. One fact per line, each starting with "- ". Reply with the list only.',
+      '',
+      lines.map((l) => `- ${l}`).join('\n')
+    ].join('\n'));
+    const out = (answer || '').split('\n').map((l) => l.trim()).filter((l) => /^[-•*]\s+\S/.test(l)).map(cleanFact);
+    if (out.length && out.join('\n').length + out.length * 2 <= MEMORY_LIMIT) merged = out;
+  }
+  // No model, or its answer didn't fit: drop the oldest facts after the first few.
+  if (!merged) {
+    merged = [...lines];
+    while (merged.length > 3 && merged.join('\n').length + merged.length * 2 > MEMORY_LIMIT) merged.splice(3, 1);
+  }
+  setMemory(merged);
+  return true;
+}
+
+function rememberText(text) {
+  addToMemory([text]);
+  toast('Added to memory');
+  compactMemory(backgroundModel()).then((done) => done && toast('Memory was getting long, so it was tidied up.')).catch(() => {});
+}
+
+// Messages that state something about the user (English or Arabic), not
+// requests like "tell me" or "can I".
+const ABOUT_ME = /\b(i am|i'm|im|i was|i live|i work|i study|i have|i've|i like|i love|i prefer|i hate|i don't like|i do not like|i usually|i always|i never|i speak|i moved|i got|i quit|i started|i changed|i no longer|no longer|not anymore|my|mine|call me|we have|we live|our)\b|(أنا|انا|اسمي|عمري|عندي|أحب|احب|أعمل|اعمل|أسكن|اسكن|ساكن|زوجتي|زوجي|بنتي|ابني|أولادي|عائلتي|وظيفتي|شغلي|أفضل|افضل|انتقلت|تزوجت|صرت|ما عدت|لم أعد|تركت)/i;
+
+// After a reply, update memory from what the user said: add new lasting
+// facts, correct ones that changed and drop ones that are no longer true.
+async function autoRemember(chat, userMsg, model) {
+  const text = String(userMsg.content || '').trim();
+  if (text.length < 12 || !ABOUT_ME.test(text)) return;
+  const lines = memoryLines();
+  const answer = await askModel(model, [
+    'You keep a short list of lasting facts about the user so future conversations can be personal.',
+    '',
+    'Known facts:',
+    lines.length ? lines.map((l, i) => `${i + 1}. ${l}`).join('\n') : '(none)',
+    '',
+    "The user's message:",
+    text.slice(0, 2000),
+    '',
+    'Decide what should change. Reply with one operation per line:',
+    'ADD: <new fact>            for something new about the user',
+    'UPDATE <number>: <fact>    when the message changes or corrects a known fact',
+    'REMOVE <number>            when the message says a known fact is no longer true',
+    'Only lasting facts: name, family, where they live, work or studies, languages, preferences, dislikes, long-term goals or projects.',
+    'Ignore one-off requests, questions and temporary moods. Write facts in the third person, short (e.g. "Prefers short answers"). At most 3 lines.',
+    'If nothing should change, reply exactly: NONE'
+  ].join('\n'));
+  if (!answer || /^none\b/i.test(answer)) return;
+
+  const next = [...lines];
+  const changes = [];
+  const adds = [];
+  for (const raw of answer.split('\n').slice(0, 5)) {
+    const line = raw.trim().replace(/^[-•*]\s*/, '');
+    let m;
+    if ((m = line.match(/^UPDATE\s*#?(\d+)\s*[:.-]\s*(.+)$/i))) {
+      const i = Number(m[1]) - 1;
+      if (next[i] != null && memoryKey(next[i]) !== memoryKey(m[2])) {
+        changes.push(`Updated: ${cleanFact(m[2])} (was: ${next[i]})`);
+        next[i] = cleanFact(m[2]);
+      }
+    } else if ((m = line.match(/^REMOVE\s*#?(\d+)/i))) {
+      const i = Number(m[1]) - 1;
+      if (next[i] != null) {
+        changes.push(`Forgot: ${next[i]}`);
+        next[i] = null;
+      }
+    } else if ((m = line.match(/^ADD\s*[:.-]\s*(.+)$/i))) {
+      adds.push(m[1]);
+    } else if (raw.trim().match(/^[-•*]\s+\S/) && !/^(update|remove|add)\b/i.test(line)) {
+      adds.push(line); // a plain "- fact" line
+    }
+  }
+  const kept = next.filter((l) => l != null);
+  const known = new Set(kept.map(memoryKey));
+  const remembered = [];
+  for (const a of adds) {
+    const fact = cleanFact(a);
+    if (!memoryKey(fact) || known.has(memoryKey(fact))) continue;
+    known.add(memoryKey(fact));
+    kept.push(fact);
+    remembered.push(`Remembered: ${fact}`);
+  }
+  const all = [...remembered, ...changes];
+  if (!all.length) return;
+  setMemory(kept);
+  const tidied = await compactMemory(model).catch(() => false);
+  const short = (t) => (t.length > 80 ? `${t.slice(0, 79)}…` : t);
+  toast(all.map(short).join(' · ') + (tidied ? ' · Memory tidied up to stay short' : ''), 5000);
+}
+
+// Earlier chats that match what the user just asked, for the model.
+async function recallFor(chat, model) {
+  if (!S.settings.recallChats || !api.chats.recall) return [];
+  const userTexts = chat.messages.filter((m) => m.role === 'user').slice(-2).map((m) => m.content);
+  if (!userTexts.length) return [];
+  const small = model.provider === 'onDevice';
+  const search = api.chats.recall(userTexts.join('\n'), { excludeId: chat.id, limit: small ? 2 : 3, maxChars: small ? 600 : 1500 }).catch(() => []);
+  // Never hold up a reply for long; the search keeps warming its cache.
+  return Promise.race([search, new Promise((r) => setTimeout(() => r([]), 1500))]);
+}
+
+function buildSystemPrompt(chat, recalled = []) {
   const parts = [];
   const assistant = getAssistant(chat.assistantId);
   if (assistant.systemPrompt) parts.push(assistant.systemPrompt.trim());
   if (chat.systemPrompt) parts.push(chat.systemPrompt.trim());
   if (S.settings.memoryEnabled && S.settings.memory.trim()) {
     parts.push(`Things to remember about the user (from previous sessions):\n${S.settings.memory.trim()}`);
+  }
+  if (recalled.length) {
+    const when = (t) => (t ? new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
+    parts.push([
+      'Excerpts from the user\'s earlier chats that may be relevant. Use them only if they help; don\'t mention them otherwise:',
+      ...recalled.map((r) => `- [${r.title}${r.updatedAt ? `, ${when(r.updatedAt)}` : ''}] ${r.role === 'user' ? 'User' : 'Assistant'}: ${r.text}`)
+    ].join('\n'));
   }
   return parts.join('\n\n');
 }
@@ -958,7 +1068,6 @@ async function runCompletion(chat) {
   }
   useModel(chat, model);
   const msg = { id: uid(), role: 'assistant', content: '', createdAt: Date.now(), model, pending: true };
-  const system = buildSystemPrompt(chat);
   const history = historyFor(chat, chat.messages.length);
   chat.messages.push(msg);
   chat.updatedAt = Date.now();
@@ -967,6 +1076,13 @@ async function runCompletion(chat) {
     scrollToBottom();
   }
   await saveChatNow(chat);
+
+  const recalled = await recallFor(chat, model);
+  if (recalled.length) {
+    msg.recalled = [...new Map(recalled.map((r) => [r.chatId, { chatId: r.chatId, title: r.title }])).values()];
+    scheduleMessageRender(chat, msg);
+  }
+  const system = buildSystemPrompt(chat, recalled);
 
   const requestId = uid();
   S.requests.set(requestId, { chat, msg });
@@ -1100,7 +1216,30 @@ function startEdit(chat, msg, node) {
 // ---------------------------------------------------------------------------
 // sync between devices
 
-const syncViews = new Set();  // open Settings > Sync panes to redraw on changes
+const syncViews = new Set();
+const memoryViews = new Set();  // open Settings > Memory panes to refresh on changes
+
+// The memory text box, with a character count against the size limit.
+function memoryBox(onCleanup, field, bind, s) {
+  const area = bind(h('textarea', { class: 'input', rows: 12, value: s.memory, placeholder: '- My name is …\n- I work as …\n- I prefer short answers' }), s, 'memory');
+  const count = h('div', { class: 'help memory-count' });
+  const update = () => {
+    const n = s.memory.length;
+    count.textContent = `${n.toLocaleString()} / ${MEMORY_LIMIT.toLocaleString()} characters` +
+      (n > MEMORY_LIMIT ? ' · longer memory leaves less room for the conversation; it is tidied up the next time something is remembered' : '');
+    count.classList.toggle('over', n > MEMORY_LIMIT);
+  };
+  area.addEventListener('input', update);
+  const draw = () => {
+    if (document.activeElement !== area) area.value = s.memory;
+    update();
+  };
+  memoryViews.add(draw);
+  onCleanup(() => memoryViews.delete(draw));
+  update();
+  return field('What should your assistants always remember about you?', h('div', {}, area, count),
+    'Shared with the model at the start of every chat. Edit or delete anything here. "Remember" under any of your messages adds it by hand.');
+}  // open Settings > Sync panes to redraw on changes
 
 function timeAgo(ts) {
   const sec = Math.round((Date.now() - ts) / 1000);
@@ -1465,9 +1604,9 @@ function openSettings(tab = 'general') {
         h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: S.info.mobile
           ? 'After a reply, lasting facts you mention (your name, work, family, preferences…) are added below. This uses Ollama and cloud models; the models on this phone are skipped so replies stay fast. Memory syncs between your devices.'
           : 'After a reply, lasting facts you mention (your name, work, family, preferences…) are added below, using the chat\'s model. On-device phone models skip this to stay fast.' }),
-        field('What should your assistants always remember about you?',
-          bind(h('textarea', { class: 'input', rows: 12, value: s.memory, placeholder: '- My name is …\n- I work as …\n- I prefer short answers' }), s, 'memory'),
-          'This is shared with the model at the start of every chat. You can edit or delete anything here. "Remember" under any of your messages adds it by hand.')
+        memoryBox(onCleanup, field, bind, s),
+        check('Look through my earlier chats for relevant details', s, 'recallChats'),
+        h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: 'Before each reply, the best-matching bits of your other chats are given to the model (a little less for phone models, to stay fast). Replies that used them say so underneath, with links to those chats.' })
       ];
     },
 

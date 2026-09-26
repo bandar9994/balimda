@@ -604,3 +604,7 @@ textarea.input { resize: vertical; }
 .hint.model-note { color: var(--accent); }
 .msg .meta .stats.live { cursor: default; }
 .msg .waiting { margin-top: 6px; font-size: 13px; color: var(--text-dim); }
+.msg .recalled { margin-top: 8px; font-size: 12px; color: var(--text-dim); }
+.msg .recalled a { color: var(--accent); }
+.memory-count { margin-top: 4px; }
+.memory-count.over { color: var(--danger); }
