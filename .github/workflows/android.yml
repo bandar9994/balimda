@@ -1,0 +1,80 @@
+name: Android app
+
+on:
+  push:
+    branches: ['main', 'claude/**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # to publish the APK to the "android-latest" release
+    env:
+      # Your own signing key (see README) -- needed before publishing. Without it
+      # the test key in android/app is used (fine for your own phone).
+      BALIMDA_KEYSTORE_BASE64: ${{ secrets.BALIMDA_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:web
+      - run: npx cap sync android
+      - name: Use your own signing key
+        if: env.BALIMDA_KEYSTORE_BASE64 != ''
+        run: |
+          echo "$BALIMDA_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/balimda.keystore"
+          echo "BALIMDA_KEYSTORE_FILE=$RUNNER_TEMP/balimda.keystore" >> "$GITHUB_ENV"
+      - name: Build APK
+        working-directory: android
+        env:
+          BALIMDA_KEYSTORE_PASSWORD: ${{ secrets.BALIMDA_KEYSTORE_PASSWORD }}
+          BALIMDA_KEY_ALIAS: ${{ secrets.BALIMDA_KEY_ALIAS }}
+          BALIMDA_KEY_PASSWORD: ${{ secrets.BALIMDA_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+      - run: cp android/app/build/outputs/apk/release/app-release.apk Balimda-android.apk
+      # Google sign-in (Drive sync) recognises the app by its package name and
+      # this fingerprint, which goes into the Android OAuth client in Google
+      # Cloud. It's public (anyone can read it from the APK).
+      - name: Show the signing certificate's SHA-1
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          SHA1=$("$APKSIGNER" verify --print-certs Balimda-android.apk | grep -m1 'SHA-1 digest' | sed 's/.*: //' | tr 'a-f' 'A-F' | sed 's/../&:/g; s/:$//')
+          KEY=$([ -n "$BALIMDA_KEYSTORE_BASE64" ] && echo "your private key" || echo "the test key")
+          echo "::notice title=SHA-1 fingerprint ($KEY)::$SHA1"
+          echo "**SHA-1 certificate fingerprint** ($KEY), for the Android OAuth client in Google Cloud: \`$SHA1\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Balimda-android-apk
+          path: Balimda-android.apk
+          if-no-files-found: error
+      # One fixed link that always has the newest APK (no zip):
+      # https://github.com/<owner>/<repo>/releases/download/android-latest/Balimda-android.apk
+      - name: Signing key missing
+        if: env.BALIMDA_KEYSTORE_BASE64 == ''
+        run: echo "::warning::Built with the test key (BALIMDA_KEYSTORE_* secrets not set). This APK is only attached to this run, not published to the android-latest release."
+      # Only builds signed with the private key go to the public download link,
+      # so people never get an APK that can't update their installed app.
+      - name: Publish to the android-latest release
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.BALIMDA_KEYSTORE_BASE64 != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view android-latest >/dev/null 2>&1; then
+            gh release create android-latest --prerelease --target "$GITHUB_SHA" \
+              --title "Balimda for Android (latest build)" \
+              --notes "Newest Android build. Download Balimda-android.apk and open it on your phone; it installs over the previous version and keeps your chats."
+          fi
+          gh release upload android-latest Balimda-android.apk --clobber
+          gh release delete-asset android-latest Pal-android.apk --yes 2>/dev/null || true
+          gh release edit android-latest --title "Balimda for Android (latest build)" --notes "Newest Android build (from ${GITHUB_SHA::7}, $(date -u '+%Y-%m-%d %H:%M UTC')). Download Balimda-android.apk and open it on your phone; it installs over the previous version and keeps your chats."

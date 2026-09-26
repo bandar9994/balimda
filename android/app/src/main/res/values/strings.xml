@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Balimda</string>
+    <string name="title_activity_main">Balimda</string>
+    <string name="package_name">com.bandar9994.balimda</string>
+    <string name="custom_url_scheme">com.bandar9994.balimda</string>
+</resources>

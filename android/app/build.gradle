@@ -1,0 +1,105 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace = "com.bandar9994.balimda"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.bandar9994.balimda"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        // CI sets the build number so each new APK installs as an update.
+        versionCode Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1")
+        versionName "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // The native llama.cpp engine is built for 64-bit ARM phones.
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_shared", "-DCMAKE_BUILD_TYPE=Release"
+            }
+        }
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        // Every build must be signed with the same key, or Android refuses to
+        // update the app (and you'd have to uninstall it, losing your chats).
+        // Set BALIMDA_KEYSTORE_* (e.g. from GitHub secrets) to sign with your
+        // own private key -- required before publishing. Otherwise the test key
+        // in this folder is used, which is only meant for your own devices.
+        balimda {
+            def ks = System.getenv("BALIMDA_KEYSTORE_FILE")
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv("BALIMDA_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("BALIMDA_KEY_ALIAS")
+                keyPassword System.getenv("BALIMDA_KEY_PASSWORD")
+            } else {
+                storeFile file("balimda-test.keystore")
+                storePassword "android"
+                keyAlias "balimda"
+                keyPassword "android"
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.balimda
+        }
+        release {
+            signingConfig signingConfigs.balimda
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+    ndkVersion "27.2.12479018"
+    packaging {
+        jniLibs {
+            // Link-time stub only: the phone's own OpenCL driver is used at runtime.
+            excludes += ["**/libOpenCL.so"]
+            useLegacyPackaging = false
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    // Google sign-in for Drive sync (GoogleAuthPlugin)
+    implementation "com.google.android.gms:play-services-auth:22.0.0"
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
