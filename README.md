@@ -15,8 +15,9 @@ and follows you from your desk to your pocket, encrypted end to end.
 [![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](#download)
 [![Works offline](https://img.shields.io/badge/works-offline-5b5bd6)](#run-ai-anywhere)
 [![Free for personal use](https://img.shields.io/badge/free-for%20personal%20use-5b5bd6)](#license)
+[![Business license available](https://img.shields.io/badge/business%20license-available-2b2a6e)](#for-businesses)
 
-**[Download](#download)** · **[Features](#features)** · **[User guide](docs/GUIDE.md)** · **[Website](https://bandar9994.github.io/)** · **[Privacy](PRIVACY.md)**
+**[Download](#download)** · **[Features](#features)** · **[User guide](docs/GUIDE.md)** · **[For businesses](#for-businesses)** · **[Website](https://bandar9994.github.io/)** · **[Privacy](PRIVACY.md)**
 
 <br>
 
@@ -145,6 +146,12 @@ Yes, for personal, non-commercial use. There are no accounts, subscriptions or a
 </details>
 
 <details>
+<summary><b>Can my company use Balimda?</b></summary>
+
+Yes, with a commercial license. Any use by or for a company or organisation, including your staff using it for work, needs one. [Request a quote](https://github.com/bandar9994/balimda/issues/new?template=commercial-license.yml).
+</details>
+
+<details>
 <summary><b>Does it work without internet?</b></summary>
 
 Yes. Models on your phone, and Ollama or LM Studio on your computer, work fully offline. You only need the internet to download a model, to sync, or to use cloud models.
@@ -174,6 +181,14 @@ Yes. Install [Tailscale](https://tailscale.com) (free) on the computer and the p
 It can't be recovered, because nobody else ever has it. Your chats are still on your devices: stop syncing, then set up sync again with a new passphrase.
 </details>
 
+## For businesses
+
+Want Balimda for your team, or inside a product or service? Balimda keeps your company's conversations on your own devices and servers: run models on your own hardware, or on cloud models with your own keys, with no third-party chat service in between.
+
+Use by or for a company or organisation needs a **commercial license**. Tell us what you need and you'll get a quote:
+
+<p align="center"><a href="https://github.com/bandar9994/balimda/issues/new?template=commercial-license.yml"><b>→ Request a commercial license</b></a></p>
+
 ## For developers
 
 Balimda is one codebase for every platform: an Electron desktop app and a Capacitor Android app that share the same interface, storage, sync and model code. See **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** to build it and find your way around.
@@ -188,10 +203,10 @@ npm test    # run the tests
 
 **Balimda © 2026 Bandar Altariqi. All rights reserved.** Released under the [Balimda License](LICENSE):
 
-- ✅ Use, study, change and share it **for non-commercial purposes**.
+- ✅ Use, study, change and share it **for personal, non-commercial purposes**.
 - ✅ Keep the **Balimda** name, logo and icon, and credit **"Balimda by Bandar Altariqi"** with a link to this repository. Changed versions must say they were changed.
 - ❌ **No rebranding**: no renaming, removing the brand, or publishing it under another name or author.
-- ❌ **No commercial use** (selling it, paid products or services, ads, subscriptions) without written permission from Bandar Altariqi.
+- ❌ **No commercial or organisational use** without a commercial license from Bandar Altariqi. That includes use by or for a company (even by its staff for work), selling it, paid products or services, ads and subscriptions. [Request a quote](https://github.com/bandar9994/balimda/issues/new?template=commercial-license.yml).
 
 Balimda is built on great open-source work, including llama.cpp, wllama, Electron, Capacitor, marked and DOMPurify. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). AI models belong to their creators and have their own licenses.
 
