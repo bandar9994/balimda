@@ -6,6 +6,7 @@ package com.bandar9994.balimda;
 
 import android.accounts.Account;
 import android.app.Activity;
+import android.content.Intent;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.IntentSenderRequest;
@@ -79,13 +80,16 @@ public class GoogleAuthPlugin extends Plugin {
         PluginCall call = pending;
         pending = null;
         if (call == null) return;
-        if (activityResult.getResultCode() != Activity.RESULT_OK) {
-            call.reject("Google sign-in was cancelled.", "CANCELLED");
+        // Google also closes this screen by itself when something is set up
+        // wrong, so read its answer rather than assuming the user cancelled.
+        Intent data = activityResult.getData();
+        if (data == null) {
+            if (activityResult.getResultCode() == Activity.RESULT_OK) call.reject("Google sign-in failed. Try again.");
+            else call.reject("Google sign-in was closed before it finished. If you didn't close it, check that your Google account is a test user of the app.", "CANCELLED");
             return;
         }
         try {
-            AuthorizationResult result = Identity.getAuthorizationClient(getActivity())
-                .getAuthorizationResultFromIntent(activityResult.getData());
+            AuthorizationResult result = Identity.getAuthorizationClient(getActivity()).getAuthorizationResultFromIntent(data);
             resolveWith(call, result);
         } catch (ApiException e) {
             reject(call, e);
@@ -107,17 +111,20 @@ public class GoogleAuthPlugin extends Plugin {
         if (e instanceof ApiException) {
             int status = ((ApiException) e).getStatusCode();
             if (status == CommonStatusCodes.DEVELOPER_ERROR) {
-                call.reject("Google sign-in is not set up for this copy of the app yet. The app's SHA-1 fingerprint must be added to its Android client in Google Cloud.", "DEVELOPER_ERROR", e);
+                call.reject("Google sign-in is not set up for this copy of the app (code 10). In Google Cloud, the Android client needs package com.bandar9994.balimda and this app's SHA-1 fingerprint, in the same project as the consent screen.", "DEVELOPER_ERROR", e);
                 return;
             }
             if (status == CommonStatusCodes.NETWORK_ERROR) {
                 call.reject("No internet connection.", "NETWORK", e);
                 return;
             }
-            if (status == CommonStatusCodes.CANCELED) {
-                call.reject("Google sign-in was cancelled.", "CANCELLED", e);
+            if (status == CommonStatusCodes.CANCELED || status == 12501) {
+                call.reject("Google sign-in was cancelled (code " + status + ").", "CANCELLED", e);
                 return;
             }
+            String detail = e.getMessage() != null ? e.getMessage() : "";
+            call.reject("Google sign-in failed (code " + status + "). " + detail, String.valueOf(status), e);
+            return;
         }
         call.reject(e.getMessage() != null ? e.getMessage() : "Google sign-in failed.", e);
     }
