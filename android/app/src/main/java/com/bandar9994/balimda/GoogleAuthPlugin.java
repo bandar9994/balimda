@@ -7,6 +7,10 @@ package com.bandar9994.balimda;
 import android.accounts.Account;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.os.Build;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.IntentSenderRequest;
@@ -24,6 +28,7 @@ import com.google.android.gms.auth.api.identity.RevokeAccessRequest;
 import com.google.android.gms.common.api.ApiException;
 import com.google.android.gms.common.api.CommonStatusCodes;
 import com.google.android.gms.common.api.Scope;
+import java.security.MessageDigest;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -110,8 +115,11 @@ public class GoogleAuthPlugin extends Plugin {
     private void reject(PluginCall call, Exception e) {
         if (e instanceof ApiException) {
             int status = ((ApiException) e).getStatusCode();
-            if (status == CommonStatusCodes.DEVELOPER_ERROR) {
-                call.reject("Google sign-in is not set up for this copy of the app (code 10). In Google Cloud, the Android client needs package com.bandar9994.balimda and this app's SHA-1 fingerprint, in the same project as the consent screen.", "DEVELOPER_ERROR", e);
+            String text = e.getMessage() != null ? e.getMessage() : "";
+            if (status == CommonStatusCodes.DEVELOPER_ERROR || text.contains("UNREGISTERED_ON_API_CONSOLE")) {
+                call.reject("Google doesn't recognise this app yet (code " + status + "). In Google Cloud → Google Auth Platform → Clients, "
+                    + "create an Android client in the same project as the consent screen with package " + getContext().getPackageName()
+                    + " and SHA-1 " + signingSha1() + ". A new or changed client can take a few minutes to start working.", "DEVELOPER_ERROR", e);
                 return;
             }
             if (status == CommonStatusCodes.NETWORK_ERROR) {
@@ -127,6 +135,31 @@ public class GoogleAuthPlugin extends Plugin {
             return;
         }
         call.reject(e.getMessage() != null ? e.getMessage() : "Google sign-in failed.", e);
+    }
+
+    /** SHA-1 of the certificate this copy of the app is signed with, as Google Cloud shows it. */
+    @SuppressWarnings("deprecation")
+    private String signingSha1() {
+        try {
+            PackageManager pm = getContext().getPackageManager();
+            String pkg = getContext().getPackageName();
+            Signature[] signatures;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageInfo info = pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES);
+                signatures = info.signingInfo.getApkContentsSigners();
+            } else {
+                signatures = pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES).signatures;
+            }
+            byte[] digest = MessageDigest.getInstance("SHA-1").digest(signatures[0].toByteArray());
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < digest.length; i++) {
+                if (i > 0) sb.append(':');
+                sb.append(String.format("%02X", digest[i]));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "(unknown)";
+        }
     }
 
     /** { token } Forget a cached access token that Google Drive rejected. */
