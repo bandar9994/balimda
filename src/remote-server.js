@@ -36,7 +36,20 @@ function localAddresses(interfaces = os.networkInterfaces()) {
 function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0' }) {
   const seen = new Map();  // nonce -> time, to refuse replayed requests
 
-  const server = http.createServer(async (req, res) => {
+  const server = http.createServer((req, res) => {
+    // A phone that drops the connection mid-request (or any other failure)
+    // must never take the app down with an unhandled rejection.
+    handle(req, res).catch(() => {
+      try {
+        if (!res.headersSent) res.writeHead(500);
+      } catch {
+        // the connection is already gone
+      }
+      res.destroy();
+    });
+  });
+
+  const handle = async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -130,7 +143,7 @@ function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0' }) 
       await write({ t: 'error', message: err.message || String(err) });
     }
     res.end();
-  });
+  };
 
   return new Promise((resolve, reject) => {
     const listen = (p) => {

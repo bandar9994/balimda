@@ -184,3 +184,64 @@ test('anthropic refusal is surfaced to the user', async () => {
   assert.strictEqual(r.stopReason, 'refusal');
   assert.match(r.text, /declined/);
 });
+
+test('anthropic shows the thinking summary and keeps within each model\'s output limit', async () => {
+  const requests = [];
+  const s = await server(async (req, res) => {
+    if (req.url.startsWith('/v1/models')) {
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify({
+        data: [
+          { type: 'model', id: 'claude-opus-5', display_name: 'Claude Opus 5', created_at: '2026-01-01T00:00:00Z', max_tokens: 128000 },
+          { type: 'model', id: 'claude-3-haiku-20240307', display_name: 'Claude Haiku 3', created_at: '2024-03-07T00:00:00Z', max_tokens: 4096 }
+        ],
+        has_more: false,
+        first_id: 'claude-opus-5',
+        last_id: 'claude-3-haiku-20240307'
+      }));
+    }
+    requests.push(await readBody(req));
+    const events = claudeEvents('The answer.');
+    events.splice(1, 0,
+      { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Weighing it up.' } },
+      { type: 'content_block_stop', index: 0 });
+    sse(res, events);
+  });
+  const cfg = { apiKey: 'k', baseUrl: s.url };
+  try {
+    assert.deepStrictEqual(await PROVIDERS.anthropic.impl.listModels(cfg), ['claude-opus-5', 'claude-3-haiku-20240307']);
+
+    const r = await PROVIDERS.anthropic.impl.streamChat(cfg, { model: 'claude-opus-5', messages: [{ role: 'user', content: 'hi' }] }, () => {});
+    assert.strictEqual(r.text, '<think>Weighing it up.</think>\n\nThe answer.');
+    assert.deepStrictEqual(requests[0].thinking, { type: 'adaptive', display: 'summarized' });
+    assert.strictEqual(requests[0].max_tokens, 64000);
+
+    await PROVIDERS.anthropic.impl.streamChat(cfg, { model: 'claude-3-haiku-20240307', messages: [{ role: 'user', content: 'hi' }] }, () => {});
+    assert.strictEqual(requests[1].max_tokens, 4096);
+    assert.strictEqual(requests[1].thinking, undefined);
+
+    // Quick background jobs (titles, memory) don't ask for the summary.
+    await PROVIDERS.anthropic.impl.streamChat(cfg, { model: 'claude-opus-5', think: false, messages: [{ role: 'user', content: 'hi' }] }, () => {});
+    assert.strictEqual(requests[2].thinking, undefined);
+  } finally {
+    s.close();
+  }
+});
+
+test('openai-compatible shows a thinking model\'s reasoning', async () => {
+  const s = await server(async (req, res) => {
+    await readBody(req);
+    res.setHeader('Content-Type', 'text/event-stream');
+    const chunk = (delta, finish = null) => `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+    res.write(chunk({ role: 'assistant' }));
+    res.write(chunk({ reasoning_content: 'Hmm, ' }));
+    res.write(chunk({ reasoning_content: 'easy.' }));
+    res.write(chunk({ content: '4' }));
+    res.write(chunk({}, 'stop'));
+    res.end('data: [DONE]\n\n');
+  });
+  const r = await PROVIDERS.openaiCompatible.impl.streamChat({ baseUrl: s.url }, { model: 'qwen3', messages: [{ role: 'user', content: '2+2' }] }, () => {});
+  s.close();
+  assert.strictEqual(r.text, '<think>Hmm, easy.</think>\n\n4');
+});

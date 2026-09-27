@@ -609,12 +609,12 @@ function mergeShared(base, mine, theirs) {
 
 const msgKey = (m) => m.id || `${m.role}|${m.createdAt}|${String(m.content || '').slice(0, 80)}`;
 
-// The same chat changed on two devices before they synced: keep the newer
-// version and add any messages only the other one has, so nothing is lost.
 // How finished a copy of a message is: a reply still being written (or cut
 // off) on one device mustn't replace the finished reply from the other.
 const doneness = (m) => (m.pending ? 0 : !m.content && m.error ? 1 : 2);
 
+// The same chat changed on two devices before they synced: keep the newer
+// version and add any messages only the other one has, so nothing is lost.
 function mergeChats(a, b) {
   const [newer, older] = (a.modifiedAt || 0) >= (b.modifiedAt || 0) ? [a, b] : [b, a];
   const seen = new Set(newer.messages.map(msgKey));

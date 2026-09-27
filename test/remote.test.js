@@ -185,3 +185,29 @@ test('a computer publishes itself through synced settings; the app window can\'t
   assert.strictEqual(after.computers.desk.addrs[0], '192.168.1.23');
   assert.strictEqual((await storage.getSharedSettings()).modifiedAt, shared.modifiedAt, 'a local-only change is not a shared change');
 });
+
+test('a phone that drops the connection mid-request doesn\'t upset the computer', async () => {
+  const key = syncKey();
+  const pc = await computer(key);
+  const failures = [];
+  const onFailure = (err) => failures.push(err);
+  process.on('unhandledRejection', onFailure);
+  process.on('uncaughtException', onFailure);
+  try {
+    const net = require('net');
+    await new Promise((resolve) => {
+      const sock = net.connect(pc.server.port, '127.0.0.1', () => {
+        sock.write(`POST ${PATH} HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\nContent-Length: 1000\r\n\r\nhalf a request`);
+        setTimeout(() => { sock.destroy(); resolve(); }, 50);
+      });
+    });
+    await sleep(100);
+    assert.deepStrictEqual(failures, []);
+    // Still answers the next request.
+    assert.deepStrictEqual(await client(key, { desk: pc.addr }).listModels(), ['claude-opus-5 (Desk, Anthropic Claude)', 'qwen3.5:9b (Desk)']);
+  } finally {
+    process.off('unhandledRejection', onFailure);
+    process.off('uncaughtException', onFailure);
+    await pc.server.close();
+  }
+});

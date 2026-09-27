@@ -42,6 +42,25 @@ const el = {
 
 marked.setOptions({ gfm: true, breaks: true });
 
+// Nothing in a reply may load from the internet by itself: a reply can be
+// steered (e.g. by a web page an agent read) into an image address that
+// carries chat text to someone's server. Image addresses are parked in
+// data-src (and shown as links, see renderMarkdown) before the browser sees
+// them, and inline styles, which can load images too, are dropped.
+const REPLY_HTML = { FORBID_TAGS: ['style', 'video', 'audio', 'source', 'track', 'picture', 'iframe', 'form', 'input'] };
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (!node.removeAttribute) return;
+  node.removeAttribute('style');
+  node.removeAttribute('srcset');
+  node.removeAttribute('poster');
+  node.removeAttribute('background');
+  const src = node.getAttribute && node.getAttribute('src');
+  if (src != null) {
+    node.removeAttribute('src');
+    if (node.nodeName === 'IMG') node.setAttribute(/^data:image\//i.test(src) ? 'data-inline' : 'data-src', src);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // helpers
 
@@ -118,12 +137,33 @@ function splitThinking(text) {
 }
 
 function renderMarkdown(text) {
-  const html = DOMPurify.sanitize(marked.parse(text || ''));
+  const html = DOMPurify.sanitize(marked.parse(text || ''), REPLY_HTML);
   const wrap = h('div');
   wrap.innerHTML = html;
   // Arabic (and other right-to-left) paragraphs read right to left, each on
   // its own, so a mixed reply lays out naturally. Code stays left to right.
   for (const block of wrap.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th')) block.setAttribute('dir', 'auto');
+  // Pictures from the internet become links the reader can choose to open.
+  for (const img of wrap.querySelectorAll('img')) {
+    const inline = img.getAttribute('data-inline');
+    if (inline) {
+      img.removeAttribute('data-inline');
+      img.setAttribute('src', inline);
+      continue;
+    }
+    const src = img.getAttribute('data-src') || '';
+    let label = 'image';
+    try {
+      label = new URL(src).hostname || label;
+    } catch {
+      // keep "image"
+    }
+    const alt = (img.getAttribute('alt') || '').trim();
+    const link = /^https?:\/\//i.test(src)
+      ? h('a', { href: src, target: '_blank', rel: 'noopener noreferrer', class: 'img-link', text: `🖼 ${alt || 'Image'} (${label})` })
+      : h('span', { class: 'img-link', text: `🖼 ${alt || 'Image'}` });
+    img.replaceWith(link);
+  }
   for (const pre of wrap.querySelectorAll('pre')) {
     pre.setAttribute('dir', 'ltr');
     const btn = h('button', { class: 'copy-code', text: 'Copy' });
@@ -395,7 +435,9 @@ function modelAvailable(m) {
   if ((m.provider === 'anthropic' || m.provider === 'openai') && !cfg.apiKey) return false;
   if (S.modelErrors[m.provider]) return false;
   const list = S.models[m.provider];
-  if (LOCAL_PROVIDERS.has(m.provider) && Array.isArray(list) && list.length) return list.includes(m.model);
+  // Once a local provider's list has loaded, only what's in it (an empty list
+  // means none, e.g. every on-phone model was deleted).
+  if (LOCAL_PROVIDERS.has(m.provider) && Array.isArray(list)) return list.includes(m.model);
   return true;
 }
 
@@ -419,6 +461,7 @@ function modelNote(chat, model) {
   if (!model) {
     const wanted = mine || chat.model;
     if (!wanted) return '';
+    if (wanted.provider === 'onDevice') return `${displayModel(wanted.model)} isn't on this phone any more. Download it again in Settings → Models & providers, or pick another model at the top.`;
     if (wanted.provider === 'computer') return `${displayModel(wanted.model)} isn't available right now. Check that the computer is on with Balimda open and on the same Wi-Fi, or pick another model at the top.`;
     return `${displayModel(wanted.model)} isn't available right now. Check that ${providerLabel(wanted.provider)} is running, or pick another model at the top.`;
   }
@@ -1024,9 +1067,18 @@ const ABOUT_ME = /\b(i am|i'm|im|i was|i live|i work|i study|i have|i've|i like|
 
 // After a reply, update memory from what the user said: add new lasting
 // facts, correct ones that changed and drop ones that are no longer true.
-async function autoRemember(chat, userMsg, model) {
+// One update at a time, so two quick messages can't overwrite each other.
+let memoryQueue = Promise.resolve();
+function autoRemember(chat, userMsg, model) {
+  const run = memoryQueue.then(() => rememberFrom(userMsg, model));
+  memoryQueue = run.catch(() => {});
+  return run;
+}
+
+async function rememberFrom(userMsg, model) {
   const text = String(userMsg.content || '').trim();
   if (text.length < 12 || !ABOUT_ME.test(text)) return;
+  const before = S.settings.memory;
   const lines = memoryLines();
   const answer = await askModel(model, [
     'You keep a short list of lasting facts about the user so future conversations can be personal.',
@@ -1047,12 +1099,16 @@ async function autoRemember(chat, userMsg, model) {
   ].join('\n'));
   if (!answer || /^none\b/i.test(answer)) return;
 
-  const next = [...lines];
+  // Memory changed while the model was thinking (edited, or synced from
+  // another device): its line numbers no longer match, so only add.
+  const moved = S.settings.memory !== before;
+  const next = moved ? memoryLines() : [...lines];
   const changes = [];
   const adds = [];
   for (const raw of answer.split('\n').slice(0, 5)) {
     const line = raw.trim().replace(/^[-•*]\s*/, '');
     let m;
+    if (moved && /^(update|remove)\b/i.test(line)) continue;
     if ((m = line.match(/^UPDATE\s*#?(\d+)\s*[:.-]\s*(.+)$/i))) {
       const i = Number(m[1]) - 1;
       if (next[i] != null && memoryKey(next[i]) !== memoryKey(m[2])) {
