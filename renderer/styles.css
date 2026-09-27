@@ -322,6 +322,8 @@ a.btn { display: inline-block; text-decoration: none; color: inherit; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.danger { color: var(--danger); }
+/* The send button while a reply is being written: a clear red Stop button. */
+.btn.primary.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn.ghost { background: transparent; border-color: transparent; text-align: left; }
 .btn.ghost:hover { background: var(--bg-hover); }
 .btn.block { width: 100%; }
@@ -627,5 +629,6 @@ textarea.input { resize: vertical; }
 .approval-command { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; background: var(--bg-code); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
 .approval-done { font-size: 13px; color: var(--text-dim); display: flex; gap: 6px; align-items: baseline; }
+.approval-done .approval-label { white-space: nowrap; flex-shrink: 0; }
 .approval-done code { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .approval-done.denied { color: var(--danger); }

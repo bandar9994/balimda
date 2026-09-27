@@ -774,7 +774,7 @@ function agentSteps(msg) {
           })))));
     } else {
       wrap.append(h('div', { class: `approval-done ${a.state === 'deny' ? 'denied' : ''}` },
-        `${a.state === 'deny' ? '✗' : a.state === 'expired' ? '·' : '✓'} ${APPROVAL_DONE[a.state] || a.state}`,
+        h('span', { class: 'approval-label', text: `${a.state === 'deny' ? '✗' : a.state === 'expired' ? '·' : '✓'} ${APPROVAL_DONE[a.state] || a.state}` }),
         a.command ? h('code', { text: a.command.length > 80 ? `${a.command.slice(0, 80)}…` : a.command }) : null));
     }
   }
