@@ -257,8 +257,8 @@ Java_com_bandar9994_balimda_LlamaEngine_nativeFree(JNIEnv *, jclass, jlong handl
 }
 
 // Streams a reply. `callback.onToken(String)` receives text pieces and returns
-// false to stop. Returns "<reason>\t<prompt tokens>\t<prompt ms>\t<generated tokens>\t<generation ms>"
-// where reason is "end_turn", "max_tokens" or "aborted".
+// false to stop. Returns "<reason>\t<prompt tokens>\t<prompt ms>\t<generated tokens>\t<generation ms>
+// \t<chat tokens>\t<messages sent>\t<context size>" where reason is "end_turn", "max_tokens" or "aborted".
 JNIEXPORT jstring JNICALL
 Java_com_bandar9994_balimda_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlong handle, jobjectArray jroles,
                                                    jobjectArray jcontents, jint max_tokens, jfloat temperature,
@@ -352,9 +352,13 @@ Java_com_bandar9994_balimda_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlo
         return go_on;
     };
 
+    // Also says how much of the chat the model was given: its size in tokens,
+    // how many messages (not counting the system prompt) and the context size.
+    const size_t n_sent = roles.size() - from;
     auto result = [&](const std::string & reason, size_t n_prompt, double prompt_ms, int n_gen, double gen_ms) {
-        char buf[160];
-        snprintf(buf, sizeof(buf), "%s\t%zu\t%.1f\t%d\t%.1f", reason.c_str(), n_prompt, prompt_ms, n_gen, gen_ms);
+        char buf[200];
+        snprintf(buf, sizeof(buf), "%s\t%zu\t%.1f\t%d\t%.1f\t%zu\t%zu\t%d", reason.c_str(), n_prompt, prompt_ms, n_gen, gen_ms,
+                 tokens.size(), n_sent, n_ctx);
         return to_jstring(env, buf);
     };
 

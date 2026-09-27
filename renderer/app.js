@@ -699,7 +699,13 @@ function statsBadge(st) {
     st.loadMs > 300 ? `Loading the model: ${(st.loadMs / 1000).toFixed(1)} s` : null,
     `Reply: ${st.tokens} tokens in ${(st.ms / 1000).toFixed(1)} s (${speed.toFixed(1)} tokens/s)`,
     st.promptTokens ? `Reading the chat: ${st.promptTokens} tokens in ${(st.promptMs / 1000).toFixed(1)} s`
-      : st.engine === 'WebAssembly' ? `Time before the first word: ${(st.promptMs / 1000).toFixed(1)} s` : 'Reading the chat: reused from memory'
+      : st.engine === 'WebAssembly' ? `Time before the first word: ${(st.promptMs / 1000).toFixed(1)} s` : 'Reading the chat: reused from memory',
+    // How much of the conversation the model could see.
+    st.messagesSent != null && st.messagesTotal
+      ? `The model saw ${Math.min(st.messagesSent, st.messagesTotal)} of ${st.messagesTotal} messages in this chat` +
+        (st.chatTokens && st.contextSize ? ` (${st.chatTokens.toLocaleString()} of ${st.contextSize.toLocaleString()} tokens of its memory)` : '') +
+        (st.messagesSent < st.messagesTotal ? '. Older messages didn\'t fit: raise "Memory for the conversation" in Settings → Models & providers to include more.' : '')
+      : null
   ].filter(Boolean).join('\n');
   return h('span', {
     class: `stats ${onGpu ? 'gpu' : 'cpu'}`,

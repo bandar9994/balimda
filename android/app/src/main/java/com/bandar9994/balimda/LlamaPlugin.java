@@ -414,7 +414,7 @@ public class LlamaPlugin extends Plugin {
         });
     }
 
-    /** result = "reason\tpromptTokens\tpromptMs\tgeneratedTokens\tgenerationMs" (or just "reason"). */
+    /** result = "reason\tpromptTokens\tpromptMs\tgeneratedTokens\tgenerationMs\tchatTokens\tmessagesSent\tcontextSize" (or just "reason"). */
     private void resolveDone(PluginCall call, String result) {
         String[] parts = result.split("\t");
         JSObject ret = new JSObject();
@@ -427,6 +427,11 @@ public class LlamaPlugin extends Plugin {
             stats.put("promptMs", Double.parseDouble(parts[2]));
             stats.put("tokens", Long.parseLong(parts[3]));
             stats.put("ms", Double.parseDouble(parts[4]));
+            if (parts.length >= 8) {
+                stats.put("chatTokens", Long.parseLong(parts[5]));
+                stats.put("messagesSent", Long.parseLong(parts[6]));
+                stats.put("contextSize", Long.parseLong(parts[7]));
+            }
             ret.put("stats", stats);
         }
         call.resolve(ret);
