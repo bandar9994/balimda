@@ -30,6 +30,9 @@ const DEFAULT_SETTINGS = {
   providers: {
     ollama: { enabled: true, baseUrl: 'http://127.0.0.1:11434', think: true },
     openaiCompatible: { enabled: true, baseUrl: 'http://127.0.0.1:1234/v1', apiKey: '' },
+    // Hermes Agent's API server (off until the user sets it up). Hermes keeps
+    // its own memory, so Balimda's isn't sent unless shareMemory is on.
+    hermes: { enabled: false, baseUrl: 'http://127.0.0.1:8642/v1', apiKey: '', shareMemory: false },
     anthropic: { enabled: true, apiKey: '' },
     openai: { enabled: true, baseUrl: 'https://api.openai.com/v1', apiKey: '' }
   },

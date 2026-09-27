@@ -185,7 +185,7 @@ async function enabledProviders(settings) {
   });
 }
 
-async function runChat(providerId, req, onDelta, signal) {
+async function runChat(providerId, req, onDelta, signal, onInfo) {
   const provider = PROVIDERS[providerId];
   if (!provider) throw new Error(`Unknown provider: ${providerId}`);
   const cfg = (await storage.getSettings()).providers[providerId] || {};
@@ -200,8 +200,22 @@ async function runChat(providerId, req, onDelta, signal) {
       think: req.think
     },
     onDelta,
-    signal
+    signal,
+    onInfo
   );
+}
+
+async function checkShared(providerId) {
+  if (!(await enabledProviders(await storage.getSettings())).includes(providerId)) {
+    throw new Error(`${PROVIDERS[providerId] ? PROVIDERS[providerId].label : 'This provider'} is turned off on ${computerName()}.`);
+  }
+}
+
+async function approveOn(providerId, payload) {
+  const provider = PROVIDERS[providerId];
+  if (!provider || !provider.impl.approve) throw new Error('This model can\'t take approvals.');
+  const cfg = (await storage.getSettings()).providers[providerId] || {};
+  return provider.impl.approve(cfg, payload);
 }
 
 const remoteHandlers = {
@@ -221,10 +235,13 @@ const remoteHandlers = {
     return out;
   },
   chat: async (msg, { emit, signal }) => {
-    if (!(await enabledProviders(await storage.getSettings())).includes(msg.provider)) {
-      throw new Error(`${PROVIDERS[msg.provider] ? PROVIDERS[msg.provider].label : 'This provider'} is turned off on ${computerName()}.`);
-    }
-    return runChat(msg.provider, msg.req || {}, (text) => emit({ t: 'delta', text }), signal);
+    await checkShared(msg.provider);
+    return runChat(msg.provider, msg.req || {}, (text) => emit({ t: 'delta', text }), signal, (info) => emit({ t: 'info', info }));
+  },
+  // The phone answering an agent's request for permission.
+  approve: async (msg) => {
+    await checkShared(msg.provider);
+    return approveOn(msg.provider, msg.payload || {});
   }
 };
 
@@ -408,7 +425,8 @@ function registerIpc() {
     const controller = new AbortController();
     activeRequests.set(requestId, controller);
     try {
-      const result = await runChat(providerId, req, (text) => send('ai:event', { requestId, type: 'delta', text }), controller.signal);
+      const result = await runChat(providerId, req, (text) => send('ai:event', { requestId, type: 'delta', text }), controller.signal,
+        (info) => send('ai:event', { requestId, type: 'info', ...info }));
       return { ok: true, ...result };
     } catch (err) {
       if (controller.signal.aborted) return { ok: true, aborted: true };
@@ -417,6 +435,8 @@ function registerIpc() {
       activeRequests.delete(requestId);
     }
   });
+
+  ipcMain.handle('ai:approve', (_e, providerId, _model, payload) => approveOn(providerId, payload));
 
   ipcMain.handle('ai:abort', (_e, requestId) => {
     const c = activeRequests.get(requestId);

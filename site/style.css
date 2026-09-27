@@ -14,7 +14,7 @@ header { padding: 20px 0; }
 header .wrap { display: flex; align-items: center; gap: 10px; }
 header img { width: 36px; height: 36px; }
 header strong { font-size: 20px; }
-header nav { margin-left: auto; display: flex; gap: 18px; font-size: 15px; }
+header nav { margin-left: auto; display: flex; gap: 18px; font-size: 15px; white-space: nowrap; }
 .hero { padding: 40px 0 24px; text-align: center; }
 .hero img { width: 112px; height: 112px; }
 .hero h1 { font-size: 40px; margin: 12px 0 4px; }
@@ -30,6 +30,24 @@ header nav { margin-left: auto; display: flex; gap: 18px; font-size: 15px; }
 .support .card p + p { margin-top: 14px; }
 .business .card p + p { margin-top: 14px; }
 .button { display: inline-block; padding: 9px 18px; border-radius: 10px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; }
+.cta { margin: 22px 0 0; }
+.button.big { padding: 13px 26px; font-size: 18px; border-radius: 12px; }
+.shot { max-width: 1100px; margin: 8px auto 16px; padding: 0 20px; }
+.shot img { display: block; width: 100%; height: auto; border-radius: 14px; }
+.download { padding: 24px 20px 8px; text-align: center; }
+.download h2 { font-size: 28px; margin: 0 0 4px; }
+.download .sub { color: var(--dim); font-size: 15px; margin: 6px 0 16px; }
+.platforms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; text-align: left; }
+.platform { display: block; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--panel); color: var(--text); text-decoration: none; }
+.platform:hover { border-color: var(--accent); }
+.platform strong { display: block; font-size: 16px; }
+.platform span { color: var(--dim); font-size: 14px; }
+.platform.yours { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.platform.yours::before { content: "For your system"; display: block; color: var(--accent); font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+.tips { text-align: left; margin: 16px 0 0; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--border); font-size: 15px; }
+.tips summary { cursor: pointer; font-weight: 600; }
+.tips ul { margin: 10px 0 0; padding-left: 20px; color: var(--dim); }
+.tips li { margin: 4px 0; }
 main.doc { padding-top: 12px; padding-bottom: 40px; }
 main.doc h1 { font-size: 32px; }
 main.doc h2 { font-size: 21px; margin-top: 28px; }
@@ -37,6 +55,8 @@ footer { border-top: 1px solid var(--border); margin-top: 32px; padding: 20px 0 
 footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 18px; }
 @media (max-width: 600px) {
   .features { grid-template-columns: minmax(0, 1fr); }
+  .platforms { grid-template-columns: minmax(0, 1fr); }
+  header nav .wide-only { display: none; }
   .hero h1 { font-size: 32px; }
   header nav { gap: 12px; }
 }

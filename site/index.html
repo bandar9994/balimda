@@ -5,7 +5,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Balimda — private AI chat for your phone and computer</title>
-  <meta name="description" content="Balimda by Bandar Altariqi: a private AI chat app for Android, Windows, macOS and Linux that remembers every chat and syncs them, encrypted, between your devices.">
+  <meta name="description" content="Balimda by Bandar Altariqi: a private AI chat app for Android, Windows, macOS and Linux. The same chat on every device, even with a different AI model on each, encrypted end to end. Free for personal use.">
+  <meta property="og:title" content="Balimda — your private AI, on every device you own">
+  <meta property="og:description" content="Start a chat on your computer with a big model, continue the same chat on your phone with a small one. Free for personal use.">
+  <meta property="og:image" content="https://bandar9994.github.io/hero.png">
   <link rel="icon" href="icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -14,7 +17,7 @@
     <div class="wrap">
       <img src="icon.png" alt="">
       <strong>Balimda</strong>
-      <nav><a href="#business">For businesses</a><a href="privacy.html">Privacy policy</a></nav>
+      <nav><a href="#download">Download</a><a href="#business">For businesses</a><a class="wide-only" href="privacy.html">Privacy</a></nav>
     </div>
   </header>
 
@@ -24,18 +27,59 @@
       <h1>Balimda</h1>
       <p class="by">by Bandar Altariqi</p>
       <p class="lead">A private AI chat app that keeps the same conversation on your phone and your computer, even when each one uses a different AI model.</p>
-      <span class="note">For Android, Windows, macOS and Linux · in private testing</span>
+      <p class="cta"><a class="button big" href="#download" id="heroDownload">Download for free</a></p>
+      <span class="note">Free for personal use · Android, Windows, macOS and Linux</span>
     </div>
+  </section>
+
+  <section class="shot">
+    <img src="hero.png" alt="Balimda on a computer and a phone" width="1600" height="900">
   </section>
 
   <section class="wrap features">
     <div class="card wide"><h3>One chat, every device, any model</h3><p>Start a chat on your PC with a big model like Qwen 27B, continue the same chat on your phone with a small offline model, and finish it back at your desk. Each reply shows which model wrote it, and each device remembers its own model for every chat.</p></div>
-    <div class="card"><h3>Every chat is saved</h3><p>Close the app whenever you like and come back to the same chat, even a half-typed message.</p></div>
+    <div class="card"><h3>Your phone, your computer's brain</h3><p>Turn on one switch and your phone can chat with every model on your computer, over your Wi-Fi or anywhere with Tailscale. Encrypted, nothing to type.</p></div>
+    <div class="card"><h3>Your Hermes Agent, in a real app</h3><p>Chat with your Hermes Agent from every device instead of WhatsApp. See each tool it runs, and allow or deny anything risky with one tap.</p></div>
     <div class="card"><h3>AI on your phone</h3><p>Run models directly on your phone, offline, using its graphics chip.</p></div>
+    <div class="card"><h3>Memory that grows with you</h3><p>Balimda learns lasting facts about you, keeps them up to date, and looks back through your earlier chats, in English and Arabic.</p></div>
     <div class="card"><h3>Your choice of models</h3><p>Models on your own computer (Ollama, LM Studio), or Claude and OpenAI with your own key.</p></div>
     <div class="card"><h3>Encrypted sync</h3><p>Sign in with Google to keep your chats the same on every device. They are encrypted on your device first, so only you can read them.</p></div>
-    <div class="card"><h3>Assistants and memory</h3><p>Personas with their own instructions, plus facts about you that every chat remembers.</p></div>
+    <div class="card"><h3>Every chat is saved</h3><p>Close the app whenever you like and come back to the same chat, even a half-typed message.</p></div>
+    <div class="card"><h3>Arabic and English</h3><p>Arabic text reads right to left, and memory and chat recall understand Arabic.</p></div>
     <div class="card"><h3>No accounts, no tracking</h3><p>Balimda has no servers and collects nothing. <a href="privacy.html">Read the privacy policy</a>.</p></div>
+  </section>
+
+  <section class="shot">
+    <img src="sync.png" alt="The same chat on a PC using Qwen 3.5 27B and on a phone using Qwen 3 4B offline" width="1600" height="900" loading="lazy">
+  </section>
+
+  <section class="wrap download" id="download">
+    <h2>Download Balimda</h2>
+    <p class="sub">Free for personal use. New versions install over the old one and keep your chats.</p>
+    <div class="platforms">
+      <a class="platform" data-os="android" href="https://github.com/bandar9994/balimda/releases/download/android-latest/Balimda-android.apk">
+        <strong>Android</strong><span>APK · open it on your phone</span></a>
+      <a class="platform" data-os="windows" href="https://github.com/bandar9994/balimda/releases/download/desktop-latest/Balimda-Windows-Setup.exe">
+        <strong>Windows</strong><span>Windows 10 and 11</span></a>
+      <a class="platform" data-os="mac" href="https://github.com/bandar9994/balimda/releases/download/desktop-latest/Balimda-macOS-AppleSilicon.dmg">
+        <strong>Mac · Apple silicon</strong><span>M1 and newer</span></a>
+      <a class="platform" data-os="mac" href="https://github.com/bandar9994/balimda/releases/download/desktop-latest/Balimda-macOS-Intel.dmg">
+        <strong>Mac · Intel</strong><span>Older Macs</span></a>
+      <a class="platform" data-os="linux" href="https://github.com/bandar9994/balimda/releases/download/desktop-latest/Balimda-Linux.AppImage">
+        <strong>Linux</strong><span>AppImage</span></a>
+      <a class="platform" data-os="linux" href="https://github.com/bandar9994/balimda/releases/download/desktop-latest/Balimda-Linux.deb">
+        <strong>Linux</strong><span>.deb (Ubuntu, Debian)</span></a>
+    </div>
+    <details class="tips">
+      <summary>Installing for the first time?</summary>
+      <ul>
+        <li><strong>Android:</strong> open the APK and allow installing apps from your browser when asked.</li>
+        <li><strong>Windows:</strong> if SmartScreen appears, choose <em>More info → Run anyway</em>.</li>
+        <li><strong>Mac:</strong> drag Balimda to Applications. The first time, right-click it and choose <em>Open</em>.</li>
+        <li>Then pick a model: download one on your phone in <em>Settings → Models &amp; providers</em>, or install <a href="https://ollama.com">Ollama</a> on your computer. The <a href="https://github.com/bandar9994/balimda/blob/main/docs/GUIDE.md">user guide</a> has everything else.</li>
+      </ul>
+    </details>
+    <p class="sub">iOS is on the way. Source and all downloads are on <a href="https://github.com/bandar9994/balimda">GitHub</a>.</p>
   </section>
 
   <section class="wrap business" id="business">
@@ -56,11 +100,28 @@
 
   <footer>
     <div class="wrap">
-      <span>© 2026 Bandar Altariqi. Balimda is licensed under the Balimda License.</span>
+      <span>© 2026 Bandar Altariqi. Balimda is licensed under the <a href="https://github.com/bandar9994/balimda/blob/main/LICENSE">Balimda License</a>.</span>
       <a href="privacy.html">Privacy policy</a>
+      <a href="https://github.com/bandar9994/balimda">GitHub</a>
       <a href="https://github.com/bandar9994">Contact</a>
       <a href="https://ko-fi.com/bandaraltariqi">Support Balimda ☕</a>
     </div>
   </footer>
+
+  <script>
+    // Put the visitor's own system first and point the main button at it.
+    (function () {
+      var ua = navigator.userAgent;
+      var os = /Android/i.test(ua) ? 'android' : /Windows/i.test(ua) ? 'windows' : /Mac OS X|Macintosh/i.test(ua) && !/iPhone|iPad/i.test(ua) ? 'mac' : /Linux/i.test(ua) ? 'linux' : null;
+      if (!os) return;
+      var list = document.querySelector('.platforms');
+      var mine = list.querySelectorAll('[data-os="' + os + '"]');
+      for (var i = mine.length - 1; i >= 0; i--) { mine[i].classList.add('yours'); list.insertBefore(mine[i], list.firstChild); }
+      var names = { android: 'Android', windows: 'Windows', mac: 'Mac', linux: 'Linux' };
+      var hero = document.getElementById('heroDownload');
+      hero.textContent = 'Download for ' + names[os];
+      if (os === 'android' || os === 'windows') hero.href = mine[0].href;
+    })();
+  </script>
 </body>
 </html>

@@ -220,6 +220,137 @@ function openaiLike({ sendSampling }) {
   };
 }
 
+// ---- Hermes Agent (Nous Research) ---------------------------------------------
+// Hermes' API server speaks OpenAI Chat Completions, plus its own SSE events:
+// `hermes.tool.progress` (a tool started or finished), `approval.request`
+// (it wants permission to run something risky) and `hermes.status`. The
+// agent runs tools on its own machine; Balimda shows what it does and passes
+// the user's approval decisions back.
+
+// Server-sent events as { event, data } (comment lines like ": keepalive" skipped).
+async function* readSse(body) {
+  let event = null;
+  let data = [];
+  for await (const line of readLines(body)) {
+    if (line === '') {
+      if (data.length) yield { event: event || 'message', data: data.join('\n') };
+      event = null;
+      data = [];
+    } else if (line.startsWith(':')) {
+      continue;
+    } else if (line.startsWith('event:')) {
+      event = line.slice(6).trim();
+    } else if (line.startsWith('data:')) {
+      data.push(line.slice(5).replace(/^ /, ''));
+    }
+  }
+  if (data.length) yield { event: event || 'message', data: data.join('\n') };
+}
+
+const hermesHeaders = (cfg) => {
+  const h = { 'Content-Type': 'application/json' };
+  if (cfg.apiKey) h.Authorization = `Bearer ${cfg.apiKey}`;
+  return h;
+};
+
+async function hermesError(res) {
+  if (res.status === 401 || res.status === 403) return new Error('Hermes didn\'t accept the API key. Use the API_SERVER_KEY from ~/.hermes/.env.');
+  return httpError(res);
+}
+
+const hermes = {
+  async listModels(cfg) {
+    const res = await fetch(`${trimSlash(cfg.baseUrl)}/models`, { headers: hermesHeaders(cfg) });
+    if (!res.ok) throw await hermesError(res);
+    const data = await res.json();
+    const ids = (data.data || []).map((m) => m.id);
+    return ids.length ? ids.sort() : ['hermes-agent'];
+  },
+
+  // onInfo receives { kind: 'tool' | 'approval' | 'status', ... } as the agent works.
+  async streamChat(cfg, req, onDelta, signal, onInfo = () => {}) {
+    const res = await fetch(`${trimSlash(cfg.baseUrl)}/chat/completions`, {
+      method: 'POST',
+      headers: hermesHeaders(cfg),
+      body: JSON.stringify({ model: req.model, messages: withSystem(req.system, req.messages), stream: true }),
+      signal
+    });
+    if (!res.ok) throw await hermesError(res);
+    let text = '';
+    let thinking = false;
+    let answered = false;
+    let stopReason = 'end_turn';
+    const out = (piece) => {
+      text += piece;
+      onDelta(piece);
+    };
+    for await (const { event, data } of readSse(res.body)) {
+      if (data === '[DONE]') break;
+      let evt;
+      try {
+        evt = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event === 'hermes.tool.progress') {
+        onInfo({ kind: 'tool', id: evt.toolCallId, tool: evt.tool, emoji: evt.emoji || '', label: evt.label || evt.tool, status: evt.status });
+        continue;
+      }
+      if (event === 'approval.request') {
+        onInfo({
+          kind: 'approval',
+          runId: evt.run_id,
+          approvalId: evt.request_id || null,
+          command: evt.command || '',
+          description: evt.description || '',
+          choices: Array.isArray(evt.choices) && evt.choices.length ? evt.choices : ['once', 'deny']
+        });
+        continue;
+      }
+      if (event === 'hermes.status') {
+        if (evt.text) onInfo({ kind: 'status', text: String(evt.text) });
+        continue;
+      }
+      if (event !== 'message') continue;
+      if (evt.error) throw new Error(evt.error.message || JSON.stringify(evt.error));
+      const choice = evt.choices && evt.choices[0];
+      const delta = (choice && choice.delta) || {};
+      // Reasoning goes in a <think> block, like other thinking models.
+      if (delta.reasoning_content && !answered) {
+        if (!thinking) out('<think>');
+        thinking = true;
+        out(delta.reasoning_content);
+      }
+      if (delta.content) {
+        if (thinking) out('</think>\n\n');
+        thinking = false;
+        answered = true;
+        out(delta.content);
+      }
+      if (choice && choice.finish_reason) {
+        if (choice.finish_reason === 'length') stopReason = 'max_tokens';
+        else if (choice.finish_reason !== 'stop') stopReason = choice.finish_reason;
+      }
+    }
+    if (thinking) out('</think>');
+    if (stopReason !== 'end_turn' && stopReason !== 'max_tokens' && !answered) {
+      throw new Error(`Hermes stopped before answering (${stopReason}). Check the Hermes gateway's log for details.`);
+    }
+    return { text, stopReason };
+  },
+
+  // choice: 'once' | 'session' | 'always' | 'deny'
+  async approve(cfg, { runId, choice, approvalId }) {
+    const res = await fetch(`${trimSlash(cfg.baseUrl)}/runs/${encodeURIComponent(runId)}/approval`, {
+      method: 'POST',
+      headers: hermesHeaders(cfg),
+      body: JSON.stringify(approvalId ? { choice, request_id: approvalId } : { choice })
+    });
+    if (!res.ok) throw await hermesError(res);
+    return true;
+  }
+};
+
 // ---- Anthropic (Claude) ----------------------------------------------------
 
 const anthropic = {
@@ -277,6 +408,7 @@ const anthropic = {
 const PROVIDERS = {
   ollama: { label: 'Ollama (local)', impl: ollama },
   openaiCompatible: { label: 'LM Studio / OpenAI-compatible (local)', impl: openaiLike({ sendSampling: true }) },
+  hermes: { label: 'Hermes Agent', impl: hermes },
   anthropic: { label: 'Anthropic Claude', impl: anthropic },
   openai: { label: 'OpenAI', impl: openaiLike({ sendSampling: false }) }
 };
@@ -297,4 +429,4 @@ function normalizeMessages(messages) {
   return out;
 }
 
-module.exports = { PROVIDERS, normalizeMessages, ANTHROPIC_DEFAULT_MODELS, readLines };
+module.exports = { PROVIDERS, normalizeMessages, ANTHROPIC_DEFAULT_MODELS, readLines, readSse };
