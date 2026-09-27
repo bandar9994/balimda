@@ -1681,13 +1681,13 @@ function openSettings(tab = 'general') {
           check('Enabled', p, 'enabled'),
           shared ? h('div', { class: 'help', text: shared.length ? `Sharing: ${shared.join(', ')}` : 'No computer is sharing its models yet.' }) : null,
           'baseUrl' in p ? field('Server URL', bind(h('input', { class: 'input', value: p.baseUrl }), p, 'baseUrl')) : null,
-          id === 'hermes' ? h('label', { class: 'check' },
-            bind(h('input', { type: 'checkbox', checked: !!p.shareMemory }), p, 'shareMemory'),
-            'Also give Hermes my Balimda memory and earlier chats (Hermes has its own memory, so this is off by default)') : null,
           id === 'ollama' ? h('label', { class: 'check' },
             bind(h('input', { type: 'checkbox', checked: p.think !== false }), p, 'think'),
             'Let thinking models think first (better answers; turn off for faster replies)') : null,
           'apiKey' in p ? field('API key', bind(h('input', { class: 'input', type: 'password', value: p.apiKey, placeholder: id === 'openaiCompatible' ? 'Optional' : 'Paste your key' }), p, 'apiKey', (v) => v.trim())) : null,
+          id === 'hermes' ? h('label', { class: 'check' },
+            bind(h('input', { type: 'checkbox', checked: !!p.shareMemory }), p, 'shareMemory'),
+            'Also give Hermes my Balimda memory and earlier chats (Hermes has its own memory, so this is off by default)') : null,
           h('div', { class: 'help', text: help[id] || '' }),
           h('div', { style: 'margin-top:8px' }, test)));
       }
