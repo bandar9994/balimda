@@ -101,6 +101,7 @@ const AUTHOR = 'Bandar Altariqi';
 const PROJECT_URL = 'https://github.com/bandar9994/balimda';
 const COPYRIGHT = `© 2026 ${AUTHOR}. All rights reserved.`;
 const COMMERCIAL_URL = `${PROJECT_URL}/issues/new?template=commercial-license.yml`;
+const SUPPORT_URL = 'https://ko-fi.com/bandaraltariqi';
 
 function appName() {
   return (S.info && S.info.appName) || 'Balimda';
@@ -1687,6 +1688,9 @@ function openSettings(tab = 'general') {
         h('p', { class: 'about-by' }, 'Created by ', h('strong', { text: AUTHOR })),
         h('p', { class: 'help', text: COPYRIGHT }),
         h('p', { text: 'Balimda is a private AI chat app that remembers every chat. It runs models on your device, on your own computer, or in the cloud. Your chats stay on your device.' }),
+        field('Support Balimda', h('div', {},
+          h('p', { class: 'help', text: 'Balimda is made by one person, with no ads, no tracking and no subscriptions. If it helps you, you can support its development.' }),
+          h('a', { class: 'btn primary', href: SUPPORT_URL, target: '_blank', rel: 'noopener', text: '☕ Support on Ko-fi' }))),
         field('License', h('div', {},
           h('p', { class: 'help', text: 'Free for personal, non-commercial use under the Balimda License. You may share or change it only if it keeps the Balimda name and the "Balimda by Bandar Altariqi" credit. It may not be rebranded. Use by or for a company or organisation, or any commercial use, needs a commercial license from Bandar Altariqi.' }),
           h('p', { class: 'help' }, h('a', { href: COMMERCIAL_URL, target: '_blank', rel: 'noopener', text: 'Request a commercial license for your company' })),

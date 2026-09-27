@@ -317,6 +317,7 @@ details.thinking summary { cursor: pointer; }
   padding: 7px 14px;
   cursor: pointer;
 }
+a.btn { display: inline-block; text-decoration: none; color: inherit; }
 .btn:hover { background: var(--bg-hover); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .btn.primary:hover { filter: brightness(1.08); }
