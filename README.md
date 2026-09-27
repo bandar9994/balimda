@@ -15,6 +15,7 @@ and finish it back at your desk. Your chats, memory and assistants stay in sync,
 [![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](#download)
 [![Works offline](https://img.shields.io/badge/works-offline-5b5bd6)](#run-ai-anywhere)
 [![Free for personal use](https://img.shields.io/badge/free-for%20personal%20use-5b5bd6)](#license)
+[![Works with Hermes Agent](https://img.shields.io/badge/works%20with-Hermes%20Agent-5b5bd6)](#your-hermes-agent-in-a-real-app)
 [![Business license available](https://img.shields.io/badge/business%20license-available-2b2a6e)](#for-businesses)
 [![Support on Ko-fi](https://img.shields.io/badge/support-Ko--fi-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/bandaraltariqi)
 
@@ -47,6 +48,21 @@ Balimda keeps **the same conversation** on your phone and your computers, even w
 - **The whole conversation goes along**, so a small phone model picks up right where the big model left off.
 - **Nothing is lost.** Messages added on two devices before they synced are merged, and deleting a chat deletes it everywhere.
 - **Memory and assistants follow you too**, so every device knows you just as well.
+
+## Your Hermes Agent, in a real app
+
+Use [Hermes Agent](https://github.com/NousResearch/hermes-agent) from your phone and computers, with a proper chat app instead of WhatsApp or Telegram.
+
+<div align="center">
+<img src="docs/images/hermes.png" alt="Hermes Agent asking for permission in Balimda on a computer, and the finished task on a phone" width="100%">
+</div>
+
+- **Watch it work.** Every tool Hermes runs shows up as it happens, then folds into "Used 4 tools".
+- **You stay in control.** When Hermes wants to do something risky, you see the exact command and choose **Allow once**, **Allow for this chat**, **Always allow** or **Deny**. Nothing is approved automatically.
+- **On your phone too.** Your phone reaches Hermes through your computer, approvals included, so Hermes never has to be opened to the network.
+- **Your chats, kept and synced.** Hermes conversations are saved, searchable and synced like any other chat. Hermes keeps its own memory, so Balimda's isn't sent unless you turn that on.
+
+Setup takes two minutes: see [Using Hermes Agent](docs/GUIDE.md#using-hermes-agent).
 
 ## Why Balimda?
 
