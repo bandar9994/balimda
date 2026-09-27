@@ -6,8 +6,8 @@
 
 ### Your private AI, on every device you own.
 
-Chat with AI that runs on your own phone and computer, remembers what matters to you,<br>
-and follows you from your desk to your pocket, encrypted end to end.
+Start a chat on your computer with a big model, continue the <b>same chat</b> on your phone with a small one,<br>
+and finish it back at your desk. Your chats, memory and assistants stay in sync, encrypted end to end.
 
 [![Android](https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white)](#download)
 [![Windows](https://img.shields.io/badge/Windows-0078D4?logo=windows&logoColor=white)](#download)
@@ -26,6 +26,26 @@ and follows you from your desk to your pocket, encrypted end to end.
 </div>
 
 <br>
+
+## One chat. Every device. Any model.
+
+Balimda keeps **the same conversation** on your phone and your computers, even when each device uses a different AI model. Nothing to copy, export or switch: open the chat on any device and keep going.
+
+<div align="center">
+<img src="docs/images/sync.png" alt="The same chat on a PC, using Qwen 3.5 27B, and on a phone, using Qwen 3 4B offline" width="100%">
+</div>
+
+| | Where you are | What happens |
+|---|---|---|
+| 💻 | **At your desk** | You start a chat with a large model on your PC, like Qwen 3.5 27B in Ollama. |
+| 📱 | **On the go** | You open Balimda on your phone. The whole chat is already there, and the phone carries on with its own offline model, or with your PC's model over Wi-Fi or Tailscale. |
+| 💻 | **Back home** | The PC shows everything you said on the phone and answers with the big model again. |
+
+- **Every reply shows which model wrote it**, so you always know what answered.
+- **Each device remembers its own model for each chat.** Your phone uses its model and your PC uses its own, automatically, with no switching.
+- **The whole conversation goes along**, so a small phone model picks up right where the big model left off.
+- **Nothing is lost.** Messages added on two devices before they synced are merged, and deleting a chat deletes it everywhere.
+- **Memory and assistants follow you too**, so every device knows you just as well.
 
 ## Why Balimda?
 
@@ -48,7 +68,7 @@ Balimda learns lasting facts about you as you chat, keeps them up to date, and l
 <td width="33%" valign="top">
 
 ### 📱💻 One conversation, every device
-Start a chat at your desk and finish it on your phone. Your phone can even use your computer's big models, so a small device gets a big brain.
+The same chat continues on your phone and your computer, even with a different model on each. Your phone can also use your computer's big models, so a small device gets a big brain.
 
 </td>
 </tr>
@@ -81,6 +101,7 @@ Start a chat at your desk and finish it on your phone. Your phone can even use y
 
 ### Seamless, encrypted sync
 
+- **Continue any chat on any device**, even when each device uses a different model. See [One chat. Every device. Any model.](#one-chat-every-device-any-model)
 - **Sign in with Google** and your chats, assistants and memory follow you between your phone and computers. Balimda uses a hidden app folder in your Drive and can't see your other files. Developers can use a private GitHub repository instead.
 - **End-to-end encrypted.** Everything is encrypted on your device with AES-256-GCM, using a key made from your own passphrase, before it's uploaded. Google or GitHub only ever see scrambled data.
 - **Nothing gets lost.** If the same chat or your memory changed on two devices before they synced, the changes are merged. Delete a chat once and it's gone everywhere.
