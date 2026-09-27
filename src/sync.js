@@ -611,11 +611,20 @@ const msgKey = (m) => m.id || `${m.role}|${m.createdAt}|${String(m.content || ''
 
 // The same chat changed on two devices before they synced: keep the newer
 // version and add any messages only the other one has, so nothing is lost.
+// How finished a copy of a message is: a reply still being written (or cut
+// off) on one device mustn't replace the finished reply from the other.
+const doneness = (m) => (m.pending ? 0 : !m.content && m.error ? 1 : 2);
+
 function mergeChats(a, b) {
   const [newer, older] = (a.modifiedAt || 0) >= (b.modifiedAt || 0) ? [a, b] : [b, a];
   const seen = new Set(newer.messages.map(msgKey));
   const extra = older.messages.filter((m) => !seen.has(msgKey(m)));
   const merged = structuredClone(newer);
+  const olderById = new Map(older.messages.filter((m) => m.id).map((m) => [m.id, m]));
+  merged.messages = merged.messages.map((m) => {
+    const other = m.id && olderById.get(m.id);
+    return other && doneness(other) > doneness(m) ? structuredClone(other) : m;
+  });
   if (extra.length) {
     merged.messages = [...merged.messages, ...structuredClone(extra)]
       .map((m, i) => [m, i])
@@ -935,13 +944,15 @@ class Sync {
 
     const changed = [];
     const deleted = [];
+    const skipped = []; // changed on this device while being downloaded: merged next run
     await pool(pulls, 6, async (id) => {
       const chat = await fetchChat(id);
       if (!chat) return;
       chat.modifiedAt = remoteIdx.chats[id].m;
       chat.rev = remoteIdx.chats[id].r || `m${chat.modifiedAt}`;
-      await storage.putSyncedChat(chat);
-      changed.push(id);
+      const l = local.get(id);
+      if (await storage.putSyncedChat(chat, { expect: l ? l.rev : null })) changed.push(id);
+      else skipped.push(id);
     });
     await pool(merges, 6, async (id) => {
       const theirs = await fetchChat(id);
@@ -955,7 +966,10 @@ class Sync {
       const merged = mergeChats(mine, theirs);
       merged.modifiedAt = Math.max(Date.now(), mine.modifiedAt + 1, theirs.modifiedAt + 1);
       merged.rev = globalThis.crypto.randomUUID();
-      await storage.putSyncedChat(merged);
+      if (!(await storage.putSyncedChat(merged, { expect: mine.rev || `m${mine.modifiedAt || mine.updatedAt || 1}` }))) {
+        skipped.push(id);
+        return;
+      }
       changed.push(id);
       pushes.push(id);
     });
@@ -1039,9 +1053,16 @@ class Sync {
       this.lastPush = Date.now();
     }
 
-    // Everything on this device now matches the synced copy.
+    // What is now in the synced copy. A chat saved on this device while this
+    // run was going differs from it, so the next run uploads it (or merges
+    // it); taking the local versions here would mark that change as synced
+    // and let the next run download the older copy over it.
     const nextBase = {};
-    for (const c of storage.index) nextBase[c.id] = c.rev;
+    for (const [id, e] of Object.entries(next.chats)) if (!e.d) nextBase[id] = e.r || `m${e.m}`;
+    for (const id of skipped) {
+      if (base[id] != null) nextBase[id] = base[id];
+      else delete nextBase[id];
+    }
     this.state = {
       ...this.state,
       head: newHead,

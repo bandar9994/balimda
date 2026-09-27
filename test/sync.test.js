@@ -448,6 +448,77 @@ for (const [kind, makeBackend] of Object.entries(BACKENDS)) {
     assert.strictEqual((await phone.storage.getSettings()).computers.desk?.name, 'Desk');
   });
 
+  test(`${kind}: a reply that finishes while its chat is uploading is not lost`, async () => {
+    const backend = makeBackend();
+    const phone = await device(backend, 'phone');
+    const chat = await phone.storage.createChat({ title: 'Ticket' });
+    await phone.connect();
+
+    // The question and an empty reply that is still being written.
+    const reply = { id: crypto.randomUUID(), role: 'assistant', content: '', createdAt: Date.now(), pending: true };
+    const c1 = await phone.storage.getChat(chat.id);
+    c1.messages.push({ id: crypto.randomUUID(), role: 'user', content: 'Cheapest ticket?', createdAt: Date.now() - 1 }, reply);
+    await phone.storage.saveChat(c1);
+
+    // The reply finishes while sync is uploading the half-written chat.
+    const remote = phone.sync.remote;
+    const save = remote.save.bind(remote);
+    let finished = false;
+    remote.save = async (...args) => {
+      if (!finished) {
+        finished = true;
+        const c2 = await phone.storage.getChat(chat.id);
+        Object.assign(c2.messages[1], { content: 'Book early.', pending: false });
+        await phone.storage.saveChat(c2);
+      }
+      return save(...args);
+    };
+    await phone.sync.run();
+    await phone.sync.run();
+    await phone.sync.run();
+    assert.deepStrictEqual(await contents(phone.storage, chat.id), ['Cheapest ticket?', 'Book early.']);
+    assert.strictEqual((await phone.storage.getChat(chat.id)).messages[1].pending, false);
+
+    const pc = await device(backend, 'pc');
+    await pc.connect();
+    assert.deepStrictEqual(await contents(pc.storage, chat.id), ['Cheapest ticket?', 'Book early.']);
+  });
+
+  test(`${kind}: a message saved while sync downloads the same chat is kept`, async () => {
+    const backend = makeBackend();
+    const pc = await device(backend, 'pc');
+    const chat = await pc.storage.createChat({ title: 'Plans' });
+    await pc.connect();
+    const phone = await device(backend, 'phone');
+    await phone.connect();
+
+    await addMessage(pc.storage, chat.id, 'from pc', 1000);
+    await pc.sync.run();
+
+    // While the phone is downloading the PC's version, it saves its own message.
+    const remote = phone.sync.remote;
+    const load = remote.load.bind(remote);
+    let saved = false;
+    remote.load = async (...args) => {
+      const snap = await load(...args);
+      const readChat = snap.readChat.bind(snap);
+      snap.readChat = async (id) => {
+        const text = await readChat(id);
+        if (!saved && id === chat.id) {
+          saved = true;
+          await addMessage(phone.storage, chat.id, 'from phone', 2000);
+        }
+        return text;
+      };
+      return snap;
+    };
+    await phone.sync.run();
+    await phone.sync.run();
+    await pc.sync.run();
+    assert.deepStrictEqual(await contents(phone.storage, chat.id), ['from pc', 'from phone']);
+    assert.deepStrictEqual(await contents(pc.storage, chat.id), ['from pc', 'from phone']);
+  });
+
   test(`${kind}: refuses a wrong passphrase`, async () => {
     const backend = makeBackend();
     const pc = await device(backend, 'pc');
@@ -547,6 +618,19 @@ test('mergeChats keeps every message once, in time order', () => {
   const a = { modifiedAt: 2, updatedAt: 2, messages: [{ id: '1', createdAt: 1 }, { id: '3', createdAt: 3 }] };
   const b = { modifiedAt: 1, updatedAt: 1, messages: [{ id: '1', createdAt: 1 }, { id: '2', createdAt: 2 }] };
   assert.deepStrictEqual(mergeChats(a, b).messages.map((m) => m.id), ['1', '2', '3']);
+});
+
+test('mergeChats keeps a finished reply over a newer half-written copy of it', () => {
+  const q = { id: 'q', role: 'user', content: 'Cheapest ticket?', createdAt: 1 };
+  const done = { id: 'r', role: 'assistant', content: 'Book early.', createdAt: 2 };
+  const phone = { modifiedAt: 10, messages: [q, done] };
+  const pc = { modifiedAt: 20, messages: [q, { id: 'r', role: 'assistant', content: '', createdAt: 2, error: 'This reply was interrupted.' }] };
+  assert.deepStrictEqual(mergeChats(phone, pc).messages.map((m) => m.content), ['Cheapest ticket?', 'Book early.']);
+  const pending = { modifiedAt: 30, messages: [q, { ...done, content: '', pending: true }] };
+  assert.strictEqual(mergeChats(phone, pending).messages[1].content, 'Book early.');
+  // An edit of a finished message still goes to the newer copy.
+  const edited = { modifiedAt: 40, messages: [q, { ...done, content: 'Book 3 months early.' }] };
+  assert.strictEqual(mergeChats(phone, edited).messages[1].content, 'Book 3 months early.');
 });
 
 test('mergeMemory keeps additions and applies removals from both sides', () => {
