@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('balimda', {
     models: invoke('ai:models'),
     chat: invoke('ai:chat'),
     abort: invoke('ai:abort'),
+    approve: invoke('ai:approve'),
     onEvent(cb) {
       const listener = (_e, evt) => cb(evt);
       ipcRenderer.on('ai:event', listener);

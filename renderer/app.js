@@ -376,7 +376,12 @@ function ensureDefaultModel() {
 // A phone and a computer rarely have the same models, so each chat remembers
 // the model to use on each device (chat.models, keyed by this device's id).
 // chat.model is the model of the latest reply, from whichever device.
-const LOCAL_PROVIDERS = new Set(['ollama', 'openaiCompatible', 'onDevice', 'computer']);
+const LOCAL_PROVIDERS = new Set(['ollama', 'openaiCompatible', 'onDevice', 'computer', 'hermes']);
+
+// Hermes Agent, used directly or through the computer the phone is using.
+// It keeps its own memory and runs tools, so it's treated differently.
+const isAgent = (m) => !!m && (m.provider === 'hermes' || (m.provider === 'computer' && /, Hermes Agent\)$/.test(m.model || '')));
+const shareMemoryWith = (m) => !isAgent(m) || !!(S.settings.providers.hermes && S.settings.providers.hermes.shareMemory);
 
 const sameModel = (a, b) => !!a && !!b && a.provider === b.provider && a.model === b.model;
 
@@ -670,6 +675,8 @@ function fillContent(container, msg) {
     return;
   }
   const { thinking, done, answer } = splitThinking(msg.content);
+  const agentBlock = agentSteps(msg);
+  if (agentBlock) container.append(agentBlock);
   if (thinking != null) {
     const words = thinking ? thinking.split(/\s+/).length : 0;
     const details = h('details', { class: 'thinking' },
@@ -686,12 +693,93 @@ function fillContent(container, msg) {
   const body = renderMarkdown(answer);
   if (msg.pending) body.classList.add('typing');
   container.append(...body.childNodes.length ? [body] : []);
-  if (msg.pending && !answer && thinking == null) {
+  if (msg.pending && !answer && thinking == null && !(msg.tools && msg.tools.length)) {
     container.append(h('span', { class: 'typing' }));
     if (msg.waiting && msg.model) {
       container.append(h('div', { class: 'waiting', text: `Waiting for ${displayModel(msg.model.model)} to start. Large models can take a minute to load the first time.` }));
     }
   }
+}
+
+// ---- Hermes Agent: live tool steps and approvals ------------------------------
+
+const APPROVAL_LABELS = { once: 'Allow once', session: 'Allow for this chat', always: 'Always allow', deny: 'Deny' };
+const APPROVAL_DONE = { once: 'Allowed once', session: 'Allowed for this chat', always: 'Always allowed', deny: 'Denied', expired: 'Not answered in time' };
+
+function agentEvent(chat, msg, evt) {
+  if (evt.kind === 'tool') {
+    msg.tools = msg.tools || [];
+    const known = evt.id && msg.tools.find((t) => t.id === evt.id);
+    if (known) known.status = evt.status || known.status;
+    else if (evt.status !== 'completed') msg.tools.push({ id: evt.id || uid(), emoji: evt.emoji || '', label: String(evt.label || evt.tool || 'tool').slice(0, 200), status: evt.status || 'running' });
+  } else if (evt.kind === 'approval') {
+    msg.approvals = msg.approvals || [];
+    msg.approvals.push({ runId: evt.runId, approvalId: evt.approvalId || null, command: String(evt.command || '').slice(0, 2000), description: String(evt.description || '').slice(0, 500), choices: evt.choices, state: 'pending' });
+    if (S.current !== chat || document.hidden) toast('Hermes is asking for permission. Open the chat to answer.', 5000);
+  } else if (evt.kind === 'status') {
+    msg.agentStatus = String(evt.text).slice(0, 200);
+  }
+  scheduleMessageRender(chat, msg);
+  saveChatSoon(chat, S.info.mobile ? 5000 : 1500);
+}
+
+async function answerApproval(chat, msg, approval, choice) {
+  approval.state = 'sending';
+  scheduleMessageRender(chat, msg);
+  try {
+    await api.ai.approve(msg.model.provider, msg.model.model, { runId: approval.runId, choice, approvalId: approval.approvalId });
+    approval.state = choice;
+  } catch (err) {
+    approval.state = 'pending';
+    toast(`Couldn't send your answer: ${errorText(err)}`, 5000);
+  }
+  scheduleMessageRender(chat, msg);
+  saveChatSoon(chat, 500);
+}
+
+// What the agent did (tools) and what it asked (approvals), above its answer.
+function agentSteps(msg) {
+  const tools = msg.tools || [];
+  const approvals = msg.approvals || [];
+  if (!tools.length && !approvals.length && !msg.agentStatus) return null;
+  const chat = [...S.cache.values()].find((c) => c.messages.includes(msg)) || S.current;
+  const wrap = h('div', { class: 'agent' });
+  const toolLine = (t) => h('div', { class: `agent-step ${t.status}` },
+    h('span', { class: 'agent-icon', text: t.emoji || '🔧' }),
+    h('span', { class: 'agent-label', text: t.label }),
+    h('span', { class: 'agent-state', text: t.status === 'running' ? 'working…' : t.status === 'stopped' ? 'stopped' : '✓' }));
+  if (tools.length) {
+    if (msg.pending) {
+      // While working, show the latest steps.
+      if (tools.length > 5) wrap.append(h('div', { class: 'agent-more', text: `${tools.length - 5} earlier steps` }));
+      wrap.append(...tools.slice(-5).map(toolLine));
+    } else {
+      wrap.append(h('details', { class: 'agent-done' },
+        h('summary', { text: `Used ${tools.length} tool${tools.length === 1 ? '' : 's'}` }),
+        ...tools.map(toolLine)));
+    }
+  }
+  for (const a of approvals) {
+    if (a.state === 'pending' || a.state === 'sending') {
+      wrap.append(h('div', { class: 'approval' },
+        h('div', { class: 'approval-title', text: 'Hermes is asking for permission' }),
+        a.description ? h('div', { class: 'approval-why', text: a.description }) : null,
+        a.command ? h('pre', { class: 'approval-command', dir: 'ltr', text: a.command }) : null,
+        h('div', { class: 'approval-buttons' },
+          ...a.choices.filter((c) => APPROVAL_LABELS[c]).map((c) => h('button', {
+            class: `btn ${c === 'deny' ? 'danger' : c === 'once' ? 'primary' : ''}`,
+            text: APPROVAL_LABELS[c],
+            disabled: a.state === 'sending',
+            onclick: () => answerApproval(chat, msg, a, c)
+          })))));
+    } else {
+      wrap.append(h('div', { class: `approval-done ${a.state === 'deny' ? 'denied' : ''}` },
+        `${a.state === 'deny' ? '✗' : a.state === 'expired' ? '·' : '✓'} ${APPROVAL_DONE[a.state] || a.state}`,
+        a.command ? h('code', { text: a.command.length > 80 ? `${a.command.slice(0, 80)}…` : a.command }) : null));
+    }
+  }
+  if (msg.pending && msg.agentStatus) wrap.append(h('div', { class: 'agent-status', text: msg.agentStatus }));
+  return wrap;
 }
 
 function nearBottom() {
@@ -877,7 +965,10 @@ function addToMemory(lines) {
 // models, which would slow the phone down).
 function backgroundModel(preferred) {
   const candidates = [preferred, S.current && chatModel(S.current), S.settings.defaultModel];
-  return candidates.find((m) => modelAvailable(m) && m.provider !== 'onDevice') || null;
+  const usable = (m) => modelAvailable(m) && m.provider !== 'onDevice' && !isAgent(m);
+  // Chats with an agent: fall back to a local model (never a paid cloud one).
+  const local = allModels().filter((m) => ['ollama', 'openaiCompatible', 'computer'].includes(m.provider));
+  return candidates.find(usable) || local.find(usable) || null;
 }
 
 async function askModel(model, prompt) {
@@ -1009,12 +1100,12 @@ async function recallFor(chat, model) {
   return Promise.race([search, new Promise((r) => setTimeout(() => r([]), 1500))]);
 }
 
-function buildSystemPrompt(chat, recalled = []) {
+function buildSystemPrompt(chat, recalled = [], model = null) {
   const parts = [];
   const assistant = getAssistant(chat.assistantId);
   if (assistant.systemPrompt) parts.push(assistant.systemPrompt.trim());
   if (chat.systemPrompt) parts.push(chat.systemPrompt.trim());
-  if (S.settings.memoryEnabled && S.settings.memory.trim()) {
+  if (S.settings.memoryEnabled && S.settings.memory.trim() && shareMemoryWith(model)) {
     parts.push(`Things to remember about the user (from previous sessions):\n${S.settings.memory.trim()}`);
   }
   if (recalled.length) {
@@ -1085,12 +1176,12 @@ async function runCompletion(chat) {
   }
   await saveChatNow(chat);
 
-  const recalled = await recallFor(chat, model);
+  const recalled = shareMemoryWith(model) ? await recallFor(chat, model) : [];
   if (recalled.length) {
     msg.recalled = [...new Map(recalled.map((r) => [r.chatId, { chatId: r.chatId, title: r.title }])).values()];
     scheduleMessageRender(chat, msg);
   }
-  const system = buildSystemPrompt(chat, recalled);
+  const system = buildSystemPrompt(chat, recalled, model);
 
   const requestId = uid();
   S.requests.set(requestId, { chat, msg });
@@ -1117,6 +1208,9 @@ async function runCompletion(chat) {
   S.requests.delete(requestId);
   clearTimeout(waitTimer);
   msg.pending = false;
+  for (const a of msg.approvals || []) if (a.state === 'pending' || a.state === 'sending') a.state = 'expired';
+  for (const t of msg.tools || []) if (t.status === 'running') t.status = res.ok && !res.aborted ? 'completed' : 'stopped';
+  delete msg.agentStatus;
   delete msg.runningOn;
   delete msg.waiting;
   if (!res.ok) msg.error = `Error: ${res.error}`;
@@ -1133,24 +1227,26 @@ async function runCompletion(chat) {
 
   // Learn lasting facts from what the user just said. Skipped for on-device
   // phone models, where a second run after every reply would slow the phone.
-  if (res.ok && !res.aborted && S.settings.memoryEnabled && S.settings.autoMemory && model.provider !== 'onDevice') {
+  if (res.ok && !res.aborted && S.settings.memoryEnabled && S.settings.autoMemory && model.provider !== 'onDevice' && !isAgent(model)) {
     const userMsg = [...chat.messages].reverse().find((m) => m.role === 'user');
     if (userMsg) autoRemember(chat, userMsg, model).catch(() => {});
   }
 
   if (res.ok && !res.aborted && chat.titleAuto && S.settings.autoTitle && model.provider !== 'onDevice' && chat.messages.filter((m) => m.role === 'assistant').length === 1) {
-    generateTitle(chat);
+    // An agent would run a whole agent turn just to name the chat; use another model if there is one.
+    const titler = isAgent(model) ? backgroundModel(null) : model;
+    if (titler) generateTitle(chat, titler);
   }
 }
 
-async function generateTitle(chat) {
+async function generateTitle(chat, model = chat.model) {
   const first = chat.messages.find((m) => m.role === 'user');
   const provisional = chat.title;
   if (!first) return;
   const res = await api.ai.chat({
     requestId: uid(),
-    provider: chat.model.provider,
-    model: chat.model.model,
+    provider: model.provider,
+    model: model.model,
     system: '',
     messages: [{
       role: 'user',
@@ -1541,6 +1637,9 @@ function openSettings(tab = 'general') {
         ollama: 'Runs models on your own computer, offline. Install from ollama.com, then run e.g. "ollama pull llama3.2".',
         openaiCompatible: 'LM Studio, llama.cpp server, Jan, vLLM or any OpenAI-compatible server. LM Studio default: http://127.0.0.1:1234/v1'
       };
+      help.hermes = S.info.mobile
+        ? 'Chat with your Hermes Agent. Easiest: set up Hermes in Balimda on your computer and pick "hermes-agent" under "On your computer" here, so Hermes stays private on the computer. To connect this phone directly instead, in ~/.hermes/.env set API_SERVER_ENABLED=true, API_SERVER_KEY, API_SERVER_HOST=0.0.0.0 and API_SERVER_CORS_ORIGINS=https://localhost, run "hermes gateway", then enter http://<computer IP>:8642/v1 and the key here.'
+        : 'Chat with your Hermes Agent (Nous Research). In ~/.hermes/.env set API_SERVER_ENABLED=true and API_SERVER_KEY=<a long secret>, run "hermes gateway", then enter the key here. Hermes runs its tools on its own machine; Balimda shows each step and asks you before anything risky. Your phone can use it too through "Let my phone use this computer\'s models".';
       Object.assign(help, {
         computer: 'Chat with the models on your computer (Ollama, LM Studio, and Claude or OpenAI with the computer\'s API keys) while the computer does the work. In Balimda on the computer, turn on "Let my phone use this computer\'s models" in Settings → Models & providers. Both need sync set up with the same passphrase; that\'s how they find each other and keep the connection private. Works on the same Wi-Fi, or anywhere when both are on Tailscale.',
         anthropic: 'Claude models. Create an API key at console.anthropic.com.',
@@ -1582,6 +1681,9 @@ function openSettings(tab = 'general') {
           check('Enabled', p, 'enabled'),
           shared ? h('div', { class: 'help', text: shared.length ? `Sharing: ${shared.join(', ')}` : 'No computer is sharing its models yet.' }) : null,
           'baseUrl' in p ? field('Server URL', bind(h('input', { class: 'input', value: p.baseUrl }), p, 'baseUrl')) : null,
+          id === 'hermes' ? h('label', { class: 'check' },
+            bind(h('input', { type: 'checkbox', checked: !!p.shareMemory }), p, 'shareMemory'),
+            'Also give Hermes my Balimda memory and earlier chats (Hermes has its own memory, so this is off by default)') : null,
           id === 'ollama' ? h('label', { class: 'check' },
             bind(h('input', { type: 'checkbox', checked: p.think !== false }), p, 'think'),
             'Let thinking models think first (better answers; turn off for faster replies)') : null,
@@ -2026,6 +2128,10 @@ function bindEvents() {
   api.ai.onEvent((evt) => {
     const r = S.requests.get(evt.requestId);
     if (!r) return;
+    if (evt.type === 'info' && evt.kind) {
+      agentEvent(r.chat, r.msg, evt);
+      return;
+    }
     if (evt.type === 'info' && evt.device) {
       // Show GPU/CPU as soon as the model is ready, not only at the end.
       r.msg.runningOn = evt.device;

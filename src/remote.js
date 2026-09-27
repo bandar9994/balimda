@@ -192,7 +192,7 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
     return out.sort();
   }
 
-  async function streamChat(_cfg, req, onDelta, signal) {
+  async function streamChat(_cfg, req, onDelta, signal, onInfo = () => {}) {
     if (!models.has(req.model)) await listModels().catch(() => {});
     const target = models.get(req.model);
     if (!target) throw new RemoteError(`${req.model} isn't available right now. Check that the computer is on with Balimda open.`);
@@ -203,6 +203,10 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
     }, {
       signal,
       onEvent: (evt) => {
+        if (evt.t === 'info') {
+          onInfo(evt.info);
+          return;
+        }
         if (evt.t !== 'delta') return;
         started = true;
         onDelta(evt.text);
@@ -223,7 +227,16 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
     return result;
   }
 
-  return { listModels, streamChat, locate, call };
+  // Pass the user's answer to an agent's request for permission back to the
+  // computer that is running the agent.
+  async function approve(modelName, payload) {
+    if (!models.has(modelName)) await listModels().catch(() => {});
+    const target = models.get(modelName);
+    if (!target) throw new RemoteError(`${modelName} isn't available right now.`);
+    return call(await locate(target.computer), 'approve', { provider: target.provider, payload }, { timeoutMs: 15000 });
+  }
+
+  return { listModels, streamChat, approve, locate, call };
 }
 
 module.exports = { PORT, PATH, MAX_SKEW_MS, RemoteError, linkKey, lock, unlock, lines, remoteComputers, modelName };

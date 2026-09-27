@@ -69,7 +69,8 @@ const MOBILE_DEFAULTS = {
     onDevice: { enabled: true, contextSize: 4096, useGpu: false, nativeGpu: true },
     computer: { enabled: true },
     ollama: { enabled: false, baseUrl: 'http://192.168.1.10:11434' },
-    openaiCompatible: { enabled: false, baseUrl: 'http://192.168.1.10:1234/v1', apiKey: '' }
+    openaiCompatible: { enabled: false, baseUrl: 'http://192.168.1.10:1234/v1', apiKey: '' },
+    hermes: { enabled: false, baseUrl: 'http://192.168.1.10:8642/v1', apiKey: '', shareMemory: false }
   }
 };
 
@@ -316,6 +317,15 @@ window.balimda = {
       } finally {
         active.delete(req.requestId);
       }
+    },
+    // Answer an agent's request for permission (Hermes Agent), directly or
+    // through the computer the phone is using.
+    async approve(providerId, model, payload) {
+      if (providerId === 'computer') return computers.approve(model, payload);
+      const provider = providers[providerId];
+      if (!provider || !provider.impl.approve) throw new Error('This model can\'t take approvals.');
+      const cfg = (await (await ready).getSettings()).providers[providerId] || {};
+      return provider.impl.approve(cfg, payload);
     },
     async abort(requestId) {
       const c = active.get(requestId);

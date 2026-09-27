@@ -128,6 +128,25 @@ How it works:
 
 Google sign-in needs a one-time setup of the app in Google Cloud. See [docs/google-drive-setup.md](google-drive-setup.md).
 
+### Using Hermes Agent
+
+Balimda can be the app you use to talk to your [Hermes Agent](https://github.com/NousResearch/hermes-agent), on every device.
+
+1. On the machine that runs Hermes, add to `~/.hermes/.env`:
+   ```bash
+   API_SERVER_ENABLED=true
+   API_SERVER_KEY=<a long random secret>
+   ```
+   Then start it with `hermes gateway`. It listens on `http://127.0.0.1:8642`.
+2. In Balimda on that computer, open **Settings → Models & providers → Hermes Agent**, tick **Enabled**, keep the server URL `http://127.0.0.1:8642/v1`, paste the key, and tap **Test connection**.
+3. Pick **hermes-agent** at the top of a chat.
+
+While Hermes works, each tool it runs appears above its answer (for example "💻 ls src/"). When it asks for permission to run something risky, Balimda shows the command with **Allow once**, **Allow for this chat**, **Always allow** and **Deny**. Nothing is ever approved automatically.
+
+**Memory:** Hermes has its own memory, so Balimda's memory and earlier-chat excerpts aren't sent to it, and Balimda doesn't learn facts from Hermes chats. To send them anyway, turn on **Also give Hermes my Balimda memory and earlier chats** in the Hermes card. Chat titles for Hermes chats are made with one of your local models, if you have one.
+
+**On your phone:** turn on **Let my phone use this computer's models** on the computer that has Hermes set up. On the phone, pick **hermes-agent (your computer, Hermes Agent)** under **On your computer**. Hermes stays private on the computer, and approvals work from the phone too. To connect the phone to Hermes directly instead, also set `API_SERVER_HOST=0.0.0.0` and `API_SERVER_CORS_ORIGINS=https://localhost` in `~/.hermes/.env`, and enter `http://<computer IP>:8642/v1` and the key in the phone's Hermes card. Only do this on a network you trust.
+
 ### Using it away from home
 
 To use your computer's models from your phone anywhere (not only on your home Wi-Fi), install [Tailscale](https://tailscale.com) on both the computer and the phone and sign in with the same account. Balimda finds the computer over Tailscale by itself.
