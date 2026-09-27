@@ -185,7 +185,8 @@ export const onDevice = {
       const w = await ensureLoaded(req.model, ctx, !!cfg.useGpu);
       if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-      const history = fitToContext(req.messages, req.system, ctx, replyTokens);
+      // A quarter of the context is kept for the reply; the rest is the chat.
+      const history = fitToContext(req.messages, req.system, ctx, Math.min(replyTokens, Math.floor(ctx / 4)));
       const messages = req.system ? [{ role: 'system', content: req.system }, ...history] : history;
       const params = { messages, stream: true, max_tokens: replyTokens, abortSignal: signal };
       if (req.temperature != null && !Number.isNaN(req.temperature)) params.temperature = req.temperature;

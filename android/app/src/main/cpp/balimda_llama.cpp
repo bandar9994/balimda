@@ -280,26 +280,51 @@ Java_com_bandar9994_balimda_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlo
         env->DeleteLocalRef(c);
     }
 
-    const std::string prompt = apply_template(*e, roles, contents);
-    if (prompt.empty()) {
-        throw_java(env, "Couldn't format the conversation for this model.");
-        return nullptr;
-    }
+    // Tokenize a prompt (add BOS if the model wants it; the template's special tokens are parsed).
+    auto tokenize = [&](const std::string & text) {
+        std::vector<llama_token> out(text.size() + 16);
+        int32_t n = llama_tokenize(e->vocab, text.c_str(), int32_t(text.size()), out.data(), int32_t(out.size()), true, true);
+        if (n < 0) {
+            out.resize(-n);
+            n = llama_tokenize(e->vocab, text.c_str(), int32_t(text.size()), out.data(), int32_t(out.size()), true, true);
+        }
+        out.resize(std::max(n, 0));
+        return out;
+    };
 
-    // Tokenize (add BOS if the model wants it; the template's special tokens are parsed).
-    std::vector<llama_token> tokens(prompt.size() + 16);
-    int32_t n_tok = llama_tokenize(e->vocab, prompt.c_str(), int32_t(prompt.size()), tokens.data(),
-                                   int32_t(tokens.size()), true, true);
-    if (n_tok < 0) {
-        tokens.resize(-n_tok);
-        n_tok = llama_tokenize(e->vocab, prompt.c_str(), int32_t(prompt.size()), tokens.data(),
-                               int32_t(tokens.size()), true, true);
-    }
-    tokens.resize(std::max(n_tok, 0));
-
+    // Keep as much of the chat as fits, leaving room for the reply: the
+    // oldest messages go first (the system prompt always stays), and the
+    // chat always starts with a user message.
     const int32_t n_ctx = int32_t(llama_n_ctx(e->ctx));
+    const int32_t reserve = std::max<int32_t>(256, std::min<int32_t>(max_tokens, n_ctx / 4));
+    const size_t first = (!roles.empty() && roles[0] == "system") ? 1 : 0;
+    size_t from = first;
+    std::vector<llama_token> tokens;
+    for (;;) {
+        std::vector<std::string> r, c;
+        if (first) {
+            r.push_back(roles[0]);
+            c.push_back(contents[0]);
+        }
+        for (size_t i = from; i < roles.size(); i++) {
+            r.push_back(roles[i]);
+            c.push_back(contents[i]);
+        }
+        const std::string prompt = apply_template(*e, r, c);
+        if (prompt.empty()) {
+            throw_java(env, "Couldn't format the conversation for this model.");
+            return nullptr;
+        }
+        tokens = tokenize(prompt);
+        if (int32_t(tokens.size()) + reserve <= n_ctx) break;
+        // Drop the oldest message, then up to the next user message.
+        size_t next = from + 1;
+        while (next < roles.size() && roles[next] != "user") next++;
+        if (next >= roles.size()) break;  // only the last question is left
+        from = next;
+    }
     if (int32_t(tokens.size()) + 8 >= n_ctx) {
-        throw_java(env, "This chat is longer than the model's memory. Start a new chat or raise the context size in Settings.");
+        throw_java(env, "This message is longer than the model's memory. Shorten it, or raise the context size in Settings.");
         return nullptr;
     }
 

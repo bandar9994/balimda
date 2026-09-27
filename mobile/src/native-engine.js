@@ -203,7 +203,9 @@ export const nativeEngine = {
   async streamChat(cfg, req, onDelta, signal, onInfo) {
     const ctx = Number(cfg.contextSize) || 4096;
     const replyTokens = req.maxTokens > 0 ? req.maxTokens : Math.min(DEFAULT_REPLY_TOKENS, Math.floor(ctx / 2));
-    const history = fitToContext(req.messages, req.system, ctx, replyTokens);
+    // A rough first cut only: the engine counts the chat exactly and keeps as
+    // much as fits in the context (see balimda_llama.cpp).
+    const history = fitToContext(req.messages, req.system, ctx * 2, 0);
     const messages = req.system ? [{ role: 'system', content: req.system }, ...history] : history;
 
     const requestId = `r${Date.now()}-${counter++}`;
