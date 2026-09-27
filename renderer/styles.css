@@ -187,8 +187,10 @@ button { font: inherit; color: inherit; }
 }
 .msg .content code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
 .msg .content :not(pre) > code { background: var(--bg-code); padding: 1px 5px; border-radius: 4px; }
-.msg .content table { border-collapse: collapse; }
-.msg .content th, .msg .content td { border: 1px solid var(--border); padding: 4px 8px; }
+/* Wide tables scroll sideways instead of breaking words letter by letter. */
+.msg .content table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; }
+.msg .content th, .msg .content td { border: 1px solid var(--border); padding: 4px 8px; overflow-wrap: normal; word-break: normal; }
+.msg .content th { white-space: nowrap; }
 .msg .content blockquote { margin: 0; padding-inline-start: 12px; border-inline-start: 3px solid var(--border); color: var(--text-dim); }
 .msg .content a { color: var(--accent); }
 .copy-code {
