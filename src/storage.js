@@ -290,12 +290,16 @@ class Storage {
     return this._putChat(chat, { local: true });
   }
 
-  // Store a chat that arrived through sync, keeping its modifiedAt.
-  putSyncedChat(chat) {
-    return this._putChat(chat, { local: false });
+  // Store a chat that arrived through sync, keeping its modifiedAt. With
+  // `expect` (the local revision sync based its decision on, or null for "not
+  // on this device"), the chat is only stored if that's still the local
+  // version; a change saved in the meantime is kept and returns null, and the
+  // next sync merges it.
+  putSyncedChat(chat, { expect } = {}) {
+    return this._putChat(chat, { local: false, expect });
   }
 
-  _putChat(chat, { local }) {
+  _putChat(chat, { local, expect }) {
     if (!chat || !chat.id) return Promise.reject(new Error('Chat must have an id'));
     let file;
     try {
@@ -305,6 +309,10 @@ class Storage {
     }
     upgradeChat(chat);
     const run = this._serial(async () => {
+      if (expect !== undefined) {
+        const current = this.index.find((c) => c.id === chat.id);
+        if ((current ? current.rev : null) !== expect) return null;
+      }
       chat.updatedAt = chat.updatedAt || Date.now();
       chat.createdAt = chat.createdAt || chat.updatedAt;
       if (local || !chat.modifiedAt) chat.modifiedAt = Math.max(Date.now(), (chat.modifiedAt || 0) + 1);
