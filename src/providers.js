@@ -201,6 +201,12 @@ function openaiLike({ sendSampling }) {
       if (!res.ok) throw await httpError(res);
       let text = '';
       let stopReason = 'end_turn';
+      let thinking = false;
+      let answered = false;
+      const out = (piece) => {
+        text += piece;
+        onDelta(piece);
+      };
       for await (const line of readLines(res.body)) {
         if (!line.startsWith('data:')) continue;
         const data = line.slice(5).trim();
@@ -208,13 +214,24 @@ function openaiLike({ sendSampling }) {
         const evt = JSON.parse(data);
         if (evt.error) throw new Error(evt.error.message || JSON.stringify(evt.error));
         const choice = evt.choices && evt.choices[0];
-        const piece = choice && choice.delta && choice.delta.content;
-        if (piece) {
-          text += piece;
-          onDelta(piece);
+        const delta = (choice && choice.delta) || {};
+        // Thinking models on LM Studio, llama.cpp, vLLM… stream their reasoning
+        // separately; show it in a <think> block like other engines.
+        const thought = delta.reasoning_content || delta.reasoning;
+        if (thought && typeof thought === 'string' && !answered) {
+          if (!thinking) out('<think>');
+          thinking = true;
+          out(thought);
+        }
+        if (delta.content) {
+          if (thinking) out('</think>\n\n');
+          thinking = false;
+          answered = true;
+          out(delta.content);
         }
         if (choice && choice.finish_reason === 'length') stopReason = 'max_tokens';
       }
+      if (thinking) out('</think>');
       return { text, stopReason };
     }
   };
@@ -353,6 +370,15 @@ const hermes = {
 
 // ---- Anthropic (Claude) ----------------------------------------------------
 
+// Output limit per model, from the Models API (older models allow far fewer
+// than the 64K asked for by default, and reject the request otherwise).
+const anthropicMaxTokens = new Map();
+const DEFAULT_ANTHROPIC_MAX_TOKENS = 64000;
+
+// Models that think by default with the thinking text hidden: ask for a
+// readable summary, so the wait before the answer isn't silent.
+const SUMMARIZED_THINKING = /^claude-(opus-5|fable-5|mythos-5|sonnet-5)/;
+
 const anthropic = {
   client(cfg) {
     if (!cfg.apiKey) throw new Error('Add your Anthropic API key in Settings → Providers.');
@@ -363,18 +389,23 @@ const anthropic = {
   async listModels(cfg) {
     if (!cfg.apiKey) return ANTHROPIC_DEFAULT_MODELS;
     const ids = [];
-    for await (const m of this.client(cfg).models.list()) ids.push(m.id);
+    for await (const m of this.client(cfg).models.list()) {
+      ids.push(m.id);
+      if (m.max_tokens > 0) anthropicMaxTokens.set(m.id, m.max_tokens);
+    }
     return ids.length ? ids : ANTHROPIC_DEFAULT_MODELS;
   },
 
   async streamChat(cfg, req, onDelta, signal) {
     const client = this.client(cfg);
+    const limit = anthropicMaxTokens.get(req.model) || DEFAULT_ANTHROPIC_MAX_TOKENS;
     const params = {
       model: req.model,
-      max_tokens: req.maxTokens > 0 ? req.maxTokens : 64000,
+      max_tokens: Math.min(req.maxTokens > 0 ? req.maxTokens : DEFAULT_ANTHROPIC_MAX_TOKENS, limit),
       messages: req.messages
     };
     if (req.system) params.system = req.system;
+    if (SUMMARIZED_THINKING.test(req.model) && req.think !== false) params.thinking = { type: 'adaptive', display: 'summarized' };
 
     let stream;
     if (FALLBACK_MODELS.has(req.model)) {
@@ -388,12 +419,27 @@ const anthropic = {
     }
 
     let text = '';
+    let thinking = false;
+    let answered = false;
+    const out = (piece) => {
+      text += piece;
+      onDelta(piece);
+    };
     for await (const event of stream) {
-      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-        text += event.delta.text;
-        onDelta(event.delta.text);
+      if (event.type !== 'content_block_delta') continue;
+      // The thinking summary goes in a <think> block, like other thinking models.
+      if (event.delta.type === 'thinking_delta' && event.delta.thinking && !answered) {
+        if (!thinking) out('<think>');
+        thinking = true;
+        out(event.delta.thinking);
+      } else if (event.delta.type === 'text_delta') {
+        if (thinking) out('</think>\n\n');
+        thinking = false;
+        answered = true;
+        out(event.delta.text);
       }
     }
+    if (thinking) out('</think>');
     const final = await stream.finalMessage();
     if (final.stop_reason === 'refusal') {
       const why = final.stop_details && final.stop_details.explanation;

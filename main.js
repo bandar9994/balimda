@@ -22,8 +22,10 @@ let sync;
 let mainWindow;
 const activeRequests = new Map();
 
+// Only one copy runs; a second launch focuses the first. exit() rather than
+// quit(), so the second copy never starts sync or sharing with the phone.
 if (!app.requestSingleInstanceLock()) {
-  app.quit();
+  app.exit(0);
 }
 
 app.on('second-instance', () => {
@@ -245,7 +247,19 @@ const remoteHandlers = {
   }
 };
 
-async function updateRemote() {
+// Start/stop sharing and publish this computer's addresses. Runs one at a
+// time: several triggers (startup, settings, sync status, the timer) can
+// fire together, and two at once would start two servers.
+let remoteUpdate = Promise.resolve();
+function updateRemote() {
+  remoteUpdate = remoteUpdate.then(doUpdateRemote).catch((err) => {
+    remoteError = `Couldn't share with the phone: ${err.message || err}`;
+    send('remote:status', remoteStatus());
+  });
+  return remoteUpdate;
+}
+
+async function doUpdateRemote() {
   const settings = await storage.getSettings();
   shareWanted = !!settings.shareWithPhone;
   const wanted = shareWanted && !!sync.linkKey();
@@ -282,6 +296,11 @@ function remoteStatus() {
     port: remote ? remote.port : null,
     error: remoteError
   };
+}
+
+// A file name from a chat title, keeping letters in any language (Arabic too).
+function safeFileName(title) {
+  return String(title || '').replace(/[^\p{L}\p{N}\- ]+/gu, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'chat';
 }
 
 function send(channel, payload) {
@@ -391,7 +410,7 @@ function registerIpc() {
   ipcMain.handle('chat:exportMarkdown', async (_e, id) => {
     const chat = await storage.getChat(id);
     if (!chat) return null;
-    const safe = chat.title.replace(/[^\w\- ]+/g, '').trim() || 'chat';
+    const safe = safeFileName(chat.title);
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
       title: 'Export chat',
       defaultPath: `${safe}.md`,

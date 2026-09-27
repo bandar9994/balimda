@@ -7,6 +7,7 @@
 // and kept in the app's private storage.
 
 import { Wllama, LoggerWithoutDebug } from '@wllama/wllama';
+import { fitToContext } from './context.js';
 
 // Small instruction-tuned models that fit comfortably on a phone.
 // (Single files must stay under 2 GB for WebAssembly.)
@@ -170,21 +171,6 @@ async function ensureLoaded(name, ctx, gpu) {
   await engine.loadModel(model, params);
   loaded = { url: model.url, ctx, gpu };
   return engine;
-}
-
-// Keep the newest messages that fit the context window (rough estimate:
-// ~3 characters per token), always leaving room for the reply.
-export function fitToContext(messages, system, ctx, replyTokens) {
-  const budget = Math.max(256, ctx - replyTokens - 64) * 3;
-  let used = (system || '').length;
-  const kept = [];
-  for (let i = messages.length - 1; i >= 0; i--) {
-    used += messages[i].content.length + 16;
-    if (used > budget && kept.length) break;
-    kept.unshift(messages[i]);
-  }
-  while (kept.length && kept[0].role !== 'user') kept.shift();
-  return kept;
 }
 
 export const onDevice = {

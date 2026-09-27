@@ -38,6 +38,9 @@ public class LlamaPlugin extends Plugin {
     private final ExecutorService downloads = Executors.newCachedThreadPool();
     private final Map<String, AtomicBoolean> cancelledDownloads = new ConcurrentHashMap<>();
     private final Map<String, AtomicBoolean> activeRequests = new ConcurrentHashMap<>();
+    // Partial files of downloads running now; any other .part file was left
+    // by a download the app was closed during, and only wastes space.
+    private final java.util.Set<String> activeParts = ConcurrentHashMap.newKeySet();
 
     // Loaded model state (only touched on the inference thread).
     private long handle = 0;
@@ -166,6 +169,10 @@ public class LlamaPlugin extends Plugin {
         JSONObject record = readRecord();
         if (files != null) {
             for (File f : files) {
+                if (f.getName().endsWith(".part") && !activeParts.contains(f.getName())) {
+                    f.delete();
+                    continue;
+                }
                 if (!f.getName().endsWith(".gguf")) continue;
                 present.add(f.getName());
                 // Models downloaded before the record existed join it here.
@@ -231,6 +238,7 @@ public class LlamaPlugin extends Plugin {
         downloads.execute(() -> {
             File target = modelFile(name);
             File part = new File(target.getPath() + ".part");
+            activeParts.add(part.getName());
             long total = -1;
             long done = 0;
             try {
@@ -277,6 +285,7 @@ public class LlamaPlugin extends Plugin {
                 part.delete();
                 emitDownload(url, done, total, true, e.getMessage() == null ? e.toString() : e.getMessage());
             } finally {
+                activeParts.remove(part.getName());
                 cancelledDownloads.remove(url);
             }
         });

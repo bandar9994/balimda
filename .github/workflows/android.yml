@@ -70,9 +70,11 @@ jobs:
         if: env.BALIMDA_KEYSTORE_BASE64 == ''
         run: echo "::warning::Built with the test key (BALIMDA_KEYSTORE_* secrets not set). This APK is only attached to this run, not published to the android-latest release."
       # Only builds signed with the private key go to the public download link,
-      # so people never get an APK that can't update their installed app.
+      # so people never get an APK that can't update their installed app. And
+      # only from main: work on other branches isn't released until it's merged
+      # (its APK is still attached to the run above for testing).
       - name: Publish to the android-latest release
-        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.BALIMDA_KEYSTORE_BASE64 != ''
+        if: ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && env.BALIMDA_KEYSTORE_BASE64 != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

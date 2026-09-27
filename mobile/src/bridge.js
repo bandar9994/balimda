@@ -198,7 +198,8 @@ function chatToMarkdown(chat) {
   return lines.join('\n');
 }
 
-const safeName = (s) => s.replace(/[^\w\- ]+/g, '').trim() || 'chat';
+// A file name from a chat title, keeping letters in any language (Arabic too).
+const safeName = (s) => String(s || '').replace(/[^\p{L}\p{N}\- ]+/gu, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'chat';
 
 // ---- the API ---------------------------------------------------------------
 
