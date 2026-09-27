@@ -1,0 +1,64 @@
+name: Commercial license request
+description: Using Balimda at a company or organisation, or in a paid product or service? Ask for a quote.
+title: "Commercial license: <company name>"
+labels: ["commercial-license"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Balimda is free for personal use. Use by or for a company or other organisation, or in anything that earns money, needs a commercial license from Bandar Altariqi (see [LICENSE](https://github.com/bandar9994/balimda/blob/main/LICENSE), section 4).
+
+        Tell us a little about what you need and you'll get a quote.
+
+        **This request is public.** Don't include confidential details. Leave a way to reach you if you'd like to continue privately, and Bandar will reply here to arrange it.
+  - type: input
+    id: company
+    attributes:
+      label: Company or organisation
+      placeholder: Example Co.
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: Your name and role
+      placeholder: Sara, IT manager
+    validations:
+      required: true
+  - type: dropdown
+    id: use
+    attributes:
+      label: How will you use Balimda?
+      options:
+        - Internal use by our staff
+        - In a product or service we sell
+        - As a paid service for our customers
+        - Something else (describe below)
+    validations:
+      required: true
+  - type: dropdown
+    id: users
+    attributes:
+      label: How many people will use it?
+      options:
+        - 1–10
+        - 11–50
+        - 51–250
+        - 251–1,000
+        - More than 1,000
+    validations:
+      required: true
+  - type: checkboxes
+    id: platforms
+    attributes:
+      label: Platforms
+      options:
+        - label: Android
+        - label: Windows
+        - label: macOS
+        - label: Linux
+  - type: textarea
+    id: details
+    attributes:
+      label: Anything else we should know?
+      description: For example, the models you plan to use, changes or branding you need, support expectations, or your timeline.

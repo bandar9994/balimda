@@ -1,5 +1,5 @@
 Balimda License
-Version 1.0
+Version 1.1
 
 Copyright (c) 2026 Bandar Altariqi (https://github.com/bandar9994). All rights reserved.
 
@@ -12,7 +12,8 @@ copying, changing or sharing the Software you agree to these terms.
 
 1. What you may do
 
-   You may, free of charge and for NON-COMMERCIAL purposes only:
+   You may, free of charge and for PERSONAL, NON-COMMERCIAL purposes
+   only:
    a) use the Software;
    b) read and study its source code;
    c) change the Software (fix bugs, add features, translate it); and
@@ -48,20 +49,25 @@ copying, changing or sharing the Software you agree to these terms.
       Bandar Altariqi's written permission.
 
 
-4. No commercial use
+4. No commercial or organisational use
 
    You may not use the Software, or any changed version or part of it,
    for any commercial purpose without a separate written license from
    Bandar Altariqi. Commercial purposes include, for example:
-   a) selling the Software or a changed version, or charging for
+   a) use by or on behalf of a company, business, government body or
+      other organisation, including use by its employees or contractors
+      for their work, even if the Software is not sold and nobody pays
+      for it;
+   b) selling the Software or a changed version, or charging for
       downloading, installing or using it;
-   b) including it in a product or service that is sold or paid for;
-   c) showing ads in it or collecting fees or subscriptions through it;
-   d) using it to provide paid services to others; and
-   e) publishing it on any app store, marketplace or website in a way
+   c) including it in a product or service that is sold or paid for;
+   d) showing ads in it or collecting fees or subscriptions through it;
+   e) using it to provide paid services to others; and
+   f) publishing it on any app store, marketplace or website in a way
       that earns money for anyone other than Bandar Altariqi.
-   To ask for a commercial license, contact Bandar Altariqi through
-   https://github.com/bandar9994.
+   Companies and organisations can ask Bandar Altariqi for a quote for a
+   commercial license at:
+   https://github.com/bandar9994/balimda/issues/new?template=commercial-license.yml
 
 
 5. Other software included
