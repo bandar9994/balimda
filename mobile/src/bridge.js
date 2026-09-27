@@ -363,6 +363,14 @@ window.balimda = {
     cancel: async (url) => (await engine()).cancelDownload(url),
     remove: async (url) => (await engine()).remove(url),
     downloads: async () => (await engine()).downloadState(),
+    missing: async () => {
+      const e = await engine();
+      return e.listMissing ? e.listMissing().catch(() => []) : [];
+    },
+    forget: async (name) => {
+      const e = await engine();
+      if (e.forgetMissing) await e.forgetMissing(name);
+    },
     onProgress(cb) {
       let off = null;
       let cancelled = false;

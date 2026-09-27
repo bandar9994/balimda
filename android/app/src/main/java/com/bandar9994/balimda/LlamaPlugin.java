@@ -64,6 +64,71 @@ public class LlamaPlugin extends Plugin {
         return f;
     }
 
+    // ---- record of downloads -------------------------------------------------------
+    // Which models Balimda downloaded (files/models-record.json). A model is
+    // only taken off the record when the user deletes it in Balimda, so a
+    // recorded model whose file is gone was removed by something else on the
+    // phone (e.g. a storage cleaner), and the app can say so and offer it again.
+
+    private File recordFile() {
+        return new File(getContext().getFilesDir(), "models-record.json");
+    }
+
+    private synchronized JSONObject readRecord() {
+        File f = recordFile();
+        if (!f.exists()) return new JSONObject();
+        try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+            byte[] bytes = new byte[(int) f.length()];
+            int off = 0;
+            while (off < bytes.length) {
+                int n = in.read(bytes, off, bytes.length - off);
+                if (n < 0) break;
+                off += n;
+            }
+            return new JSONObject(new String(bytes, 0, off, "UTF-8"));
+        } catch (Exception e) {
+            return new JSONObject();
+        }
+    }
+
+    private synchronized void writeRecord(JSONObject record) {
+        File f = recordFile();
+        File tmp = new File(f.getPath() + ".tmp");
+        try (FileOutputStream out = new FileOutputStream(tmp)) {
+            out.write(record.toString().getBytes("UTF-8"));
+            out.getFD().sync();
+        } catch (Exception e) {
+            return;
+        }
+        if (!tmp.renameTo(f)) tmp.delete();
+    }
+
+    private synchronized void noteDownloaded(String name, String url, long size) {
+        try {
+            JSONObject record = readRecord();
+            JSONObject entry = new JSONObject();
+            if (url != null) entry.put("url", url);
+            entry.put("size", size);
+            entry.put("at", System.currentTimeMillis());
+            record.put(name, entry);
+            writeRecord(record);
+        } catch (Exception ignored) {
+            // the record is only a helper
+        }
+    }
+
+    private synchronized void noteDeleted(String name) {
+        JSONObject record = readRecord();
+        if (record.has(name)) {
+            record.remove(name);
+            writeRecord(record);
+        }
+    }
+
+    private synchronized boolean wasDownloaded(String name) {
+        return readRecord().has(name);
+    }
+
     // ---- info ---------------------------------------------------------------------
 
     @PluginMethod
@@ -96,18 +161,40 @@ public class LlamaPlugin extends Plugin {
     @PluginMethod
     public void listModels(PluginCall call) {
         JSArray list = new JSArray();
+        java.util.Set<String> present = new java.util.HashSet<>();
         File[] files = modelsDir().listFiles();
+        JSONObject record = readRecord();
         if (files != null) {
             for (File f : files) {
                 if (!f.getName().endsWith(".gguf")) continue;
+                present.add(f.getName());
+                // Models downloaded before the record existed join it here.
+                if (!record.has(f.getName())) noteDownloaded(f.getName(), null, f.length());
                 JSObject m = new JSObject();
                 m.put("name", f.getName());
                 m.put("size", f.length());
                 list.put(m);
             }
         }
+        // On the record but gone from the phone, without being deleted in Balimda.
+        JSArray missing = new JSArray();
+        java.util.Iterator<String> names = record.keys();
+        while (names.hasNext()) {
+            String name = names.next();
+            if (present.contains(name)) continue;
+            JSONObject entry = record.optJSONObject(name);
+            JSObject m = new JSObject();
+            m.put("name", name);
+            if (entry != null) {
+                if (entry.has("url")) m.put("url", entry.optString("url"));
+                m.put("size", entry.optLong("size", 0));
+                m.put("at", entry.optLong("at", 0));
+            }
+            missing.put(m);
+        }
         JSObject ret = new JSObject();
         ret.put("models", list);
+        ret.put("missing", missing);
         call.resolve(ret);
     }
 
@@ -118,6 +205,7 @@ public class LlamaPlugin extends Plugin {
             File f = modelFile(name);
             if (loadedKey != null && loadedKey.startsWith(f.getAbsolutePath() + "|")) unload();
             boolean ok = !f.exists() || f.delete();
+            if (ok) noteDeleted(f.getName());
             JSObject ret = new JSObject();
             ret.put("deleted", ok);
             call.resolve(ret);
@@ -180,6 +268,7 @@ public class LlamaPlugin extends Plugin {
                 }
                 if (total > 0 && done != total) throw new Exception("Download was interrupted; please retry.");
                 if (!part.renameTo(target)) throw new Exception("Couldn't save the model file.");
+                noteDownloaded(target.getName(), url, target.length());
                 emitDownload(url, done, total, true, null);
             } catch (InterruptedException e) {
                 part.delete();
@@ -254,7 +343,13 @@ public class LlamaPlugin extends Plugin {
         inference.execute(() -> {
             try {
                 File file = modelFile(model);
-                if (!file.exists()) throw new Exception("\"" + model + "\" isn't downloaded. Download it in Settings → Models.");
+                if (!file.exists()) {
+                    if (wasDownloaded(file.getName())) {
+                        throw new Exception("\"" + model + "\" was removed from this phone, but not by Balimda (it only deletes a model when you tap Delete). "
+                            + "Something else on the phone removed it, often a storage cleaner. Download it again in Settings → Models & providers.");
+                    }
+                    throw new Exception("\"" + model + "\" isn't downloaded. Download it in Settings → Models & providers.");
+                }
                 String key = file.getAbsolutePath() + "|" + nCtx + "|" + gpu;
                 if (!key.equals(loadedKey)) {
                     unload();

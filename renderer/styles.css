@@ -453,6 +453,8 @@ textarea.input { resize: vertical; }
 .od-row .sub { font-size: 12px; color: var(--text-dim); }
 .od-row .sub.bad { color: var(--danger); overflow-wrap: anywhere; }
 .od-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.od-missing { margin: 10px 0 0; padding: 10px 12px; border: 1px solid var(--danger); border-radius: 8px; display: grid; gap: 8px; }
+.od-missing > p { margin: 0; font-size: 13px; }
 .progress { width: 80px; height: 6px; border-radius: 3px; background: var(--bg-hover); overflow: hidden; }
 .progress .bar { height: 100%; background: var(--accent); transition: width 0.2s; }
 

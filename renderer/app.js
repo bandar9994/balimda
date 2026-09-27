@@ -1839,6 +1839,7 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
   const od = api.onDevice;
   const list = h('div', { class: 'od-list' });
   const legacyBox = h('div');
+  const missingBox = h('div');
   const engineLine = h('p', { class: 'help' });
   const gpuBox = h('div');
   const customHelp = h('div', { class: 'help' });
@@ -1868,7 +1869,28 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
   });
 
   const draw = async () => {
-    const [catalog, downloaded, downloads, legacy] = await Promise.all([od.catalog(), od.list(), od.downloads(), od.legacy ? od.legacy() : []]);
+    const [catalog, downloaded, downloads, legacy, missing] = await Promise.all([
+      od.catalog(), od.list(), od.downloads(), od.legacy ? od.legacy() : [], od.missing ? od.missing() : []]);
+    // Downloaded models that disappeared without being deleted here.
+    const gone = missing.filter((m) => !(m.url && downloads[m.url] && !downloads[m.url].error));
+    missingBox.replaceChildren(...(gone.length ? [h('div', { class: 'od-missing' },
+      h('p', { text: gone.length === 1
+        ? 'This model was removed from your phone, but not by Balimda. Balimda only deletes a model when you tap Delete, so something else on the phone removed it, often the phone\'s storage cleaner. To stop it happening again, add Balimda to the cleaner\'s ignore list.'
+        : 'These models were removed from your phone, but not by Balimda. Balimda only deletes a model when you tap Delete, so something else on the phone removed them, often the phone\'s storage cleaner. To stop it happening again, add Balimda to the cleaner\'s ignore list.' }),
+      ...gone.map((m) => h('div', { class: 'od-row' },
+        h('div', { class: 'grow' },
+          h('div', { class: 'od-name', text: displayModel((catalog.find((c) => c.url === m.url) || {}).name || m.name) }),
+          h('div', { class: 'sub', text: ['Removed from this phone', formatBytes(m.size)].filter(Boolean).join(' · ') })),
+        h('div', { class: 'od-actions' },
+          m.url ? h('button', { class: 'btn primary', text: 'Download again', onclick: () => od.download(m.url) }) : null,
+          h('button', {
+            class: 'btn',
+            text: 'Dismiss',
+            onclick: async () => {
+              await od.forget(m.name);
+              draw();
+            }
+          })))))] : []));
     legacyBox.replaceChildren(...(legacy.length ? [
       h('p', { class: 'help', text: 'Downloaded by the previous engine. The new engine can\'t use these files, so you can delete them to free space.' }),
       ...legacy.map((m) => h('div', { class: 'od-row' },
@@ -1947,6 +1969,7 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
     h('h4', {}, providerLabel('onDevice')),
     h('p', { class: 'help', text: 'These models run entirely on your phone: private, free and offline. Download one once over Wi-Fi. Smaller models answer faster; bigger ones are smarter.' }),
     engineLine,
+    missingBox,
     list,
     legacyBox,
     field('Add any GGUF model by link', h('div', { class: 'field-row' },
