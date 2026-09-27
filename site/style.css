@@ -26,7 +26,8 @@ header nav { margin-left: auto; display: flex; gap: 18px; font-size: 15px; }
 .card.wide { grid-column: 1 / -1; border-color: var(--accent); }
 .card h3 { margin: 0 0 4px; font-size: 17px; }
 .card p { margin: 0; color: var(--dim); font-size: 15px; }
-.business { padding: 0 0 8px; }
+.business, .support { padding: 0 0 8px; }
+.support .card p + p { margin-top: 14px; }
 .business .card p + p { margin-top: 14px; }
 .button { display: inline-block; padding: 9px 18px; border-radius: 10px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; }
 main.doc { padding-top: 12px; padding-bottom: 40px; }
