@@ -73,7 +73,7 @@ Most AI apps send everything you type to someone else's servers, forget you the 
 <td width="33%" valign="top">
 
 ### 🔒 Private by design
-Run models on your own phone or computer, with no account and no internet. Balimda has no servers and collects nothing. When you sync, everything is encrypted on your device first.
+Run models on your own phone or computer, with no account and no internet. Balimda has no servers and collects nothing. When you sync, everything is encrypted on your device first. Balimda never loads images or links from a reply by itself, so a reply can't leak your chat to someone's server.
 
 </td>
 <td width="33%" valign="top">
@@ -127,7 +127,7 @@ The same chat continues on your phone and your computer, even with a different m
 ### A great chat experience
 
 - **Streaming replies** with Stop, Regenerate, and Edit & resend.
-- **Thinking models, tidied up.** Models that reason first (Qwen 3, DeepSeek-R1 and others) show a collapsed "Thought process" you can open when you're curious.
+- **Thinking models, tidied up.** Models that reason first (Qwen 3, DeepSeek-R1, Claude and others, on your phone, in Ollama or LM Studio, or in the cloud) show a collapsed "Thought process" you can open when you're curious.
 - **Assistants** with their own instructions and their own model. Assistant, Code Buddy and Writing Coach come built in; create as many as you like.
 - **Beautiful Markdown and code**, with one-tap copy for code blocks.
 - **Arabic and English.** Right-to-left text lays out naturally, and automatic memory and the look-back through earlier chats understand Arabic.
