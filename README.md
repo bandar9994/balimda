@@ -16,7 +16,7 @@ and finish it back at your desk. Your chats, memory and assistants stay in sync,
 [![Works offline](https://img.shields.io/badge/works-offline-5b5bd6)](#run-ai-anywhere)
 [![Free for personal use](https://img.shields.io/badge/free-for%20personal%20use-5b5bd6)](#license)
 [![Business license available](https://img.shields.io/badge/business%20license-available-2b2a6e)](#for-businesses)
-[![Support on Ko-fi](https://img.shields.io/badge/support-Ko--fi-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/bandar9994)
+[![Support on Ko-fi](https://img.shields.io/badge/support-Ko--fi-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/bandaraltariqi)
 
 **[Download](#download)** · **[Features](#features)** · **[User guide](docs/GUIDE.md)** · **[For businesses](#for-businesses)** · **[Support Balimda](#support-balimda)** · **[Website](https://bandar9994.github.io/)** · **[Privacy](PRIVACY.md)**
 
@@ -215,7 +215,7 @@ Use by or for a company or organisation needs a **commercial license**. Tell us 
 
 Balimda is made by one person, with no ads, no tracking and no subscriptions. If it's useful to you, you can support its development:
 
-<p align="center"><a href="https://ko-fi.com/bandar9994"><b>☕ Support Balimda on Ko-fi</b></a></p>
+<p align="center"><a href="https://ko-fi.com/bandaraltariqi"><b>☕ Support Balimda on Ko-fi</b></a></p>
 
 Telling a friend or starring this repository helps too.
 

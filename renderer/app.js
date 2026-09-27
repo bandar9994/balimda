@@ -101,7 +101,7 @@ const AUTHOR = 'Bandar Altariqi';
 const PROJECT_URL = 'https://github.com/bandar9994/balimda';
 const COPYRIGHT = `© 2026 ${AUTHOR}. All rights reserved.`;
 const COMMERCIAL_URL = `${PROJECT_URL}/issues/new?template=commercial-license.yml`;
-const SUPPORT_URL = 'https://ko-fi.com/bandar9994';
+const SUPPORT_URL = 'https://ko-fi.com/bandaraltariqi';
 
 function appName() {
   return (S.info && S.info.appName) || 'Balimda';
