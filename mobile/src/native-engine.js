@@ -127,12 +127,30 @@ export function downloadState() {
   return out;
 }
 
-export async function listDownloaded() {
-  const { models } = await Llama.listModels();
+function urlsByName() {
   const byName = new Map();
   for (const c of CATALOG) byName.set(modelName(c.url), c.url);
   for (const [url, name] of namesByUrl) byName.set(name, url);
+  return byName;
+}
+
+export async function listDownloaded() {
+  const { models } = await Llama.listModels();
+  const byName = urlsByName();
   return models.map((m) => ({ name: m.name, size: m.size, url: byName.get(m.name) || `local:${m.name}` }));
+}
+
+// Models Balimda downloaded that are gone from the phone although they were
+// never deleted in Balimda (something else on the phone removed them).
+export async function listMissing() {
+  const { missing = [] } = await Llama.listModels();
+  const byName = urlsByName();
+  return missing.map((m) => ({ name: m.name, size: m.size || 0, at: m.at || 0, url: m.url || byName.get(m.name) || null }));
+}
+
+// Takes a missing model off the record without downloading it again.
+export async function forgetMissing(name) {
+  await Llama.deleteModel({ name });
 }
 
 export async function download(url) {
