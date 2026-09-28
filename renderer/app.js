@@ -1054,7 +1054,7 @@ function speakPiece(r, text) {
   if (V.mode && V.mode.msg === r.msg) setVoicePhase('speaking');
   api.voice.speak({ text, lang: speechLang(text), rate: Number(S.settings.voiceRate) || 1 })
     .catch((err) => {
-      if (r.token !== V.token) return;
+      if (r.token !== V.token || r.failed) return; // say it once, not for every sentence
       toast(errorText(err), 8000);
       r.failed = true;
     })
@@ -1674,6 +1674,7 @@ async function generateTitle(chat, model = chat.model) {
 }
 
 function stopCurrent() {
+  if (!V.mode) stopReading();
   for (const [rid, r] of S.requests) if (r.chat === S.current) api.ai.abort(rid);
 }
 
