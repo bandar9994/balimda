@@ -1020,7 +1020,7 @@ function backgroundModel(preferred) {
   return candidates.find(usable) || local.find(usable) || null;
 }
 
-async function askModel(model, prompt) {
+async function askModel(model, prompt, maxTokens = 0) {
   const res = await api.ai.chat({
     requestId: uid(),
     provider: model.provider,
@@ -1028,7 +1028,7 @@ async function askModel(model, prompt) {
     system: '',
     think: false,
     temperature: 0.1,
-    maxTokens: 0,
+    maxTokens,
     messages: [{ role: 'user', content: prompt }]
   });
   return res.ok && res.text ? splitThinking(res.text).answer.trim() : null;
@@ -1102,7 +1102,7 @@ async function rememberFrom(userMsg, model) {
     'Only lasting facts: name, family, where they live, work or studies, languages, preferences, dislikes, long-term goals or projects.',
     'Ignore one-off requests, questions and temporary moods. Write facts in the third person, short (e.g. "Prefers short answers"). At most 3 lines.',
     'If nothing should change, reply exactly: NONE'
-  ].join('\n'));
+  ].join('\n'), 200);
   if (!answer || /^none\b/i.test(answer)) return;
 
   // Memory changed while the model was thinking (edited, or synced from
@@ -1291,9 +1291,10 @@ async function runCompletion(chat) {
   }
   updateComposer();
 
-  // Learn lasting facts from what the user just said. Skipped for on-device
-  // phone models, where a second run after every reply would slow the phone.
-  if (res.ok && !res.aborted && S.settings.memoryEnabled && S.settings.autoMemory && model.provider !== 'onDevice' && !isAgent(model)) {
+  // Learn lasting facts from what the user just said. On the phone's own
+  // models this is a second, short run after the reply, and only when the
+  // message says something about the user (see ABOUT_ME).
+  if (res.ok && !res.aborted && S.settings.memoryEnabled && S.settings.autoMemory && !isAgent(model)) {
     const userMsg = [...chat.messages].reverse().find((m) => m.role === 'user');
     if (userMsg) autoRemember(chat, userMsg, model).catch(() => {});
   }
