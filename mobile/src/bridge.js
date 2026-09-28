@@ -195,7 +195,11 @@ function pickTextFile(accept) {
 
 function chatToMarkdown(chat) {
   const lines = [`# ${chat.title}`, ''];
-  for (const m of chat.messages) lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', m.content || '', '');
+  for (const m of chat.messages) {
+    // A reasoning model's thinking isn't part of the reply.
+    const text = String(m.content || '').replace(/^\s*<think>[\s\S]*?(<\/think>|$)\s*/, '');
+    lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', text, '');
+  }
   return lines.join('\n');
 }
 
@@ -242,7 +246,13 @@ window.balimda = {
     importAll: withStorage(async (s) => {
       const text = await pickTextFile('application/json,.json');
       if (!text) return null;
-      return { count: await s.importAll(JSON.parse(text)) };
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error('This file isn\'t a Balimda backup (it can\'t be read as one).');
+      }
+      return { count: await s.importAll(data) };
     })
   },
   app: {

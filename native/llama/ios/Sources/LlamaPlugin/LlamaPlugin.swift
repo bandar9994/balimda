@@ -202,6 +202,15 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("The link isn't valid")
             return
         }
+        lock.lock()
+        let running = downloads[url] != nil
+        lock.unlock()
+        if running {
+            // Already downloading (e.g. the app's web view was reloaded): a second
+            // copy would write into the same file.
+            call.resolve(["name": name])
+            return
+        }
         let target = modelFile(name)
         let part = target.appendingPathExtension("part")
         let job = Download(url: url, source: source, part: part, target: target) { [weak self] loaded, total, done, error in
@@ -316,9 +325,16 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
                 if key != self.loadedKey {
                     self.unload()
                     self.emitStatus(requestId, "loading")
-                    try self.load(path: file.path, nCtx: nCtx, gpuLayers: gpu ? 99 : 0,
-                                  threads: gpu ? LlamaPlugin.gpuThreads : LlamaPlugin.threadCount())
-                    if gpu && self.loadedDevice == "CPU" {
+                    var cpuThreads = !gpu
+                    do {
+                        try self.load(path: file.path, nCtx: nCtx, gpuLayers: gpu ? 99 : 0,
+                                      threads: gpu ? LlamaPlugin.gpuThreads : LlamaPlugin.threadCount())
+                    } catch where gpu {
+                        // The GPU couldn't load it at all (e.g. not enough memory for it): use the CPU.
+                        try self.load(path: file.path, nCtx: nCtx, gpuLayers: 0, threads: LlamaPlugin.threadCount())
+                        cpuThreads = true
+                    }
+                    if !cpuThreads && self.loadedDevice == "CPU" {
                         // The GPU couldn't take the model: load it again with all CPU threads.
                         self.unload()
                         try self.load(path: file.path, nCtx: nCtx, gpuLayers: 0, threads: LlamaPlugin.threadCount())

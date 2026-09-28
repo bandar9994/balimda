@@ -477,14 +477,19 @@ class Storage {
     return { app: 'balimda', version: 1, exportedAt: new Date().toISOString(), chats };
   }
 
+  // Adds the chats of a backup. A chat that's also on this device is merged
+  // with it (as sync does), so messages added since the backup are kept.
   async importAll(data) {
     const chats = Array.isArray(data) ? data : data && data.chats;
     if (!Array.isArray(chats)) throw new Error('This is not a Balimda backup file');
+    const { mergeChats } = require('./sync');
     let imported = 0;
     for (const chat of chats) {
       if (!chat || !Array.isArray(chat.messages)) continue;
       if (!chat.id || !ID_RE.test(chat.id)) chat.id = newId();
-      await this.saveChat(chat);
+      upgradeChat(chat);
+      const existing = await this.getChat(chat.id).catch(() => null);
+      await this.saveChat(existing ? mergeChats(existing, chat) : chat);
       imported++;
     }
     return imported;

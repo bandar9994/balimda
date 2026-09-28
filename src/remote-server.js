@@ -155,6 +155,9 @@ function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0' }) 
       });
       server.listen(p, host, () => {
         server.removeAllListeners('error');
+        // A later network error must not take the app down (an 'error' event
+        // with no listener would).
+        server.on('error', () => {});
         resolve({
           port: server.address().port,
           close: () => new Promise((r) => {

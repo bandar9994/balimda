@@ -36,7 +36,9 @@ public class LlamaPlugin extends Plugin {
 
     private final ExecutorService inference = Executors.newSingleThreadExecutor();
     private final ExecutorService downloads = Executors.newCachedThreadPool();
-    private final Map<String, AtomicBoolean> cancelledDownloads = new ConcurrentHashMap<>();
+    // Static like activeParts, so a download still going after the app's screen
+    // was reopened can be cancelled from the new one.
+    private static final Map<String, AtomicBoolean> cancelledDownloads = new ConcurrentHashMap<>();
     private final Map<String, AtomicBoolean> activeRequests = new ConcurrentHashMap<>();
     // Partial files of downloads running now; any other .part file was left
     // by a download the app was closed during, and only wastes space. Static:
@@ -234,17 +236,24 @@ public class LlamaPlugin extends Plugin {
             call.reject(e.getMessage());
             return;
         }
-        AtomicBoolean cancelled = new AtomicBoolean(false);
-        cancelledDownloads.put(url, cancelled);
         JSObject started = new JSObject();
         started.put("name", name);
+        // Already downloading (e.g. still going in the background after the app's
+        // screen was closed and opened again): a second copy would write into
+        // the same file.
+        if (activeParts.contains(modelFile(name).getName() + ".part")) {
+            call.resolve(started);
+            return;
+        }
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        cancelledDownloads.put(url, cancelled);
         call.resolve(started);
 
         askForNotifications();
+        File target = modelFile(name);
+        File part = new File(target.getPath() + ".part");
+        activeParts.add(part.getName());
         downloads.execute(() -> {
-            File target = modelFile(name);
-            File part = new File(target.getPath() + ".part");
-            activeParts.add(part.getName());
             progress.put(part.getName(), new long[] {0, -1});
             DownloadService.start(app());
             long[] state = {-1, 0};  // total, done
@@ -451,10 +460,18 @@ public class LlamaPlugin extends Plugin {
                 if (!key.equals(loadedKey)) {
                     unload();
                     emitStatus(requestId, "loading");
-                    handle = LlamaEngine.nativeLoad(file.getAbsolutePath(), nCtx, gpu ? 99 : 0, gpu ? GPU_THREADS : threadCount());
+                    boolean cpuThreads = !gpu;
+                    try {
+                        handle = LlamaEngine.nativeLoad(file.getAbsolutePath(), nCtx, gpu ? 99 : 0, gpu ? GPU_THREADS : threadCount());
+                    } catch (RuntimeException e) {
+                        if (!gpu) throw e;
+                        // The GPU couldn't load it at all (e.g. its driver ran out of memory): use the CPU.
+                        handle = LlamaEngine.nativeLoad(file.getAbsolutePath(), nCtx, 0, threadCount());
+                        cpuThreads = true;
+                    }
                     loadedOffload = LlamaEngine.nativeOffload(handle);
                     loadedDevice = describeDevice(loadedOffload);
-                    if (gpu && loadedDevice.equals("CPU")) {
+                    if (!cpuThreads && loadedDevice.equals("CPU")) {
                         // The GPU couldn't take the model: load it again with all CPU threads.
                         unload();
                         handle = LlamaEngine.nativeLoad(file.getAbsolutePath(), nCtx, 0, threadCount());

@@ -407,7 +407,7 @@ function ensureDefaultModel() {
   const available = allModels();
   if (def && def.model && (!S.models[def.provider] || S.models[def.provider].includes(def.model))) return;
   const preferred = available.find((m) => m.provider === 'onDevice') ||
-    available.find((m) => m.model === 'claude-opus-5') || available[0];
+    available.find((m) => m.model === 'claude-opus-5-5') || available.find((m) => m.model === 'claude-opus-5') || available[0];
   if (preferred) {
     S.settings.defaultModel = preferred;
     saveSettings();
@@ -523,7 +523,7 @@ async function pickCustomModel() {
     let result = null;
     const provider = h('select', { class: 'select' },
       Object.keys(S.settings.providers).map((id) => h('option', { value: id, text: providerLabel(id) })));
-    const name = h('input', { class: 'input', placeholder: 'e.g. llama3.2, qwen3:8b, claude-opus-5' });
+    const name = h('input', { class: 'input', placeholder: 'e.g. llama3.2, qwen3:8b, claude-opus-5-5' });
     openModal({
       title: 'Use a model by name',
       body: h('div', {},

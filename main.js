@@ -413,7 +413,12 @@ function registerIpc() {
       filters: [{ name: 'JSON', extensions: ['json'] }]
     });
     if (canceled || !filePaths.length) return null;
-    const data = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
+    } catch {
+      throw new Error('This file isn\'t a Balimda backup (it can\'t be read as one).');
+    }
     return { count: await storage.importAll(data) };
   });
 
@@ -429,7 +434,9 @@ function registerIpc() {
     if (canceled || !filePath) return null;
     const lines = [`# ${chat.title}`, ''];
     for (const m of chat.messages) {
-      lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', m.content || '', '');
+      // A reasoning model's thinking isn't part of the reply.
+      const text = String(m.content || '').replace(/^\s*<think>[\s\S]*?(<\/think>|$)\s*/, '');
+      lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', text, '');
     }
     fs.writeFileSync(filePath, lines.join('\n'));
     return { filePath };
