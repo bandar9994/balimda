@@ -699,7 +699,13 @@ function statsBadge(st) {
     st.loadMs > 300 ? `Loading the model: ${(st.loadMs / 1000).toFixed(1)} s` : null,
     `Reply: ${st.tokens} tokens in ${(st.ms / 1000).toFixed(1)} s (${speed.toFixed(1)} tokens/s)`,
     st.promptTokens ? `Reading the chat: ${st.promptTokens} tokens in ${(st.promptMs / 1000).toFixed(1)} s`
-      : st.engine === 'WebAssembly' ? `Time before the first word: ${(st.promptMs / 1000).toFixed(1)} s` : 'Reading the chat: reused from memory'
+      : st.engine === 'WebAssembly' ? `Time before the first word: ${(st.promptMs / 1000).toFixed(1)} s` : 'Reading the chat: reused from memory',
+    // How much of the conversation the model could see.
+    st.messagesSent != null && st.messagesTotal
+      ? `The model saw ${Math.min(st.messagesSent, st.messagesTotal)} of ${st.messagesTotal} messages in this chat` +
+        (st.chatTokens && st.contextSize ? ` (${st.chatTokens.toLocaleString()} of ${st.contextSize.toLocaleString()} tokens of its memory)` : '') +
+        (st.messagesSent < st.messagesTotal ? '. Older messages didn\'t fit: raise "Memory for the conversation" in Settings → Models & providers to include more.' : '')
+      : null
   ].filter(Boolean).join('\n');
   return h('span', {
     class: `stats ${onGpu ? 'gpu' : 'cpu'}`,
@@ -1014,7 +1020,7 @@ function backgroundModel(preferred) {
   return candidates.find(usable) || local.find(usable) || null;
 }
 
-async function askModel(model, prompt) {
+async function askModel(model, prompt, maxTokens = 0) {
   const res = await api.ai.chat({
     requestId: uid(),
     provider: model.provider,
@@ -1022,7 +1028,7 @@ async function askModel(model, prompt) {
     system: '',
     think: false,
     temperature: 0.1,
-    maxTokens: 0,
+    maxTokens,
     messages: [{ role: 'user', content: prompt }]
   });
   return res.ok && res.text ? splitThinking(res.text).answer.trim() : null;
@@ -1096,7 +1102,7 @@ async function rememberFrom(userMsg, model) {
     'Only lasting facts: name, family, where they live, work or studies, languages, preferences, dislikes, long-term goals or projects.',
     'Ignore one-off requests, questions and temporary moods. Write facts in the third person, short (e.g. "Prefers short answers"). At most 3 lines.',
     'If nothing should change, reply exactly: NONE'
-  ].join('\n'));
+  ].join('\n'), 200);
   if (!answer || /^none\b/i.test(answer)) return;
 
   // Memory changed while the model was thinking (edited, or synced from
@@ -1171,6 +1177,10 @@ function buildSystemPrompt(chat, recalled = [], model = null) {
       ...recalled.map((r) => `- [${r.title}${r.updatedAt ? `, ${when(r.updatedAt)}` : ''}] ${r.role === 'user' ? 'User' : 'Assistant'}: ${r.text}`)
     ].join('\n'));
   }
+  // These instructions are in English, and smaller models tend to answer in
+  // the language of the instructions rather than the user's: say it plainly,
+  // last, where small models pay the most attention.
+  parts.push('Always reply in the same language as the user\'s latest message (for example, Arabic to Arabic, English to English).');
   return parts.join('\n\n');
 }
 
@@ -1281,9 +1291,10 @@ async function runCompletion(chat) {
   }
   updateComposer();
 
-  // Learn lasting facts from what the user just said. Skipped for on-device
-  // phone models, where a second run after every reply would slow the phone.
-  if (res.ok && !res.aborted && S.settings.memoryEnabled && S.settings.autoMemory && model.provider !== 'onDevice' && !isAgent(model)) {
+  // Learn lasting facts from what the user just said. On the phone's own
+  // models this is a second, short run after the reply, and only when the
+  // message says something about the user (see ABOUT_ME).
+  if (res.ok && !res.aborted && S.settings.memoryEnabled && S.settings.autoMemory && !isAgent(model)) {
     const userMsg = [...chat.messages].reverse().find((m) => m.role === 'user');
     if (userMsg) autoRemember(chat, userMsg, model).catch(() => {});
   }
