@@ -40,6 +40,18 @@ export const CATALOG = [
     url: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_0.gguf'
   },
   {
+    name: 'DeepSeek R1 · 1.5B',
+    note: 'DeepSeek, thinks before answering · good at maths',
+    size: 1.07e9,
+    url: 'https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_0.gguf'
+  },
+  {
+    name: 'GLM-Edge · 1.5B',
+    note: 'Zhipu GLM, made for phones · Chinese and English',
+    size: 1.0e9,
+    url: 'https://huggingface.co/zai-org/glm-edge-1.5b-chat-gguf/resolve/main/ggml-model-Q4_0.gguf'
+  },
+  {
     name: 'Qwen 3 · 1.7B',
     note: 'Thinks before answering',
     size: 1.05e9,
@@ -68,6 +80,24 @@ export const CATALOG = [
     note: 'Thinks before answering · 8 GB+ RAM',
     size: 2.38e9,
     url: 'https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_0.gguf'
+  },
+  {
+    name: 'GLM-Edge · 4B',
+    note: 'Zhipu GLM, smarter · 8 GB+ RAM',
+    size: 2.6e9,
+    url: 'https://huggingface.co/zai-org/glm-edge-4b-chat-gguf/resolve/main/ggml-model-Q4_0.gguf'
+  },
+  {
+    name: 'DeepSeek R1 · 8B',
+    note: 'DeepSeek\'s best small reasoner · 12 GB+ RAM, slow',
+    size: 4.8e9,
+    url: 'https://huggingface.co/bartowski/deepseek-ai_DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/main/deepseek-ai_DeepSeek-R1-0528-Qwen3-8B-Q4_0.gguf'
+  },
+  {
+    name: 'GLM-4 · 9B',
+    note: 'Zhipu GLM, strongest here · 12 GB+ RAM, slow',
+    size: 5.5e9,
+    url: 'https://huggingface.co/bartowski/THUDM_GLM-4-9B-0414-GGUF/resolve/main/THUDM_GLM-4-9B-0414-Q4_0.gguf'
   }
 ];
 

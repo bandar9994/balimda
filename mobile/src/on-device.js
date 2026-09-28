@@ -37,6 +37,12 @@ export const CATALOG = [
     url: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf'
   },
   {
+    name: 'DeepSeek R1 · 1.5B',
+    note: 'DeepSeek, thinks before answering · slower',
+    size: 1.12e9,
+    url: 'https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf'
+  },
+  {
     name: 'Qwen 3 · 1.7B',
     note: 'Thinks before answering · slower',
     size: 1.11e9,

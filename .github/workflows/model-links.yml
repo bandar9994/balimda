@@ -1,0 +1,23 @@
+name: Model links
+
+# Checks that the phone models in the app can still be downloaded (a model
+# can be moved or renamed on Hugging Face), when the list changes and weekly.
+on:
+  push:
+    branches: ['main', 'claude/**']
+    paths: ['mobile/src/native-engine.js', 'mobile/src/on-device.js', 'scripts/check-model-links.js']
+  pull_request:
+    paths: ['mobile/src/native-engine.js', 'mobile/src/on-device.js', 'scripts/check-model-links.js']
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-model-links.js
