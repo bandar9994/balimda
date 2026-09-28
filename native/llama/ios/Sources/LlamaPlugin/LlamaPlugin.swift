@@ -437,7 +437,8 @@ final class TokenSink {
     init(_ handle: @escaping (String) -> Bool) { self.handle = handle }
 }
 
-/// One model download, with progress, written to a .part file first.
+/// One model download, with progress, written to a .part file first. It keeps
+/// going while the app is in the background.
 final class Download: NSObject, URLSessionDownloadDelegate {
     typealias Progress = (_ loaded: Int64, _ total: Int64, _ done: Bool, _ error: String?) -> Void
 
@@ -459,7 +460,12 @@ final class Download: NSObject, URLSessionDownloadDelegate {
     }
 
     func start() {
-        let config = URLSessionConfiguration.default
+        // A background session: iOS carries on with the download when the app
+        // is in the background or the phone is locked, and picks it up again
+        // after the connection drops.
+        let config = URLSessionConfiguration.background(withIdentifier: "com.bandar9994.balimda.download.\(UUID().uuidString)")
+        config.isDiscretionary = false
+        config.sessionSendsLaunchEvents = false
         config.timeoutIntervalForRequest = 60
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
         session?.downloadTask(with: source).resume()
