@@ -1165,7 +1165,9 @@ function openVoiceMode() {
     if (!m) return;
     if (m.phase === 'listening') api.voice.stopListening().catch(() => {});
     else if (m.phase === 'speaking') {
+      // Interrupted: stop reading, and the reply too if it's still being written.
       stopReading();
+      if (isStreaming(S.current)) stopCurrent();
       voiceListen();
     } else if (m.phase === 'thinking' && isStreaming(S.current)) {
       // Stop the reply; what's written so far is read, then it listens again.
