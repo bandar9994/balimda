@@ -21,19 +21,37 @@ const voice = createVoice({
   onEvent: (e) => { if (e.download.done) console.log(`downloaded ${e.download.id}: ${e.download.error || 'ok'}`); }
 });
 
+// The first `seconds` of a 16 kHz mono WAV, as a WAV.
+function cut(wav, seconds) {
+  const bytes = Math.min(wav.length - 44, Math.round(seconds * 16000) * 2);
+  const out = Buffer.concat([wav.subarray(0, 44), wav.subarray(44, 44 + bytes)]);
+  out.writeUInt32LE(36 + bytes, 4);
+  out.writeUInt32LE(bytes, 40);
+  return out;
+}
+
+const timed = async (fn) => {
+  const t0 = Date.now();
+  const r = await fn().catch((err) => ({ text: '', error: err.message }));
+  return { ...r, s: ((Date.now() - t0) / 1000).toFixed(1) };
+};
+
 (async () => {
   let failed = false;
   const wav = fs.readFileSync(wavPath);
   for (const m of WHISPER_MODELS) {
     await voice.download(m.id);
-    const t0 = Date.now();
-    const first = await voice.transcribe(wav, 'en', m.id).catch((err) => ({ error: err.message }));
-    const t1 = Date.now();
-    const again = await voice.transcribe(wav, 'auto', m.id).catch((err) => ({ error: err.message }));
-    const ok = !first.error && first.text.toLowerCase().includes(expected.toLowerCase()) && !again.error && again.text;
+    const load = await timed(() => voice.transcribe(cut(wav, 2), 'en', m.id));
+    const full = await timed(() => voice.transcribe(wav, 'en', m.id, { fullWindow: true }));
+    const sized = await timed(() => voice.transcribe(wav, 'en', m.id));
+    const short = await timed(() => voice.transcribe(cut(wav, 4), 'en', m.id));
+    const auto = await timed(() => voice.transcribe(wav, 'auto', m.id));
+    const ok = [full, sized, auto].every((r) => !r.error && r.text.toLowerCase().includes(expected.toLowerCase())) && short.text;
     if (!ok) failed = true;
-    console.log(`${ok ? '✓' : '✗'} ${m.name}: "${first.text || first.error}" (${((t1 - t0) / 1000).toFixed(1)} s with loading, ` +
-      `${((Date.now() - t1) / 1000).toFixed(1)} s loaded; language found automatically: "${again.text || again.error}")`);
+    console.log(`${ok ? '✓' : '✗'} ${m.name} (${os.cpus().length} CPU threads; starting it: ${load.s} s)`);
+    for (const [label, r] of [['30 s window', full], ['window sized to the recording', sized], ['a 4 s phrase', short], ['language found automatically', auto]]) {
+      console.log(`    ${label}: ${r.s} s  "${r.text || r.error}"`);
+    }
     voice.deleteModel(m.id);
   }
   voice.stop();

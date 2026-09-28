@@ -74,9 +74,13 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
   let server = null;           // { proc, port, modelId, dead, ready }
   let idleTimer = null;
 
+  // The large model is quick enough with a Mac's GPU or a CPU with many cores.
+  const recommended = (process.platform === 'darwin' && process.arch === 'arm64') || os.cpus().length >= 8 ? 'turbo' : 'small';
+
   function status() {
     return {
       available: fs.existsSync(exe),
+      recommended,
       models: WHISPER_MODELS.map((m) => {
         const d = downloads.get(m.id);
         return {
@@ -167,8 +171,8 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
     const s = { modelId: m.id, dead: false, log: '' };
     s.ready = (async () => {
       s.port = await freePort();
-      // Whisper is fastest on the physical cores; leave some for the rest of the computer.
-      const threads = Math.max(2, Math.min(8, Math.floor(os.cpus().length / 2)));
+      // Leave a core for the rest of the computer.
+      const threads = Math.max(2, Math.min(8, os.cpus().length - 1));
       s.proc = spawn(exe, ['-m', fileOf(m), '--host', '127.0.0.1', '--port', String(s.port), '-t', String(threads), '-nt', '-l', 'auto'], {
         cwd: binDir, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true
       });
@@ -200,7 +204,10 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
   }
 
   // wav: 16 kHz mono WAV. lang: 'ar', 'en' or 'auto'. Returns { text }.
-  async function transcribe(wav, lang, modelId) {
+  // Whisper normally works on 30 seconds of sound however little was said;
+  // a window sized to the recording makes a short sentence several times
+  // faster (opts.fullWindow turns this off).
+  async function transcribe(wav, lang, modelId, opts = {}) {
     const m = byId(modelId);
     if (!fs.existsSync(exe)) throw new Error("Speech recognition isn't included in this copy of Balimda.");
     if (!fs.existsSync(fileOf(m))) throw new Error(`Download the speech model first (Settings → Voice → ${m.name}).`);
@@ -212,6 +219,8 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
     form.append('response_format', 'json');
     form.append('temperature', '0.0');
     form.append('no_timestamps', 'true');
+    const seconds = Math.max(0, wav.length - 44) / (16000 * 2);
+    if (!opts.fullWindow && seconds < 26) form.append('audio_ctx', String(Math.min(1500, Math.ceil(seconds * 50) + 200)));
     let json;
     try {
       const res = await fetch(`http://127.0.0.1:${server.port}/inference`, { method: 'POST', body: form });

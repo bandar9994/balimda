@@ -217,7 +217,8 @@ contextBridge.exposeInMainWorld('balimda', {
         onDevice: true,
         needsModel: !s.models.some((m) => m.downloaded),
         tts: voices.length > 0,
-        models: s.models
+        models: s.models,
+        recommended: s.recommended
       };
     },
     status: invoke('voice:status'),

@@ -1988,6 +1988,7 @@ function desktopVoiceView(onCleanup, field, check, lang, rate, s) {
       return h('div', { class: `voice-model${chosen === m ? ' chosen' : ''}` },
         h('div', { class: 'voice-model-info' },
           h('strong', { text: m.name }),
+          V.avail && V.avail.recommended === m.id ? h('span', { class: 'voice-model-tag', text: 'Best for this computer' }) : null,
           h('div', { class: 'help', text: `${m.note} · ${gb(m.size)}` }),
           d ? h('div', { class: 'progress' }, h('div', { class: 'bar', style: `width:${pct}%` })) : null),
         d ? h('button', { class: 'btn', text: `Cancel (${pct}%)`, onclick: () => api.voice.cancelDownload(m.id) })

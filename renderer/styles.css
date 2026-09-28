@@ -380,6 +380,7 @@ details.thinking summary { cursor: pointer; }
 .voice-model-info { flex: 1; min-width: 0; }
 .voice-model .progress { width: 100%; margin-top: 6px; }
 .voice-model-state { font-size: 12px; font-weight: 600; color: var(--accent); }
+.voice-model-tag { margin-left: 8px; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--bg-user); color: var(--accent); }
 
 /* ---------- controls ---------- */
 
