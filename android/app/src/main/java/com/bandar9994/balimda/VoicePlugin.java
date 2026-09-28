@@ -158,7 +158,14 @@ public class VoicePlugin extends Plugin {
         switch (error) {
             case SpeechRecognizer.ERROR_NO_MATCH:
             case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
+            case SpeechRecognizer.ERROR_CLIENT:  // some phones report this when listening is stopped
                 finishListening(heard, null);  // nothing (more) was said
+                return;
+            case SpeechRecognizer.ERROR_AUDIO:
+                finishListening(null, "Couldn't record from the microphone. Another app may be using it (a call or a recorder). Try again.");
+                return;
+            case SpeechRecognizer.ERROR_TOO_MANY_REQUESTS:
+                finishListening(null, "Google's speech recognition is busy right now. Wait a moment, or turn on \"Private voice\" in Settings → Voice.");
                 return;
             case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
                 finishListening(null, "Balimda needs the microphone to hear you. Allow it in the phone's Settings → Apps → Balimda → Permissions.");
@@ -302,7 +309,11 @@ public class VoicePlugin extends Plugin {
             tts.setSpeechRate(rate);
             String id = UUID.randomUUID().toString();
             speaking.put(id, call);
-            tts.speak(text, TextToSpeech.QUEUE_ADD, null, id);
+            if (tts.speak(text, TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.SUCCESS) {
+                // Refused (e.g. too long): no callback will come for it.
+                speaking.remove(id);
+                call.reject("The phone couldn't read this aloud.", "tts-refused");
+            }
         });
     }
 
@@ -312,6 +323,16 @@ public class VoicePlugin extends Plugin {
             if (tts != null) tts.stop();
             for (String id : new ArrayList<>(speaking.keySet())) finishSpeaking(id, true);
             call.resolve();
+        });
+    }
+
+    // Android doesn't let an app in the background use the microphone:
+    // leaving the app ends listening (with what was heard so far).
+    @Override
+    protected void handleOnPause() {
+        main.post(() -> {
+            if (recognizer != null) recognizer.cancel();
+            finishListening(heard, null);
         });
     }
 

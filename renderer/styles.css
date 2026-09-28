@@ -349,7 +349,8 @@ details.thinking summary { cursor: pointer; }
 }
 .voice-orb-core { width: 42%; height: 42%; border-radius: 50%; background: rgba(255, 255, 255, 0.28); }
 .voice-overlay[data-phase="listening"] .voice-orb-core { animation: voice-breathe 1.6s ease-in-out infinite; }
-.voice-overlay[data-phase="thinking"] .voice-orb { animation: voice-think 1.2s ease-in-out infinite; }
+.voice-overlay[data-phase="thinking"] .voice-orb,
+.voice-overlay[data-phase="understanding"] .voice-orb { animation: voice-think 1.2s ease-in-out infinite; }
 .voice-overlay[data-phase="speaking"] .voice-orb-core { animation: voice-speak 0.7s ease-in-out infinite alternate; }
 .voice-overlay[data-phase="idle"] .voice-orb { background: var(--bg-active); box-shadow: none; }
 .voice-overlay[data-phase="idle"] .voice-orb-core { background: var(--text-dim); opacity: 0.35; }

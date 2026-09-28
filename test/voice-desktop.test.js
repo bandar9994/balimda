@@ -96,3 +96,48 @@ http.createServer((req, res) => {
     voice.stop();
   }
 });
+
+test('a download works when the server doesn\'t say the size, and a finished one reports done', async () => {
+  const data = crypto.randomBytes(120000);
+  const srv = http.createServer((req, res) => {
+    res.writeHead(200); // no Content-Length: sent in chunks
+    res.write(data.subarray(0, 60000));
+    setTimeout(() => res.end(data.subarray(60000)), 20);
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const dir = tmp();
+  const events = [];
+  const model = WHISPER_MODELS[1];
+  const realUrl = model.url;
+  model.url = `http://127.0.0.1:${srv.address().port}/ggml-chunked.bin`;
+  try {
+    const voice = createVoice({ binDir: dir, modelsDir: dir, onEvent: (e) => events.push(e.download) });
+    await voice.download(model.id);
+    const done = events.find((e) => e.done);
+    assert.strictEqual(done.error, undefined);
+    assert.ok(fs.readFileSync(path.join(dir, 'ggml-chunked.bin')).equals(data));
+    events.length = 0;
+    await voice.download(model.id); // already there
+    assert.deepStrictEqual(events.map((e) => [e.id, e.done]), [[model.id, true]]);
+  } finally {
+    model.url = realUrl;
+    srv.close();
+  }
+});
+
+test('stopping Whisper while it starts gives an error, not a crash', { skip: process.platform === 'win32' }, async () => {
+  const dir = tmp();
+  const model = WHISPER_MODELS[1];
+  fs.writeFileSync(path.join(dir, path.basename(new URL(model.url).pathname)), 'model');
+  const fake = path.join(dir, 'whisper-server');
+  fs.writeFileSync(fake, '#!/usr/bin/env node\nsetTimeout(() => {}, 60000);\n'); // never answers
+  fs.chmodSync(fake, 0o755);
+  const voice = createVoice({ binDir: dir, modelsDir: dir });
+  const pending = voice.transcribe(Buffer.alloc(100), 'en', model.id);
+  voice.stop(); // before it has even started
+  await assert.rejects(pending, /stopped|couldn't start/i);
+  const again = voice.transcribe(Buffer.alloc(100), 'en', model.id);
+  await new Promise((r) => setTimeout(r, 300));
+  voice.deleteModel(model.id); // while it's loading
+  await assert.rejects(again, /couldn't start|stopped/i);
+});

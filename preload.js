@@ -17,12 +17,16 @@ const emitVoice = (evt) => { for (const cb of voiceListeners) cb(evt); };
 ipcRenderer.on('voice:event', (_e, evt) => emitVoice(evt));
 const SAMPLE_RATE = 16000;
 let recording = null; // { finish, cancel } while listening
+let starting = null;  // { stopped } while the microphone is being opened
 
 async function listen({ lang, model } = {}) {
   if (recording) recording.cancel();
-  await ipcRenderer.invoke('voice:askMic');
+  if (starting) starting.stopped = true;
+  const start = { stopped: false };
+  starting = start;
   let stream;
   try {
+    await ipcRenderer.invoke('voice:askMic');
     stream = await navigator.mediaDevices.getUserMedia({
       // No automatic gain: it turns the room's noise up when you stop talking,
       // which would hide the pause. Whisper copes with quiet speech.
@@ -32,6 +36,13 @@ async function listen({ lang, model } = {}) {
     throw new Error(err.name === 'NotAllowedError'
       ? "Balimda isn't allowed to use the microphone. Allow it in your computer's privacy settings (Microphone), then try again."
       : err.name === 'NotFoundError' ? 'No microphone found. Connect one and try again.' : `Couldn't use the microphone: ${err.message}`);
+  } finally {
+    if (starting === start) starting = null;
+  }
+  // Stopped or cancelled while the microphone was opening: nothing was said.
+  if (start.stopped) {
+    for (const t of stream.getTracks()) t.stop();
+    return { text: '' };
   }
   const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
   const source = ctx.createMediaStreamSource(stream);
@@ -138,9 +149,12 @@ function voiceFor(list, lang) {
 }
 
 const speaking = new Set(); // utterances being spoken (kept, or Chromium may drop their "end")
+let spoken = 0; // bumped by stopSpeaking, so a sentence still waiting for the voices isn't read after it
 
 async function speak({ text, lang = 'en-US', rate = 1 } = {}) {
+  const round = spoken;
   const voice = voiceFor(await systemVoices(), lang);
+  if (round !== spoken) return { interrupted: true };
   if (!voice) {
     const name = /^ar/i.test(lang) ? 'Arabic' : 'English';
     throw new Error(`This computer has no ${name} voice to read replies. Windows: Settings → Time & language → Speech → Add voices. ` +
@@ -226,10 +240,17 @@ contextBridge.exposeInMainWorld('balimda', {
     cancelDownload: invoke('voice:cancelDownload'),
     deleteModel: invoke('voice:deleteModel'),
     listen,
-    async stopListening() { if (recording) recording.finish(); },
-    async cancelListening() { if (recording) recording.cancel(); },
+    async stopListening() {
+      if (recording) recording.finish();
+      if (starting) starting.stopped = true;
+    },
+    async cancelListening() {
+      if (recording) recording.cancel();
+      if (starting) starting.stopped = true;
+    },
     speak,
     async stopSpeaking() {
+      spoken++;
       speechSynthesis.cancel();
       speaking.clear();
     },

@@ -116,6 +116,12 @@ public class VoicePlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDelega
 
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
+        // No usable microphone (installing a tap on it would crash the app).
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            call.reject("No microphone is available right now. Try again, or check the iPhone's microphone.", "no-mic")
+            return
+        }
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             req.append(buffer)

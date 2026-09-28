@@ -72,3 +72,39 @@ test('nextChunk handles Arabic sentence ends', () => {
   const text = 'مرحباً! كيف يمكنني مساعدتك اليوم في رحلتك؟ ';
   assert.strictEqual(nextChunk(text, 0, false).chunk, 'مرحباً! كيف يمكنني مساعدتك اليوم في رحلتك؟');
 });
+
+test('nextChunk splits a long reply into pieces a voice can take', () => {
+  const sentence = 'This is a sentence of about sixty characters for the test. ';
+  const text = sentence.repeat(40); // 2400 characters, finished
+  const pieces = [];
+  let at = 0;
+  let c;
+  while ((c = nextChunk(text, at, true))) {
+    pieces.push(c.chunk);
+    at = c.next;
+  }
+  assert.strictEqual(pieces.join(''), text, 'nothing lost');
+  assert.ok(pieces.length >= 6, `split into ${pieces.length} pieces`);
+  assert.ok(pieces.every((p) => p.length <= 460), 'each about 400 characters or less');
+  assert.ok(pieces.slice(0, -1).every((p) => /\.\s*$/.test(p)), 'each ends at a sentence end');
+});
+
+test('nextChunk breaks one huge sentence at a space', () => {
+  const text = 'word '.repeat(300); // 1500 characters, no sentence end
+  const c = nextChunk(text, 0, true);
+  assert.ok(c.chunk.length <= 405 && c.chunk.endsWith(' '), `piece of ${c.chunk.length}`);
+  assert.strictEqual(nextChunk(text, 0, false), null, 'while writing, wait for a sentence end');
+});
+
+test('nextChunk reads a finished mixed Arabic and English reply in pieces', () => {
+  const text = 'مرحباً! هذه إجابة باللغة العربية عن سؤالك.\nHere is the English part of the answer.';
+  const a = nextChunk(text, 0, true);
+  assert.strictEqual(a.chunk, text, 'short: one piece');
+  const long = `${'جملة عربية طويلة بما يكفي للاختبار هنا. '.repeat(12)}\n${'An English sentence for the test. '.repeat(12)}`;
+  const pieces = [];
+  let at = 0;
+  let c;
+  while ((c = nextChunk(long, at, true))) { pieces.push(c.chunk); at = c.next; }
+  assert.strictEqual(pieces.join(''), long);
+  assert.ok(pieces.length >= 3);
+});

@@ -98,7 +98,11 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
   // Downloads a model; when the connection drops, carries on where it stopped.
   async function download(id) {
     const m = byId(id);
-    if (downloads.has(m.id) || fs.existsSync(fileOf(m))) return;
+    if (downloads.has(m.id)) return; // already downloading
+    if (fs.existsSync(fileOf(m))) {
+      onEvent({ download: { id: m.id, loaded: m.size, total: m.size, done: true } });
+      return;
+    }
     fs.mkdirSync(modelsDir, { recursive: true });
     const part = `${fileOf(m)}.part`;
     const d = { loaded: 0, total: m.size, controller: new AbortController() };
@@ -106,6 +110,7 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
     const emit = (extra = {}) => onEvent({ download: { id: m.id, loaded: d.loaded, total: d.total, ...extra } });
     let failures = 0;
     let lastEmit = 0;
+    let sized = false; // the server said how big the file is
     try {
       for (;;) {
         try {
@@ -115,7 +120,8 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
           const resumed = d.loaded > 0 && res.status === 206;
           if (!resumed) d.loaded = 0;
           const length = Number(res.headers.get('content-length'));
-          if (length > 0) d.total = d.loaded + length;
+          sized = length > 0;
+          if (sized) d.total = d.loaded + length;
           const out = fs.createWriteStream(part, { flags: resumed ? 'a' : 'w' });
           try {
             for await (const chunk of res.body) {
@@ -130,7 +136,8 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
           } finally {
             await new Promise((r) => out.end(r));
           }
-          if (d.total && d.loaded !== d.total) throw new Error('The download stopped early.');
+          if (sized && d.loaded !== d.total) throw new Error('The download stopped early.');
+          d.total = d.loaded;
           break;
         } catch (err) {
           if (d.controller.signal.aborted || err.fatal || ++failures > DOWNLOAD_RETRIES) throw err;
@@ -162,7 +169,7 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
     clearTimeout(idleTimer);
     if (server) {
       server.dead = true;
-      server.proc.kill();
+      if (server.proc) server.proc.kill(); // (not started yet: it won't be)
       server = null;
     }
   }
@@ -174,6 +181,7 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
     const s = { modelId: m.id, dead: false, log: '' };
     s.ready = (async () => {
       s.port = await freePort();
+      if (s.dead) throw new Error('Speech recognition was stopped.');
       // Leave a core for the rest of the computer.
       const threads = Math.max(2, Math.min(8, os.cpus().length - 1));
       s.proc = spawn(exe, ['-m', fileOf(m), '--host', '127.0.0.1', '--port', String(s.port), '-t', String(threads), '-nt', '-l', 'auto'], {
@@ -193,7 +201,7 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
         }
         try {
           const res = await fetch(`http://127.0.0.1:${s.port}/`);
-          if (res.ok) return;
+          if (res.ok) return s;
         } catch {
           // not listening yet (still loading the model)
         }
@@ -216,7 +224,7 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
     if (!fs.existsSync(exe)) throw new Error("Speech recognition isn't included in this copy of Balimda.");
     if (!fs.existsSync(fileOf(m))) throw new Error(`Download the speech model first (Settings → Voice → ${m.name}).`);
     clearTimeout(idleTimer);
-    await ensureServer(m);
+    const s = await ensureServer(m);
     const form = new FormData();
     form.append('file', new Blob([wav], { type: 'audio/wav' }), 'speech.wav');
     form.append('language', ['ar', 'en', 'auto'].includes(lang) ? lang : 'auto');
@@ -227,10 +235,10 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
     if (m.sizedWindow && !opts.fullWindow && seconds < 25) form.append('audio_ctx', String(Math.max(750, Math.ceil(seconds * 50) + 250)));
     let json;
     try {
-      const res = await fetch(`http://127.0.0.1:${server.port}/inference`, { method: 'POST', body: form });
+      const res = await fetch(`http://127.0.0.1:${s.port}/inference`, { method: 'POST', body: form });
       json = await res.json();
     } catch (err) {
-      stop();
+      if (server === s) stop();
       throw new Error(`Speech recognition stopped (${err.message}). Try again.`);
     }
     idleTimer = setTimeout(stop, IDLE_STOP_MS);
