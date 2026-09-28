@@ -17,6 +17,7 @@ import { remoteComputers } from '../../src/remote.js';
 import * as local from './on-device.js';
 import * as native from './native-engine.js';
 
+const Voice = registerPlugin('Voice');
 const ROOT = 'balimda-data';
 const isNative = Capacitor.isNativePlatform();
 
@@ -340,6 +341,20 @@ window.balimda = {
       return () => aiListeners.delete(cb);
     }
   },
+  // Talking instead of typing, and replies read aloud, with the phone's own
+  // speech services (android/.../VoicePlugin.java, native/llama/ios/.../VoicePlugin.swift).
+  voice: isNative ? {
+    available: (opts) => Voice.available(opts || {}),
+    listen: (opts) => Voice.listen(opts),
+    stopListening: () => Voice.stopListening(),
+    cancelListening: () => Voice.cancelListening(),
+    speak: (opts) => Voice.speak(opts),
+    stopSpeaking: () => Voice.stopSpeaking(),
+    onEvent(cb) {
+      const handle = Voice.addListener('voice', cb);
+      return () => handle.then((h) => h.remove());
+    }
+  } : undefined,
   sync: {
     status: withSync((s) => s.status()),
     connect: withSync((s, opts) => s.connect(opts)),

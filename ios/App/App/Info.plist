@@ -61,6 +61,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Balimda listens when you tap the microphone, so you can talk to your AI instead of typing.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Balimda turns what you say into text for your chat. With "Private voice" on, this happens only on your iPhone.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Balimda connects to the AI models on your own computer (the Balimda desktop app, Ollama, LM Studio or Hermes Agent) over your Wi-Fi.</string>
 	<key>UISupportedInterfaceOrientations</key>

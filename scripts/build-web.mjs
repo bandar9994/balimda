@@ -23,6 +23,7 @@ await fs.mkdir(path.join(out, 'wllama'), { recursive: true });
 
 await Promise.all([
   fs.copyFile(r('renderer/app.js'), path.join(out, 'app.js')),
+  fs.copyFile(r('renderer/speech-text.js'), path.join(out, 'speech-text.js')),
   fs.copyFile(r('renderer/styles.css'), path.join(out, 'styles.css')),
   fs.copyFile(r('build/icon.png'), path.join(out, 'icon.png')),
   fs.copyFile(r('LICENSE'), path.join(out, 'LICENSE.txt')),

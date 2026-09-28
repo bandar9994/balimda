@@ -2,7 +2,7 @@
 // Licensed under the Balimda License (see LICENSE): non-commercial use only;
 // keep the Balimda name and the "Balimda by Bandar Altariqi" credit; no rebranding.
 
-/* global marked, DOMPurify */
+/* global marked, DOMPurify, SpeechText */
 'use strict';
 
 const api = window.balimda;
@@ -34,6 +34,7 @@ const el = {
   messages: $('#messages'),
   input: $('#input'),
   sendBtn: $('#sendBtn'),
+  micBtn: $('#micBtn'),
   hint: $('#composerHint'),
   chatMenu: $('#chatMenu'),
   modalRoot: $('#modalRoot'),
@@ -657,6 +658,13 @@ function renderMessage(chat, msg, index) {
     actions.append(h('button', { text: 'Edit', onclick: () => startEdit(chat, msg, node) }));
     actions.append(h('button', { text: 'Remember', title: 'Add this to memory', onclick: () => rememberText(msg.content) }));
   } else {
+    if (canSpeak() && msg.content) {
+      actions.append(h('button', {
+        'data-read': msg.id,
+        text: V.reading && V.reading.msg.id === msg.id ? 'Stop reading' : 'Read aloud',
+        onclick: () => (V.reading && V.reading.msg.id === msg.id ? stopReading() : startReading(msg))
+      }));
+    }
     const isLast = index === chat.messages.length - 1;
     if (isLast) actions.append(h('button', { text: 'Regenerate', onclick: () => regenerate(chat) }));
     actions.append(h('button', { text: 'Delete', onclick: () => deleteMessage(chat, msg) }));
@@ -867,12 +875,16 @@ function scheduleMessageRender(chat, msg) {
 }
 
 function updateComposer() {
-  const streaming = isStreaming(S.current);
-  el.sendBtn.textContent = streaming ? 'Stop' : 'Send';
-  el.sendBtn.classList.toggle('danger', streaming);
+  updateSendButton();
+  el.micBtn.classList.toggle('listening', V.dictating);
+  el.micBtn.title = V.dictating ? 'Stop listening' : 'Talk instead of typing';
   const note = S.current ? modelNote(S.current, chatModel(S.current)) : '';
-  el.hint.classList.toggle('model-note', !!note);
-  if (note) el.hint.textContent = note;
+  el.hint.classList.toggle('model-note', !!note && !V.dictating);
+  if (V.dictating) {
+    const other = voiceLang() === 'ar-SA' ? 'en-US' : 'ar-SA';
+    el.hint.replaceChildren(`Listening in ${VOICE_LANGS[voiceLang()]}… tap the mic when you're done · `,
+      h('a', { href: '#', text: `Switch to ${VOICE_LANGS[other]}`, onclick: (e) => { e.preventDefault(); toggleVoiceLang(); } }));
+  } else if (note) el.hint.textContent = note;
   else if (S.info.mobile) el.hint.textContent = S.sync && S.sync.configured ? 'Every chat is saved on this phone and synced' : 'Every chat is saved on this phone';
   else {
     el.hint.textContent = S.settings.sendOnEnter
@@ -881,9 +893,296 @@ function updateComposer() {
   }
 }
 
+// "Send", "Stop" while a reply is written, or "Talk" (voice chat) when the box is empty.
+function updateSendButton() {
+  const streaming = isStreaming(S.current);
+  const talk = !streaming && !V.dictating && !el.input.value.trim() && canListen() && canSpeak();
+  el.sendBtn.textContent = streaming ? 'Stop' : talk ? 'Talk' : 'Send';
+  el.sendBtn.title = talk ? 'Voice chat: talk and hear the replies' : streaming ? 'Stop' : 'Send';
+  el.sendBtn.classList.toggle('danger', streaming);
+  el.sendBtn.dataset.mode = streaming ? 'stop' : talk ? 'talk' : 'send';
+}
+
 function autoGrow() {
   el.input.style.height = 'auto';
   el.input.style.height = `${Math.min(el.input.scrollHeight, 240)}px`;
+}
+
+// ---------------------------------------------------------------------------
+// voice: talking instead of typing, and replies read aloud (api.voice: the
+// phone's own speech services). Text for speech comes from speech-text.js.
+
+const V = {
+  avail: null,       // { recognition, onDevice, tts }
+  dictating: false,  // the mic in the message box is listening
+  dictBase: '',      // what was in the message box before
+  mode: null,        // voice chat screen, while open
+  reading: null,     // { msg, spoken, pending, finished, token, onDone } reply being read aloud
+  token: 0           // bumped to drop the rest of a reading that was stopped
+};
+const VOICE_LANGS = { 'ar-SA': 'Arabic', 'en-US': 'English' };
+
+const voiceLang = () => S.settings.voiceLang || (/^ar/i.test(navigator.language) ? 'ar-SA' : 'en-US');
+const canListen = () => !!(api.voice && V.avail && V.avail.recognition);
+const canSpeak = () => !!(api.voice && V.avail && V.avail.tts);
+const listenOpts = () => ({ lang: voiceLang(), offline: !!S.settings.voicePrivate });
+// The voice for a piece of text: Arabic or English, whichever it's written in.
+const speechLang = (text) => (SpeechText.languageOf(text, voiceLang().slice(0, 2)) === 'ar' ? 'ar-SA' : 'en-US');
+
+async function initVoice() {
+  if (!api.voice) return;
+  V.avail = await api.voice.available({ lang: voiceLang() }).catch(() => null);
+  api.voice.onEvent(onVoiceEvent);
+  el.micBtn.hidden = !canListen();
+  updateComposer();
+}
+
+function onVoiceEvent(evt) {
+  const m = V.mode;
+  if (evt.partial != null) {
+    if (V.dictating) {
+      el.input.value = V.dictBase + evt.partial;
+      autoGrow();
+    }
+    if (m && m.phase === 'listening') m.said.textContent = evt.partial;
+  }
+  if (evt.level != null && m && m.phase === 'listening') m.orb.style.setProperty('--level', evt.level.toFixed(2));
+}
+
+// The mic in the message box: what you say is written into the box, to
+// check before sending. Tapping it again stops listening.
+async function toggleDictation() {
+  if (V.dictating) {
+    api.voice.stopListening().catch(() => {});
+    return;
+  }
+  stopReading();
+  V.dictating = true;
+  V.dictBase = el.input.value.trim() ? `${el.input.value.replace(/\s+$/, '')} ` : '';
+  updateComposer();
+  try {
+    const { text } = await api.voice.listen(listenOpts());
+    el.input.value = V.dictBase + (text || '');
+    if (!text && !V.dictBase && !V.relisten) toast("Didn't catch that. Tap the mic and try again.");
+  } catch (err) {
+    el.input.value = V.dictBase.trimEnd();
+    if (!V.relisten) toast(errorText(err), 7000);
+  } finally {
+    V.dictating = false;
+    autoGrow();
+    saveDraft(draftKey(), el.input.value);
+    updateComposer();
+    if (!S.info.mobile) el.input.focus();
+  }
+  if (V.relisten) {
+    // The language was switched: listen again in the new one.
+    V.relisten = false;
+    toggleDictation();
+  }
+}
+
+// Switch between talking in Arabic and in English.
+function toggleVoiceLang() {
+  S.settings.voiceLang = voiceLang() === 'ar-SA' ? 'en-US' : 'ar-SA';
+  saveSettings();
+  if (V.mode) {
+    V.mode.langBtn.textContent = VOICE_LANGS[voiceLang()];
+    if (V.mode.phase === 'listening') {
+      V.mode.restart = true;
+      api.voice.cancelListening().catch(() => {});
+    }
+  }
+  if (V.dictating) {
+    V.relisten = true;
+    api.voice.cancelListening().catch(() => {});
+  }
+  updateComposer();
+}
+
+// ---- reading replies aloud
+
+// Reads `msg` aloud, following along while it's still being written.
+function startReading(msg, onDone) {
+  stopReading();
+  V.reading = { msg, spoken: 0, pending: 0, finished: false, token: ++V.token, onDone };
+  followReading(msg);
+  syncReadButtons();
+}
+
+function followReading(msg) {
+  const r = V.reading;
+  if (!r || r.msg !== msg) return;
+  const final = !msg.pending;
+  const { thinking, done, answer } = splitThinking(msg.content);
+  if (thinking != null && !done && !final) return; // still thinking: nothing to read yet
+  let piece;
+  while ((piece = SpeechText.nextChunk(answer, r.spoken, final))) {
+    r.spoken = piece.next;
+    const say = SpeechText.speakable(piece.chunk);
+    if (say) speakPiece(r, say);
+  }
+  if (final) {
+    r.finished = true;
+    if (!r.pending) readingDone(r);
+  }
+}
+
+function speakPiece(r, text) {
+  r.pending++;
+  if (V.mode && V.mode.msg === r.msg) setVoicePhase('speaking');
+  api.voice.speak({ text, lang: speechLang(text), rate: Number(S.settings.voiceRate) || 1 })
+    .catch((err) => {
+      if (r.token !== V.token) return;
+      toast(errorText(err), 8000);
+      r.failed = true;
+    })
+    .finally(() => {
+      r.pending--;
+      if (r.token === V.token && (r.failed || (r.finished && !r.pending))) readingDone(r);
+    });
+}
+
+function readingDone(r) {
+  if (V.reading !== r) return;
+  V.reading = null;
+  if (r.failed) api.voice.stopSpeaking().catch(() => {});
+  syncReadButtons();
+  if (r.onDone) r.onDone(r);
+}
+
+function stopReading() {
+  if (!V.reading) return;
+  V.reading = null;
+  V.token++;
+  api.voice.stopSpeaking().catch(() => {});
+  syncReadButtons();
+}
+
+function syncReadButtons() {
+  for (const btn of el.messages.querySelectorAll('button[data-read]')) {
+    btn.textContent = V.reading && V.reading.msg.id === btn.dataset.read ? 'Stop reading' : 'Read aloud';
+  }
+}
+
+// A reply starts: read it aloud in voice chat, or when "Read replies aloud" is on.
+function voiceReplyStarted(chat, msg) {
+  if (!canSpeak() || chat !== S.current) return;
+  if (V.mode) {
+    const m = V.mode;
+    m.msg = msg;
+    m.reply.textContent = '';
+    startReading(msg, () => voiceReplyFinished(m, msg));
+  } else if (S.settings.readAloud) {
+    startReading(msg);
+  }
+}
+
+function voiceReplyUpdated(msg) {
+  if (V.reading && V.reading.msg === msg) followReading(msg);
+  if (V.mode && V.mode.msg === msg) {
+    const { answer } = splitThinking(msg.content);
+    V.mode.reply.textContent = SpeechText.speakable(answer);
+  }
+}
+
+// ---- voice chat: talk, hear the reply, talk again
+
+function openVoiceMode() {
+  if (!canListen() || !canSpeak()) return;
+  if (!currentModel()) {
+    toast('Choose a model first (top right).');
+    return;
+  }
+  stopReading();
+  const orb = h('button', { class: 'voice-orb', 'aria-label': 'Talk' }, h('span', { class: 'voice-orb-core' }));
+  const status = h('div', { class: 'voice-status', 'aria-live': 'polite' });
+  const said = h('div', { class: 'voice-said', dir: 'auto' });
+  const reply = h('div', { class: 'voice-reply', dir: 'auto' });
+  const langBtn = h('button', { class: 'btn voice-lang', title: 'The language you talk in', text: VOICE_LANGS[voiceLang()], onclick: toggleVoiceLang });
+  const root = h('div', { class: 'voice-overlay', role: 'dialog', 'aria-label': 'Voice chat' },
+    h('div', { class: 'voice-top' },
+      langBtn,
+      h('span', { class: 'voice-private', text: S.settings.voicePrivate ? 'Private voice' : '' })),
+    h('div', { class: 'voice-center' }, orb, status, said),
+    reply,
+    h('div', { class: 'voice-bottom' }, h('button', { class: 'btn', text: 'End voice chat', onclick: closeVoiceMode })));
+  document.body.append(root);
+  V.mode = { root, orb, status, said, reply, langBtn, phase: 'idle', msg: null };
+  orb.addEventListener('click', () => {
+    const m = V.mode;
+    if (!m) return;
+    if (m.phase === 'listening') api.voice.stopListening().catch(() => {});
+    else if (m.phase === 'speaking') {
+      stopReading();
+      voiceListen();
+    } else if (m.phase === 'idle') voiceListen();
+  });
+  voiceListen();
+}
+
+function setVoicePhase(phase, text) {
+  const m = V.mode;
+  if (!m) return;
+  m.phase = phase;
+  m.root.dataset.phase = phase;
+  m.orb.style.setProperty('--level', '0');
+  m.status.textContent = text || {
+    listening: `Listening in ${VOICE_LANGS[voiceLang()]}…`,
+    thinking: 'Thinking…',
+    speaking: 'Speaking · tap to interrupt',
+    idle: 'Tap to talk'
+  }[phase];
+}
+
+async function voiceListen() {
+  const m = V.mode;
+  if (!m) return;
+  m.said.textContent = '';
+  setVoicePhase('listening');
+  let text = '';
+  try {
+    ({ text } = await api.voice.listen(listenOpts()));
+  } catch (err) {
+    if (V.mode === m) setVoicePhase('idle', errorText(err));
+    return;
+  }
+  if (V.mode !== m) return;
+  if (m.restart) {
+    m.restart = false;
+    voiceListen();
+    return;
+  }
+  if (!text) {
+    setVoicePhase('idle', "Didn't hear anything. Tap to talk.");
+    return;
+  }
+  if (isStreaming(S.current)) {
+    setVoicePhase('idle', 'Still writing the last reply. Tap to talk when it\'s done.');
+    return;
+  }
+  m.said.textContent = text;
+  m.reply.textContent = '';
+  setVoicePhase('thinking');
+  el.input.value = text;
+  send();
+}
+
+function voiceReplyFinished(m, msg) {
+  if (V.mode !== m) return;
+  if (msg.error) {
+    setVoicePhase('idle', msg.error.replace(/^Error: /, ''));
+    return;
+  }
+  voiceListen();
+}
+
+function closeVoiceMode() {
+  const m = V.mode;
+  if (!m) return;
+  V.mode = null;
+  api.voice.cancelListening().catch(() => {});
+  stopReading();
+  m.root.remove();
 }
 
 // ---------------------------------------------------------------------------
@@ -905,6 +1204,7 @@ async function loadChat(id) {
 }
 
 async function openChat(id) {
+  stopReading();
   const chat = S.cache.get(id) || await loadChat(id);
   if (!chat) {
     toast('That chat could not be found.');
@@ -924,6 +1224,7 @@ async function openChat(id) {
 }
 
 function newChat() {
+  stopReading();
   S.current = null;
   S.newChatModel = null;
   S.newChatAssistantId = null;
@@ -1210,6 +1511,7 @@ async function send() {
   }
   const text = el.input.value.trim();
   if (!text) return;
+  if (!V.mode) stopReading();
   const model = currentModel();
   if (!model) {
     toast('Choose a model first (top right).');
@@ -1250,6 +1552,7 @@ async function runCompletion(chat) {
     renderChat();
     scrollToBottom();
   }
+  voiceReplyStarted(chat, msg);
   await saveChatNow(chat);
 
   const recalled = shareMemoryWith(model) ? await recallFor(chat, model) : [];
@@ -1292,6 +1595,7 @@ async function runCompletion(chat) {
   if (!res.ok) msg.error = `Error: ${res.error}`;
   if (res.stats) msg.stats = res.stats;
   if (res.ok && res.stopReason === 'max_tokens') msg.notice = 'The reply was cut off at the length limit. Ask it to continue, or raise "Max tokens" in Settings.';
+  voiceReplyUpdated(msg);
   chat.updatedAt = Date.now();
   await saveChatNow(chat);
   if (S.current === chat) {
@@ -1657,6 +1961,7 @@ function openSettings(tab = 'general') {
     ['providers', 'Models & providers'],
     ['assistants', 'Assistants'],
     ['memory', 'Memory'],
+    ...(api.voice ? [['voice', 'Voice']] : []),
     ...(api.sync ? [['sync', 'Sync']] : []),
     ['data', 'Data & backup'],
     ['about', 'About']
@@ -1828,6 +2133,37 @@ function openSettings(tab = 'general') {
         memoryBox(onCleanup, field, bind, s),
         check('Look through my earlier chats for relevant details', s, 'recallChats'),
         h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: 'Before each reply, the best-matching bits of your other chats are given to the model (a little less for phone models, to stay fast). Replies that used them say so underneath, with links to those chats.' })
+      ];
+    },
+
+    voice() {
+      const lang = bind(h('select', { class: 'select' },
+        h('option', { value: 'ar-SA', text: 'Arabic (Saudi Arabia)' }),
+        h('option', { value: 'en-US', text: 'English' })), s, 'voiceLang');
+      lang.value = voiceLang();
+      const rate = bind(h('select', { class: 'select' },
+        h('option', { value: '0.85', text: 'Slower' }),
+        h('option', { value: '1', text: 'Normal' }),
+        h('option', { value: '1.2', text: 'Faster' })), s, 'voiceRate', Number);
+      rate.value = String(Number(s.voiceRate) || 1);
+      const privateNote = h('div', { class: 'help', style: 'margin: -4px 0 14px 26px' });
+      const describePrivate = async () => {
+        const a = await api.voice.available({ lang: voiceLang() }).catch(() => null);
+        privateNote.textContent = 'Without it, what you say is sent to ' + (S.info.platform === 'ios' ? 'Apple' : 'Google') +
+          ' to be turned into text, which is the most accurate, especially for Arabic dialects. With it, nothing leaves the phone, but it may understand you less well. ' +
+          (a && a.onDevice ? 'This phone can do this.' : 'This phone can\'t recognise speech offline' + (S.info.platform === 'ios' ? ' in this language.' : ' (it needs Android 12 or newer with Google\'s speech services).'));
+      };
+      lang.addEventListener('change', describePrivate);
+      describePrivate();
+      return [
+        h('p', { class: 'help', text: 'Tap the microphone in the message box to talk instead of typing. When the box is empty, tap "Talk" for a voice chat: you talk, the reply is read aloud, and it listens again.' }),
+        canListen() ? null : h('div', { class: 'notice', text: 'This phone has no speech recognition service, so you can\'t talk to Balimda yet. Install or turn on "Speech Services by Google" (Android), then restart Balimda.' }),
+        field('The language you talk in', lang, 'You can also switch while talking. Replies are read in the language they\'re written in.'),
+        check('Private voice: understand speech only on this phone', s, 'voicePrivate'),
+        privateNote,
+        check('Read replies aloud', s, 'readAloud'),
+        h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: 'Every reply is read aloud as it\'s written. You can also tap "Read aloud" under any reply. Replies are read by the phone\'s own voices, on the phone.' }),
+        field('Reading speed', rate)
       ];
     },
 
@@ -2148,6 +2484,10 @@ function closeDrawer() {
 
 // Android back button: close whatever is on top, else leave the app.
 function goBack() {
+  if (V.mode) {
+    closeVoiceMode();
+    return;
+  }
   const top = el.modalRoot.lastElementChild;
   if (top) {
     top.querySelector('.modal-head .icon-btn').click();
@@ -2180,7 +2520,11 @@ function bindEvents() {
   el.title.addEventListener('click', renameChat);
   el.modelSelect.addEventListener('change', onModelChange);
   el.assistantSelect.addEventListener('change', onAssistantChange);
-  el.sendBtn.addEventListener('click', send);
+  el.sendBtn.addEventListener('click', () => {
+    if (el.sendBtn.dataset.mode === 'talk') openVoiceMode();
+    else send();
+  });
+  el.micBtn.addEventListener('click', toggleDictation);
 
   el.search.addEventListener('input', debounce(() => {
     S.query = el.search.value;
@@ -2189,6 +2533,7 @@ function bindEvents() {
 
   el.input.addEventListener('input', () => {
     autoGrow();
+    updateSendButton();
     saveDraft(draftKey(), el.input.value);
   });
   el.input.addEventListener('keydown', (e) => {
@@ -2242,6 +2587,7 @@ function bindEvents() {
     if (evt.type !== 'delta') return;
     r.msg.content += evt.text;
     scheduleMessageRender(r.chat, r.msg);
+    voiceReplyUpdated(r.msg);
     // Saving rewrites the whole chat, so phones save a streaming reply less often.
     saveChatSoon(r.chat, S.info.mobile ? 5000 : 1500);
   });
@@ -2283,6 +2629,7 @@ async function init() {
   applyTheme();
   if (S.state.sidebarCollapsed) el.app.classList.add('sidebar-collapsed');
   bindEvents();
+  initVoice();
   renderSyncBadge();
   await refreshList();
 

@@ -13,6 +13,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(LlamaPlugin.class);
         registerPlugin(GoogleAuthPlugin.class);
+        registerPlugin(VoicePlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

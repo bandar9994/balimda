@@ -27,6 +27,13 @@ const DEFAULT_SETTINGS = {
   memory: '',
   computers: {},
   shareWithPhone: false,
+  // Voice chat (per device, not synced): the language you talk in ('' = the
+  // device's language), recognising speech only on the device, reading
+  // replies aloud, and how fast they're read.
+  voiceLang: '',
+  voicePrivate: false,
+  readAloud: false,
+  voiceRate: 1,
   providers: {
     ollama: { enabled: true, baseUrl: 'http://127.0.0.1:11434', think: true },
     openaiCompatible: { enabled: true, baseUrl: 'http://127.0.0.1:1234/v1', apiKey: '' },
