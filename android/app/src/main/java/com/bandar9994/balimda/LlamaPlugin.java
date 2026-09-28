@@ -39,8 +39,13 @@ public class LlamaPlugin extends Plugin {
     private final Map<String, AtomicBoolean> cancelledDownloads = new ConcurrentHashMap<>();
     private final Map<String, AtomicBoolean> activeRequests = new ConcurrentHashMap<>();
     // Partial files of downloads running now; any other .part file was left
-    // by a download the app was closed during, and only wastes space.
-    private final java.util.Set<String> activeParts = ConcurrentHashMap.newKeySet();
+    // by a download the app was closed during, and only wastes space. Static:
+    // a download keeps going (in DownloadService) if the app's screen is
+    // closed and opened again.
+    private static final java.util.Set<String> activeParts = ConcurrentHashMap.newKeySet();
+    // Progress of the downloads running now (part file -> {done, total}), for the notification.
+    private static final Map<String, long[]> progress = new ConcurrentHashMap<>();
+    private static final int DOWNLOAD_RETRIES = 6;
 
     // Loaded model state (only touched on the inference thread).
     private long handle = 0;
@@ -235,60 +240,138 @@ public class LlamaPlugin extends Plugin {
         started.put("name", name);
         call.resolve(started);
 
+        askForNotifications();
         downloads.execute(() -> {
             File target = modelFile(name);
             File part = new File(target.getPath() + ".part");
             activeParts.add(part.getName());
-            long total = -1;
-            long done = 0;
+            progress.put(part.getName(), new long[] {0, -1});
+            DownloadService.start(app());
+            long[] state = {-1, 0};  // total, done
             try {
-                HttpURLConnection conn = null;
-                String current = url;
-                for (int redirects = 0; redirects < 8; redirects++) {
-                    conn = (HttpURLConnection) new URL(current).openConnection();
-                    conn.setInstanceFollowRedirects(false);
-                    conn.setConnectTimeout(20000);
-                    conn.setReadTimeout(60000);
-                    int code = conn.getResponseCode();
-                    if (code >= 300 && code < 400) {
-                        current = new URL(new URL(current), conn.getHeaderField("Location")).toString();
-                        conn.disconnect();
-                        continue;
-                    }
-                    if (code != 200) throw new Exception("Download failed (HTTP " + code + ")");
-                    break;
-                }
-                total = conn.getContentLengthLong();
-                long lastEmit = 0;
-                try (InputStream in = conn.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
+                transfer(url, part, cancelled, state);
+                if (!part.renameTo(target)) throw new Exception("Couldn't save the model file.");
+                noteDownloaded(target.getName(), url, target.length());
+                emitDownload(url, state[1], state[0], true, null);
+            } catch (InterruptedException e) {
+                part.delete();
+                emitDownload(url, state[1], state[0], true, "cancelled");
+            } catch (Exception e) {
+                part.delete();
+                emitDownload(url, state[1], state[0], true, e.getMessage() == null ? e.toString() : e.getMessage());
+            } finally {
+                activeParts.remove(part.getName());
+                progress.remove(part.getName());
+                cancelledDownloads.remove(url);
+                if (activeParts.isEmpty()) DownloadService.stop(app());
+                else updateNotification();
+            }
+        });
+    }
+
+    // Opens the link (following redirects), asking for the rest of the file
+    // from `from` on. Returns the connection with a 200 or 206 response.
+    private static HttpURLConnection open(String url, long from) throws Exception {
+        String current = url;
+        for (int redirects = 0; redirects < 8; redirects++) {
+            HttpURLConnection conn = (HttpURLConnection) new URL(current).openConnection();
+            conn.setInstanceFollowRedirects(false);
+            conn.setConnectTimeout(20000);
+            conn.setReadTimeout(60000);
+            if (from > 0) conn.setRequestProperty("Range", "bytes=" + from + "-");
+            int code = conn.getResponseCode();
+            if (code >= 300 && code < 400) {
+                current = new URL(new URL(current), conn.getHeaderField("Location")).toString();
+                conn.disconnect();
+                continue;
+            }
+            if (code != 200 && code != 206) {
+                conn.disconnect();
+                throw new Exception("Download failed (HTTP " + code + ")");
+            }
+            return conn;
+        }
+        throw new Exception("Download failed (too many redirects)");
+    }
+
+    // Downloads into `part`. When the connection drops (e.g. switching between
+    // Wi-Fi and mobile data), it waits a little and carries on where it stopped.
+    private void transfer(String url, File part, AtomicBoolean cancelled, long[] state) throws Exception {
+        long lastEmit = 0;
+        int failures = 0;
+        for (;;) {
+            try {
+                HttpURLConnection conn = open(url, state[1]);
+                boolean resumed = state[1] > 0 && conn.getResponseCode() == 206;
+                if (!resumed) state[1] = 0;  // the server sent the whole file again
+                long length = conn.getContentLengthLong();
+                if (length >= 0) state[0] = state[1] + length;
+                try (InputStream in = conn.getInputStream(); FileOutputStream out = new FileOutputStream(part, resumed)) {
                     byte[] buf = new byte[1 << 16];
                     int n;
                     while ((n = in.read(buf)) > 0) {
                         if (cancelled.get()) throw new InterruptedException("cancelled");
                         out.write(buf, 0, n);
-                        done += n;
+                        state[1] += n;
+                        failures = 0;
                         long now = System.currentTimeMillis();
                         if (now - lastEmit > 300) {
                             lastEmit = now;
-                            emitDownload(url, done, total, false, null);
+                            emitDownload(url, state[1], state[0], false, null);
+                            progress.put(part.getName(), new long[] {state[1], state[0]});
+                            updateNotification();
                         }
                     }
+                } finally {
+                    conn.disconnect();
                 }
-                if (total > 0 && done != total) throw new Exception("Download was interrupted; please retry.");
-                if (!part.renameTo(target)) throw new Exception("Couldn't save the model file.");
-                noteDownloaded(target.getName(), url, target.length());
-                emitDownload(url, done, total, true, null);
-            } catch (InterruptedException e) {
-                part.delete();
-                emitDownload(url, done, total, true, "cancelled");
-            } catch (Exception e) {
-                part.delete();
-                emitDownload(url, done, total, true, e.getMessage() == null ? e.toString() : e.getMessage());
-            } finally {
-                activeParts.remove(part.getName());
-                cancelledDownloads.remove(url);
+                if (state[0] > 0 && state[1] != state[0]) throw new java.io.IOException("The download stopped early.");
+                return;
+            } catch (java.io.IOException e) {
+                if (cancelled.get()) throw new InterruptedException("cancelled");
+                if (++failures > DOWNLOAD_RETRIES) {
+                    throw new Exception("The download was interrupted (" + e.getMessage() + "). Check the connection and try again.");
+                }
+                emitDownload(url, state[1], state[0], false, null);
+                // 2, 4, 8, 16, 30, 30 seconds.
+                for (long waited = 0, wait = Math.min(30000L, 1000L << failures); waited < wait; waited += 250) {
+                    if (cancelled.get()) throw new InterruptedException("cancelled");
+                    Thread.sleep(250);
+                }
             }
-        });
+        }
+    }
+
+    private android.content.Context app() {
+        return getContext().getApplicationContext();
+    }
+
+    private void updateNotification() {
+        long done = 0, total = 0;
+        boolean known = true;
+        for (long[] p : progress.values()) {
+            done += p[0];
+            if (p[1] > 0) total += p[1];
+            else known = false;
+        }
+        int count = progress.size();
+        String what = count == 1 ? "Downloading a model" : "Downloading " + count + " models";
+        int pct = known && total > 0 ? (int) (done * 100 / total) : -1;
+        String size = String.format(java.util.Locale.US, "%.1f", done / 1e9) + (known && total > 0
+            ? " of " + String.format(java.util.Locale.US, "%.1f", total / 1e9) : "") + " GB";
+        DownloadService.progress(app(), what + " · " + size, pct);
+    }
+
+    // Android 13+ asks before an app shows notifications; the download's
+    // progress is shown in one. Asked once, with the first download.
+    private void askForNotifications() {
+        if (android.os.Build.VERSION.SDK_INT < 33 || getActivity() == null) return;
+        String perm = "android.permission.POST_NOTIFICATIONS";
+        if (androidx.core.content.ContextCompat.checkSelfPermission(getContext(), perm) == android.content.pm.PackageManager.PERMISSION_GRANTED) return;
+        android.content.SharedPreferences prefs = getContext().getSharedPreferences("balimda", android.content.Context.MODE_PRIVATE);
+        if (prefs.getBoolean("askedNotifications", false)) return;
+        prefs.edit().putBoolean("askedNotifications", true).apply();
+        androidx.core.app.ActivityCompat.requestPermissions(getActivity(), new String[] {perm}, 7002);
     }
 
     @PluginMethod
@@ -305,7 +388,11 @@ public class LlamaPlugin extends Plugin {
         evt.put("total", total);
         evt.put("done", done);
         if (error != null) evt.put("error", error);
-        notifyListeners("download", evt);
+        try {
+            notifyListeners("download", evt);
+        } catch (Exception ignored) {
+            // The app's screen was closed; the download goes on.
+        }
     }
 
     // ---- inference -----------------------------------------------------------------
@@ -485,6 +572,7 @@ public class LlamaPlugin extends Plugin {
     protected void handleOnDestroy() {
         inference.execute(this::unload);
         inference.shutdown();
-        downloads.shutdownNow();
+        // Downloads carry on in DownloadService until they finish.
+        downloads.shutdown();
     }
 }

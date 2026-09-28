@@ -26,6 +26,12 @@
 
         </activity>
 
+        <!-- Keeps model downloads going when the app is in the background. -->
+        <service
+            android:name=".DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Qualcomm's OpenCL driver, used for Adreno GPU inference (optional). -->
         <uses-native-library
             android:name="libOpenCL.so"
@@ -45,4 +51,9 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Model downloads in the background, with their progress in a notification. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 </manifest>

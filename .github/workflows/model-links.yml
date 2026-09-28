@@ -1,0 +1,59 @@
+name: Model links
+
+# Checks that the phone models in the app can still be downloaded (a model
+# can be moved or renamed on Hugging Face), when the list changes and weekly.
+# When the list changes, each model is also loaded with the phone engine and
+# asked a question, to check the engine can run it.
+on:
+  push:
+    branches: ['main', 'claude/**']
+    paths: ['mobile/src/native-engine.js', 'mobile/src/on-device.js', 'scripts/check-model-links.js', 'scripts/model-smoke.c', '.github/workflows/model-links.yml']
+  pull_request:
+    paths: ['mobile/src/native-engine.js', 'mobile/src/on-device.js', 'scripts/check-model-links.js', 'scripts/model-smoke.c', '.github/workflows/model-links.yml']
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-model-links.js
+
+  run:
+    needs: links
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The same engine as the phone app (native/llama/engine), on the CPU.
+      - name: Build the phone engine for Linux
+        run: |
+          cmake -S android/app/src/main/cpp -B build-engine -DBALIMDA_OPENCL=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-engine -j4
+          gcc -std=c11 -Inative/llama/engine/include scripts/model-smoke.c -Lbuild-engine -lbalimda_llama \
+            -Wl,-rpath,"$PWD/build-engine" -o model-smoke
+      - name: Load each model and ask it a question
+        run: |
+          fail=0
+          for url in $(node scripts/check-model-links.js --urls); do
+            name=$(basename "$url")
+            echo "::group::$name"
+            if curl -sSfL --retry 3 -o model.gguf "$url" && ./model-smoke model.gguf 2>engine.log; then
+              echo "ok"
+            else
+              tail -20 engine.log
+              echo "::error::$name doesn't work with the phone engine"
+              fail=1
+            fi
+            rm -f model.gguf
+            echo "::endgroup::"
+          done
+          exit $fail
