@@ -12,3 +12,7 @@ www/
 
 # Google sign-in client for desktop builds (written by CI from repository secrets)
 google-oauth.json
+
+# whisper.cpp for voice chat in the desktop app (scripts/build-whisper.js)
+build/whisper*
+whisper-bin/

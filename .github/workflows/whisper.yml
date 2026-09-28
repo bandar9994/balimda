@@ -1,0 +1,25 @@
+name: Speech recognition
+
+# Voice chat on the computer: builds Whisper (scripts/build-whisper.js),
+# downloads each model the app offers and has it write down a recording,
+# through the same code the app uses (src/voice-desktop.js).
+on:
+  push:
+    branches: ['main', 'claude/**']
+    paths: ['src/voice-desktop.js', 'scripts/build-whisper.js', 'scripts/whisper-smoke.js', '.github/workflows/whisper.yml']
+  pull_request:
+    paths: ['src/voice-desktop.js', 'scripts/build-whisper.js', 'scripts/whisper-smoke.js', '.github/workflows/whisper.yml']
+  workflow_dispatch:
+
+jobs:
+  whisper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build Whisper
+        run: node scripts/build-whisper.js
+      - name: Write down a recording with each model
+        run: node scripts/whisper-smoke.js build/whisper.cpp-v1.9.4/samples/jfk.wav "ask not what your country can do for you"

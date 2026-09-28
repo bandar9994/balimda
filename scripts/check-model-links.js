@@ -2,7 +2,8 @@
 // Licensed under the Balimda License (see LICENSE): non-commercial use only;
 // keep the Balimda name and the "Balimda by Bandar Altariqi" credit; no rebranding.
 
-// Checks that every model in the phone catalogs can be downloaded and is
+// Checks that every model the app offers (phone models, and Whisper for
+// voice chat on the computer) can be downloaded and is
 // about the size the app shows. Run by .github/workflows/model-links.yml.
 //   node scripts/check-model-links.js
 //   node scripts/check-model-links.js --urls   (the phone engine's model links, one per line)
@@ -10,11 +11,13 @@
 const fs = require('fs');
 const path = require('path');
 
-const FILES = ['mobile/src/native-engine.js', 'mobile/src/on-device.js'];
+// The phone's models, and the desktop app's speech recognition models.
+const FILES = ['mobile/src/native-engine.js', 'mobile/src/on-device.js', 'src/voice-desktop.js'];
 
 function catalog(file) {
   const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
-  const list = src.slice(src.indexOf('export const CATALOG'), src.indexOf('];', src.indexOf('export const CATALOG')));
+  const start = src.search(/(export )?const (CATALOG|WHISPER_MODELS)/);
+  const list = src.slice(start, src.indexOf('];', start));
   const out = [];
   const entry = /name:\s*'([^']+)'[\s\S]*?size:\s*([\d.e]+)[\s\S]*?url:\s*'([^']+)'/g;
   let m;

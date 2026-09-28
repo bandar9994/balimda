@@ -881,7 +881,7 @@ function updateComposer() {
   const note = S.current ? modelNote(S.current, chatModel(S.current)) : '';
   el.hint.classList.toggle('model-note', !!note && !V.dictating);
   if (V.dictating) {
-    const other = voiceLang() === 'ar-SA' ? 'en-US' : 'ar-SA';
+    const other = voiceLang() === 'en-US' ? 'ar-SA' : 'en-US';
     el.hint.replaceChildren(`Listening in ${VOICE_LANGS[voiceLang()]}… tap the mic when you're done · `,
       h('a', { href: '#', text: `Switch to ${VOICE_LANGS[other]}`, onclick: (e) => { e.preventDefault(); toggleVoiceLang(); } }));
   } else if (note) el.hint.textContent = note;
@@ -920,12 +920,25 @@ const V = {
   reading: null,     // { msg, spoken, pending, finished, token, onDone } reply being read aloud
   token: 0           // bumped to drop the rest of a reading that was stopped
 };
-const VOICE_LANGS = { 'ar-SA': 'Arabic', 'en-US': 'English' };
+const VOICE_LANGS = { 'ar-SA': 'Arabic', 'en-US': 'English', auto: 'Arabic or English' };
 
-const voiceLang = () => S.settings.voiceLang || (/^ar/i.test(navigator.language) ? 'ar-SA' : 'en-US');
+// 'auto' (Whisper tells the language itself) is only offered on the computer.
+const voiceLang = () => {
+  const l = S.settings.voiceLang;
+  if (l && (l !== 'auto' || (V.avail && V.avail.desktop))) return l;
+  return /^ar/i.test(navigator.language) ? 'ar-SA' : 'en-US';
+};
 const canListen = () => !!(api.voice && V.avail && V.avail.recognition);
 const canSpeak = () => !!(api.voice && V.avail && V.avail.tts);
-const listenOpts = () => ({ lang: voiceLang(), offline: !!S.settings.voicePrivate });
+const listenOpts = () => ({ lang: voiceLang(), offline: !!S.settings.voicePrivate, model: S.settings.voiceModel });
+
+// On the computer, Whisper's model is downloaded once before the first use.
+function voiceNeedsModel() {
+  if (!V.avail || !V.avail.needsModel) return false;
+  toast('First, download the speech recognition model (once): Settings → Voice.', 6000);
+  openSettings('voice');
+  return true;
+}
 // The voice for a piece of text: Arabic or English, whichever it's written in.
 const speechLang = (text) => (SpeechText.languageOf(text, voiceLang().slice(0, 2)) === 'ar' ? 'ar-SA' : 'en-US');
 
@@ -939,6 +952,14 @@ async function initVoice() {
 
 function onVoiceEvent(evt) {
   const m = V.mode;
+  if (evt.download && evt.download.done && !evt.download.error) {
+    api.voice.available({ lang: voiceLang() }).then((a) => { V.avail = a; updateComposer(); }).catch(() => {});
+  }
+  if (evt.state === 'thinking') {
+    // What was said is being turned into text (on the computer this takes a moment).
+    if (V.dictating) el.hint.textContent = 'Understanding what you said…';
+    if (m && m.phase === 'listening') m.status.textContent = 'Understanding…';
+  }
   if (evt.partial != null) {
     if (V.dictating) {
       el.input.value = V.dictBase + evt.partial;
@@ -956,6 +977,7 @@ async function toggleDictation() {
     api.voice.stopListening().catch(() => {});
     return;
   }
+  if (voiceNeedsModel()) return;
   stopReading();
   V.dictating = true;
   V.dictBase = el.input.value.trim() ? `${el.input.value.replace(/\s+$/, '')} ` : '';
@@ -983,7 +1005,7 @@ async function toggleDictation() {
 
 // Switch between talking in Arabic and in English.
 function toggleVoiceLang() {
-  S.settings.voiceLang = voiceLang() === 'ar-SA' ? 'en-US' : 'ar-SA';
+  S.settings.voiceLang = voiceLang() === 'en-US' ? 'ar-SA' : 'en-US';
   saveSettings();
   if (V.mode) {
     V.mode.langBtn.textContent = VOICE_LANGS[voiceLang()];
@@ -1088,7 +1110,7 @@ function voiceReplyUpdated(msg) {
 // ---- voice chat: talk, hear the reply, talk again
 
 function openVoiceMode() {
-  if (!canListen() || !canSpeak()) return;
+  if (!canListen() || !canSpeak() || voiceNeedsModel()) return;
   if (!currentModel()) {
     toast('Choose a model first (top right).');
     return;
@@ -1952,6 +1974,75 @@ function shareWithPhoneCard(s, check, onCleanup) {
     h('div', { class: 'help', text: 'Your phone sends chats here and this computer answers with its models (Ollama, LM Studio, and your API keys, which never leave this computer). The connection is encrypted with your sync passphrase, so only your own devices can use it. Balimda needs to stay open.' }));
 }
 
+// Settings → Voice on the computer: Whisper's model, downloaded once.
+function desktopVoiceView(onCleanup, field, check, lang, rate, s) {
+  const list = h('div', { class: 'voice-models' });
+  let models = (V.avail && V.avail.models) || [];
+  const gb = (n) => (n < 1e9 ? `${Math.round(n / 1e7) * 10} MB` : `${(n / 1e9).toFixed(1)} GB`);
+  const draw = () => {
+    const chosen = models.find((m) => m.id === s.voiceModel && m.downloaded) || models.find((m) => m.downloaded);
+    list.replaceChildren(...models.map((m) => {
+      const d = m.download;
+      const pct = d && d.total ? Math.floor((d.loaded / d.total) * 100) : 0;
+      return h('div', { class: `voice-model${chosen === m ? ' chosen' : ''}` },
+        h('div', { class: 'voice-model-info' },
+          h('strong', { text: m.name }),
+          h('div', { class: 'help', text: `${m.note} · ${gb(m.size)}` }),
+          d ? h('div', { class: 'progress' }, h('div', { class: 'bar', style: `width:${pct}%` })) : null),
+        d ? h('button', { class: 'btn', text: `Cancel (${pct}%)`, onclick: () => api.voice.cancelDownload(m.id) })
+          : !m.downloaded ? h('button', { class: 'btn primary', text: 'Download', onclick: () => { api.voice.download(m.id); m.download = { loaded: 0, total: m.size }; draw(); } })
+            : chosen === m ? h('span', { class: 'voice-model-state', text: 'In use' })
+              : h('button', { class: 'btn', text: 'Use', onclick: () => { s.voiceModel = m.id; saveSettings(); draw(); } }),
+        m.downloaded && !d ? h('button', {
+          class: 'btn danger',
+          text: 'Delete',
+          onclick: async () => {
+            if (!(await confirmBox(`Delete ${m.name} from this computer? You can download it again later.`))) return;
+            await api.voice.deleteModel(m.id);
+            refresh();
+          }
+        }) : null);
+    }));
+  };
+  const refresh = async () => {
+    const a = await api.voice.available({ lang: voiceLang() }).catch(() => null);
+    if (a) {
+      V.avail = a;
+      models = a.models || [];
+      updateComposer();
+    }
+    draw();
+  };
+  onCleanup(api.voice.onEvent((evt) => {
+    if (!evt.download) return;
+    const m = models.find((x) => x.id === evt.download.id);
+    if (!m) return;
+    if (evt.download.done) {
+      if (evt.download.error && evt.download.error !== 'cancelled') toast(evt.download.error, 7000);
+      if (!evt.download.error && !models.some((x) => x.downloaded)) {
+        s.voiceModel = m.id;
+        saveSettings();
+      }
+      refresh();
+    } else {
+      m.download = { loaded: evt.download.loaded, total: evt.download.total };
+      draw();
+    }
+  }));
+  draw();
+  return [
+    h('p', { class: 'help', text: 'Click the microphone in the message box to talk instead of typing. When the box is empty, click "Talk" for a voice chat: you talk, the reply is read aloud, and it listens again.' }),
+    V.avail && V.avail.recognition ? null : h('div', { class: 'notice', text: 'Speech recognition isn\'t included in this copy of Balimda, so you can\'t talk to it here. Replies can still be read aloud.' }),
+    field('Speech recognition', list, 'Whisper turns what you say into text on this computer: nothing is sent anywhere. It\'s downloaded once.'),
+    field('The language you talk in', lang, 'Choosing the language makes Whisper more accurate. Replies are read in the language they\'re written in.'),
+    check('Read replies aloud', s, 'readAloud'),
+    h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: V.avail && V.avail.tts
+      ? 'Every reply is read aloud as it\'s written, with this computer\'s own voices. You can also click "Read aloud" under any reply.'
+      : 'This computer has no voices for reading aloud. On Linux, install speech-dispatcher (e.g. "sudo apt install speech-dispatcher espeak-ng"), then restart Balimda.' }),
+    field('Reading speed', rate)
+  ];
+}
+
 function openSettings(tab = 'general') {
   const s = S.settings;
   const changed = () => { saveSettings(); };
@@ -2137,9 +2228,11 @@ function openSettings(tab = 'general') {
     },
 
     voice() {
+      const desktop = !!(V.avail && V.avail.desktop);
       const lang = bind(h('select', { class: 'select' },
         h('option', { value: 'ar-SA', text: 'Arabic (Saudi Arabia)' }),
-        h('option', { value: 'en-US', text: 'English' })), s, 'voiceLang');
+        h('option', { value: 'en-US', text: 'English' }),
+        desktop ? h('option', { value: 'auto', text: 'Arabic or English (found automatically)' }) : null), s, 'voiceLang');
       lang.value = voiceLang();
       const rate = bind(h('select', { class: 'select' },
         h('option', { value: '0.85', text: 'Slower' }),
@@ -2153,6 +2246,7 @@ function openSettings(tab = 'general') {
           ' to be turned into text, which is the most accurate, especially for Arabic dialects. With it, nothing leaves the phone, but it may understand you less well. ' +
           (a && a.onDevice ? 'This phone can do this.' : 'This phone can\'t recognise speech offline' + (S.info.platform === 'ios' ? ' in this language.' : ' (it needs Android 12 or newer with Google\'s speech services).'));
       };
+      if (desktop) return desktopVoiceView(onCleanup, field, check, lang, rate, s);
       lang.addEventListener('change', describePrivate);
       describePrivate();
       return [

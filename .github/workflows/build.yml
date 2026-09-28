@@ -49,7 +49,18 @@ jobs:
             exit 0
           fi
           node -e "require('fs').writeFileSync('google-oauth.json', JSON.stringify({ clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET }))"
+      # Whisper, for talking to Balimda on the computer (see scripts/build-whisper.js).
+      - name: Build speech recognition (Whisper)
+        run: node scripts/build-whisper.js
       - run: npx electron-builder --publish never
+      - name: Check speech recognition is in the app
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux) dpkg-deb -c dist/*.deb | grep -E '^-rwx.*/resources/whisper/whisper-server$' ;;
+            Windows) ls -la dist/win-unpacked/resources/whisper/whisper-server.exe ;;
+            macOS) ls -la dist/mac-arm64/*.app/Contents/Resources/whisper/whisper-server dist/mac/*.app/Contents/Resources/whisper/whisper-server ;;
+          esac
       - uses: actions/upload-artifact@v4
         with:
           name: balimda-desktop-${{ matrix.os }}
@@ -64,7 +75,9 @@ jobs:
   # them: https://github.com/<owner>/<repo>/releases/tag/desktop-latest
   publish:
     needs: build
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Only builds of main (or a release tag) are published; a branch can be
+    # built by hand to try it without replacing the download.
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
     runs-on: ubuntu-latest
     permissions:
       contents: write

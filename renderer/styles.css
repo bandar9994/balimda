@@ -373,6 +373,14 @@ details.thinking summary { cursor: pointer; }
 .voice-bottom { display: flex; justify-content: center; }
 .voice-bottom .btn { min-width: 180px; padding: 12px 18px; border-radius: 24px; }
 
+/* Settings → Voice on the computer: Whisper's models. */
+.voice-models { display: flex; flex-direction: column; gap: 8px; }
+.voice-model { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+.voice-model.chosen { border-color: var(--accent); }
+.voice-model-info { flex: 1; min-width: 0; }
+.voice-model .progress { width: 100%; margin-top: 6px; }
+.voice-model-state { font-size: 12px; font-weight: 600; color: var(--accent); }
+
 /* ---------- controls ---------- */
 
 .btn {

@@ -34,6 +34,7 @@ const DEFAULT_SETTINGS = {
   voicePrivate: false,
   readAloud: false,
   voiceRate: 1,
+  voiceModel: 'turbo', // the computer's Whisper model (src/voice-desktop.js)
   providers: {
     ollama: { enabled: true, baseUrl: 'http://127.0.0.1:11434', think: true },
     openaiCompatible: { enabled: true, baseUrl: 'http://127.0.0.1:1234/v1', apiKey: '' },
