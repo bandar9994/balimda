@@ -1,0 +1,87 @@
+name: iOS app
+
+on:
+  push:
+    branches: ['main', 'claude/**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ios:
+    runs-on: macos-15
+    env:
+      # Set up with an Apple Developer account (see docs/DEVELOPMENT.md);
+      # without it the app is still built, unsigned.
+      ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:web
+      - run: npx cap sync ios
+      # Built for iPhones (arm64), without signing: signing needs an Apple
+      # Developer account, set up separately. The version is 1.0.<run number>,
+      # like the Android app.
+      - name: Build the app (unsigned)
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build-ios \
+            MARKETING_VERSION=1.0.${{ github.run_number }} CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            -quiet build
+      # The native engine (llama.cpp on the Apple GPU) must be inside the app.
+      - name: Check the native engine is in the app
+        run: |
+          APP=build-ios/Build/Products/Release-iphoneos/App.app
+          ls "$APP/Frameworks"
+          test -d "$APP/Frameworks/llama.framework" || { echo "::error::llama.framework is missing from the app"; exit 1; }
+      # An unsigned .ipa, for installing with a signing tool (e.g. Sideloadly or
+      # AltStore with a free Apple ID) until the app is on TestFlight.
+      - name: Package
+        run: |
+          mkdir -p Payload
+          cp -R build-ios/Build/Products/Release-iphoneos/App.app Payload/Balimda.app
+          zip -qry Balimda-iOS-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Balimda-iOS-unsigned
+          path: Balimda-iOS-unsigned.ipa
+          if-no-files-found: error
+      # Merged changes go to TestFlight: signed in the cloud with the App Store
+      # Connect API key (Xcode creates the certificate and profile itself), then
+      # uploaded. Testers get the new build in the TestFlight app.
+      - name: Upload to TestFlight
+        if: env.ASC_KEY_BASE64 != '' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch')
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          KEY="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          echo "$ASC_KEY_BASE64" | base64 --decode > "$KEY"
+          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Balimda.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            MARKETING_VERSION=1.0.${{ github.run_number }} CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            "${AUTH[@]}" -quiet archive
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Balimda.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export" "${AUTH[@]}"
+          rm -f "$KEY"
+          echo "::notice title=TestFlight::Uploaded Balimda 1.0.${{ github.run_number }}. It appears in TestFlight after Apple finishes processing (usually 5-15 minutes)."

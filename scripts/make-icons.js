@@ -83,7 +83,7 @@ function render(w, h, o) {
       px[i + 3] = Math.round(alpha * 255);
     }
   }
-  return encodePng(w, h, px);
+  return encodePng(w, h, px, { opaque: o.opaque });
 }
 
 // ---- minimal PNG encoder / size reader --------------------------------------
@@ -109,14 +109,29 @@ function chunk(type, data) {
   return Buffer.concat([len, td, c]);
 }
 
-function encodePng(w, h, px) {
-  const raw = Buffer.alloc(h * (w * 4 + 1));
-  for (let y = 0; y < h; y++) px.copy(raw, y * (w * 4 + 1) + 1, y * w * 4, (y + 1) * w * 4);
+// RGBA, or RGB with `opaque` (the App Store rejects app icons that have an
+// alpha channel).
+function encodePng(w, h, px, { opaque = false } = {}) {
+  const ch = opaque ? 3 : 4;
+  const raw = Buffer.alloc(h * (w * ch + 1));
+  for (let y = 0; y < h; y++) {
+    if (!opaque) {
+      px.copy(raw, y * (w * 4 + 1) + 1, y * w * 4, (y + 1) * w * 4);
+      continue;
+    }
+    for (let x = 0; x < w; x++) {
+      const o = y * (w * 3 + 1) + 1 + x * 3;
+      const i = (y * w + x) * 4;
+      raw[o] = px[i];
+      raw[o + 1] = px[i + 1];
+      raw[o + 2] = px[i + 2];
+    }
+  }
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(w, 0);
   ihdr.writeUInt32BE(h, 4);
   ihdr[8] = 8;
-  ihdr[9] = 6;
+  ihdr[9] = opaque ? 2 : 6;
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     chunk('IHDR', ihdr),
@@ -165,4 +180,15 @@ if (fs.existsSync(res)) {
   }
   write(`${res}/values/ic_launcher_background.xml`,
     '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#5B5BD6</color>\n</resources>\n');
+}
+
+// iOS: one 1024×1024 app icon (iOS rounds the corners itself, so the
+// background fills the square) and the launch screen images.
+const ios = path.join(root, 'ios/App/App/Assets.xcassets');
+if (fs.existsSync(ios)) {
+  write(`${ios}/AppIcon.appiconset/AppIcon-512@2x.png`, render(1024, 1024, { iconSize: 1024, background: 'fill', opaque: true }));
+  for (const name of ['splash-2732x2732.png', 'splash-2732x2732-1.png', 'splash-2732x2732-2.png']) {
+    const file = `${ios}/Splash.imageset/${name}`;
+    if (fs.existsSync(file)) write(file, render(2732, 2732, { iconSize: 900, background: 'fill', opaque: true }));
+  }
 }

@@ -37,6 +37,7 @@
     "@capacitor/ios": "^8.5.2",
     "@capacitor/share": "^8.0.2",
     "@wllama/wllama": "^3.6.1",
+    "balimda-llama": "file:native/llama",
     "electron": "^44.4.5",
     "electron-builder": "^26.0.0",
     "esbuild": "^0.28.2"
@@ -92,7 +93,7 @@
       "maintainer": "Bandar Altariqi <bandar9994@users.noreply.github.com>",
       "synopsis": "Balimda by Bandar Altariqi: private AI chat that remembers every chat"
     },
-    "copyright": "Copyright \u00a9 2026 Bandar Altariqi"
+    "copyright": "Copyright © 2026 Bandar Altariqi"
   },
   "homepage": "https://github.com/bandar9994/balimda"
 }

@@ -1922,7 +1922,7 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
       gpuBox.replaceChildren(
         h('label', { class: 'check' }, bind(h('input', { type: 'checkbox', checked: p.nativeGpu !== false, disabled: !eng.gpu }), p, 'nativeGpu'),
           'Use the GPU'),
-        h('div', { class: 'help', text: 'Runs the model on the phone\'s graphics chip (Adreno) for faster replies. Turn off to use the CPU only.' }));
+        h('div', { class: 'help', text: 'Runs the model on the phone\'s graphics chip for faster replies. Turn off to use the CPU only.' }));
     } else {
       engineLine.textContent = S.info.platform === 'android' && eng.error
         ? `Engine: WebAssembly (slower). The faster native engine couldn't start on this phone: ${eng.error}`
