@@ -27,7 +27,9 @@ const WHISPER_MODELS = [
     name: 'Whisper small',
     note: 'Faster on older computers, but makes more mistakes',
     size: 190e6,
-    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin'
+    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin',
+    // Accurate with a window sized to the recording (the large model isn't).
+    sizedWindow: true
   }
 ];
 
@@ -75,7 +77,7 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
   let idleTimer = null;
 
   // The large model is quick enough with a Mac's GPU or a CPU with many cores
-  // (on 4 threads it takes about 18 s for 11 s of speech; the small one 3 s).
+  // (on 4 threads it takes about 20 s for 11 s of speech; the small one 2 s).
   const recommended = (process.platform === 'darwin' && process.arch === 'arm64') || os.cpus().length >= 16 ? 'turbo' : 'small';
 
   function status() {
@@ -205,10 +207,10 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
   }
 
   // wav: 16 kHz mono WAV. lang: 'ar', 'en' or 'auto'. Returns { text }.
-  // Whisper normally works on 30 seconds of sound however little was said;
-  // a window sized to the recording makes a sentence about twice as fast
-  // (opts.fullWindow turns this off). Below 15 seconds the large model
-  // starts repeating itself, so the window is never smaller.
+  // Whisper normally works on 30 seconds of sound however little was said.
+  // The small model is as accurate and about twice as fast with a window
+  // sized to the recording (opts.fullWindow turns this off); the large one
+  // then makes mistakes, so it always gets the full 30 seconds.
   async function transcribe(wav, lang, modelId, opts = {}) {
     const m = byId(modelId);
     if (!fs.existsSync(exe)) throw new Error("Speech recognition isn't included in this copy of Balimda.");
@@ -222,7 +224,7 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
     form.append('temperature', '0.0');
     form.append('no_timestamps', 'true');
     const seconds = Math.max(0, wav.length - 44) / (16000 * 2);
-    if (!opts.fullWindow && seconds < 25) form.append('audio_ctx', String(Math.max(750, Math.ceil(seconds * 50) + 250)));
+    if (m.sizedWindow && !opts.fullWindow && seconds < 25) form.append('audio_ctx', String(Math.max(750, Math.ceil(seconds * 50) + 250)));
     let json;
     try {
       const res = await fetch(`http://127.0.0.1:${server.port}/inference`, { method: 'POST', body: form });
