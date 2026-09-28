@@ -7,6 +7,10 @@
 // One engine = one loaded model + context. Chats are formatted with the
 // model's own chat template, and the KV cache is reused between turns so only
 // the new part of a conversation has to be processed.
+//
+// The chat lives in sequence 0 of the KV cache. Background jobs (e.g. updating
+// memory after a reply) run in sequence 1 and are removed afterwards, so they
+// don't throw away the chat and the next message doesn't have to re-read it.
 
 #include "balimda_engine.h"
 
@@ -43,6 +47,10 @@ struct be_engine {
     std::vector<llama_token> cached;  // tokens currently in the KV cache
     std::string tmpl;                 // chat template ("" = built-in default)
     std::string offload;              // e.g. "offloaded 29/29 layers to GPU"
+    // Where the kept part of the chat started last time (when it had to be
+    // shortened). Starting there again while it fits keeps the start of the
+    // prompt the same, so the KV cache can be reused.
+    std::string start_role, start_content;
 };
 
 namespace {
@@ -100,6 +108,23 @@ size_t complete_utf8_prefix(const std::string & s) {
         back++;
     }
     return s.size();
+}
+
+// Decodes tokens into one sequence of the KV cache, starting at position
+// `pos`. Only the last token gets logits (that's the one sampled from).
+int decode(llama_context * ctx, const llama_token * tokens, int32_t n, llama_pos pos, llama_seq_id seq) {
+    llama_batch batch = llama_batch_init(n, 0, 1);
+    for (int32_t i = 0; i < n; i++) {
+        batch.token[i] = tokens[i];
+        batch.pos[i] = pos + i;
+        batch.n_seq_id[i] = 1;
+        batch.seq_id[i][0] = seq;
+        batch.logits[i] = i == n - 1;
+    }
+    batch.n_tokens = n;
+    const int rc = llama_decode(ctx, batch);
+    llama_batch_free(batch);
+    return rc;
 }
 
 std::string apply_template(const be_engine & e, const std::vector<std::string> & roles,
@@ -167,6 +192,9 @@ be_engine * be_load(const char * path, int n_ctx, int n_gpu_layers, int n_thread
     cp.n_ubatch = 512;
     cp.n_threads = n_threads;
     cp.n_threads_batch = n_threads;
+    // Two sequences sharing one cache of n_ctx: the chat, and a background job.
+    cp.n_seq_max = 2;
+    cp.kv_unified = true;
     llama_context * ctx = llama_init_from_model(model, cp);
     if (!ctx) {
         llama_model_free(model);
@@ -204,7 +232,7 @@ void be_string_free(char * s) {
 }
 
 char * be_complete(be_engine * e, const char * const * c_roles, const char * const * c_contents, int n_messages,
-                   int max_tokens, float temperature, be_token_fn on_token, void * user, char ** error) {
+                   int max_tokens, float temperature, int background, be_token_fn on_token, void * user, char ** error) {
     if (!e) {
         set_error(error, "Model is not loaded");
         return nullptr;
@@ -232,10 +260,11 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
     // chat always starts with a user message.
     const int32_t n_ctx = int32_t(llama_n_ctx(e->ctx));
     const int32_t reserve = std::max<int32_t>(256, std::min<int32_t>(max_tokens, n_ctx / 4));
+    const int32_t fits = n_ctx - reserve;
     const size_t first = (!roles.empty() && roles[0] == "system") ? 1 : 0;
-    size_t from = first;
     std::vector<llama_token> tokens;
-    for (;;) {
+    // The prompt for the chat from message `from` on (plus the system prompt).
+    auto build = [&](size_t from) {
         std::vector<std::string> r, c;
         if (first) {
             r.push_back(roles[0]);
@@ -246,33 +275,88 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
             c.push_back(contents[i]);
         }
         const std::string prompt = apply_template(*e, r, c);
-        if (prompt.empty()) {
-            set_error(error, "Couldn't format the conversation for this model.");
-            return nullptr;
-        }
+        if (prompt.empty()) return false;
         tokens = tokenize(prompt);
-        if (int32_t(tokens.size()) + reserve <= n_ctx) break;
-        // Drop the oldest message, then up to the next user message.
+        return true;
+    };
+    // The next user message after `from` (roles.size() if there's none).
+    auto next_user = [&](size_t from) {
         size_t next = from + 1;
         while (next < roles.size() && roles[next] != "user") next++;
-        if (next >= roles.size()) break;  // only the last question is left
-        from = next;
+        return next;
+    };
+    auto format_failed = [&]() {
+        set_error(error, "Couldn't format the conversation for this model.");
+        return nullptr;
+    };
+
+    size_t from = first;
+    if (!build(from)) return format_failed();
+    if (int32_t(tokens.size()) > fits) {
+        // Start where the kept part started last time, while that still fits:
+        // cutting one more message each turn would change the start of the
+        // prompt, and the whole chat would have to be read again every time.
+        bool done = false;
+        if (!background && !e->start_content.empty()) {
+            for (size_t i = first + 1; i < roles.size(); i++) {
+                if (roles[i] != e->start_role || contents[i] != e->start_content) continue;
+                from = i;
+                if (!build(from)) return format_failed();
+                done = int32_t(tokens.size()) <= fits;
+                break;
+            }
+        }
+        // Otherwise drop the oldest messages, with room to spare, so the next
+        // few messages fit without moving the start again.
+        const int32_t target = background ? fits : fits - n_ctx / 4;
+        while (!done) {
+            const size_t next = next_user(from);
+            if (next >= roles.size()) break;  // only the last question is left
+            from = next;
+            if (!build(from)) return format_failed();
+            done = int32_t(tokens.size()) <= target;
+        }
     }
     if (int32_t(tokens.size()) + 8 >= n_ctx) {
         set_error(error, "This message is longer than the model's memory. Shorten it, or raise the context size in Settings.");
         return nullptr;
     }
-
-    // Reuse the part of the conversation that's already in the KV cache.
-    size_t keep = 0;
-    while (keep < e->cached.size() && keep < tokens.size() && e->cached[keep] == tokens[keep]) keep++;
-    if (keep == tokens.size() && keep > 0) keep--;  // must decode at least one token to get logits
-    llama_memory_t mem = llama_get_memory(e->ctx);
-    if (!llama_memory_seq_rm(mem, 0, llama_pos(keep), -1)) {
-        llama_memory_clear(mem, true);
-        keep = 0;
+    if (!background) {
+        e->start_role = from > first ? roles[from] : "";
+        e->start_content = from > first ? contents[from] : "";
     }
-    e->cached.assign(tokens.begin(), tokens.begin() + keep);
+
+    llama_memory_t mem = llama_get_memory(e->ctx);
+    size_t keep = 0;
+    llama_seq_id seq = 0;
+    if (background) {
+        // Runs next to the chat. If there isn't room for both, the chat makes
+        // way (it's read again with the next message).
+        seq = 1;
+        llama_memory_seq_rm(mem, 1, -1, -1);
+        if (e->cached.size() + tokens.size() + size_t(std::max(max_tokens, 0)) + 1 > size_t(n_ctx)) {
+            llama_memory_seq_rm(mem, 0, -1, -1);
+            e->cached.clear();
+        }
+    } else {
+        // Reuse the part of the conversation that's already in the KV cache.
+        while (keep < e->cached.size() && keep < tokens.size() && e->cached[keep] == tokens[keep]) keep++;
+        if (keep == tokens.size() && keep > 0) keep--;  // must decode at least one token to get logits
+        if (!llama_memory_seq_rm(mem, 0, llama_pos(keep), -1)) {
+            llama_memory_clear(mem, true);
+            keep = 0;
+        }
+        e->cached.assign(tokens.begin(), tokens.begin() + keep);
+    }
+    // A background job always leaves the cache as it found it.
+    struct Cleanup {
+        llama_memory_t mem;
+        bool on;
+        ~Cleanup() { if (on) llama_memory_seq_rm(mem, 1, -1, -1); }
+    } cleanup{mem, background != 0};
+    // Tokens in this job's sequence; the other sequence's are in e->cached.
+    size_t n_pos = keep;
+    auto used = [&]() { return background ? e->cached.size() + n_pos : n_pos; };
 
     auto emit = [&](const std::string & text) -> bool {
         return on_token ? on_token(user, text.c_str()) : true;
@@ -287,6 +371,16 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
                  tokens.size(), n_sent, n_ctx);
         return copy_string(buf);
     };
+    auto failed = [&](const char * msg) {
+        if (background) {
+            llama_memory_seq_rm(mem, 1, -1, -1);
+        } else {
+            llama_memory_clear(mem, true);
+            e->cached.clear();
+        }
+        set_error(error, msg);
+        return nullptr;
+    };
 
     // Process the prompt in batches; an empty on_token("") call lets the user cancel.
     const double t_prompt = now_ms();
@@ -294,13 +388,9 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
     const int32_t n_batch = int32_t(llama_n_batch(e->ctx));
     for (size_t i = keep; i < tokens.size(); i += n_batch) {
         const int32_t n = int32_t(std::min<size_t>(n_batch, tokens.size() - i));
-        if (llama_decode(e->ctx, llama_batch_get_one(tokens.data() + i, n)) != 0) {
-            llama_memory_clear(mem, true);
-            e->cached.clear();
-            set_error(error, "The model failed while reading the chat.");
-            return nullptr;
-        }
-        e->cached.insert(e->cached.end(), tokens.begin() + i, tokens.begin() + i + n);
+        if (decode(e->ctx, tokens.data() + i, n, llama_pos(i), seq) != 0) return failed("The model failed while reading the chat.");
+        n_pos += n;
+        if (!background) e->cached.insert(e->cached.end(), tokens.begin() + i, tokens.begin() + i + n);
         if (!emit("")) return result("aborted", n_new_prompt, now_ms() - t_prompt, 0, 0);
     }
     const double prompt_ms = now_ms() - t_prompt;
@@ -336,15 +426,16 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
             if (!go_on) { stop_reason = "aborted"; break; }
         }
 
-        if (++generated >= max_tokens || int32_t(e->cached.size()) + 1 >= n_ctx) {
+        if (++generated >= max_tokens || int32_t(used()) + 1 >= n_ctx) {
             stop_reason = "max_tokens";
             break;
         }
-        if (llama_decode(e->ctx, llama_batch_get_one(&tok, 1)) != 0) {
+        if (decode(e->ctx, &tok, 1, llama_pos(n_pos), seq) != 0) {
             stop_reason = "max_tokens";
             break;
         }
-        e->cached.push_back(tok);
+        n_pos++;
+        if (!background) e->cached.push_back(tok);
     }
     const double gen_ms = now_ms() - t_gen;
     if (!pending.empty() && stop_reason != "aborted") emit(pending);

@@ -147,7 +147,7 @@ Java_com_bandar9994_balimda_LlamaEngine_nativeFree(JNIEnv *, jclass, jlong handl
 JNIEXPORT jstring JNICALL
 Java_com_bandar9994_balimda_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlong handle, jobjectArray jroles,
                                                    jobjectArray jcontents, jint max_tokens, jfloat temperature,
-                                                   jobject callback) {
+                                                   jboolean background, jobject callback) {
     std::vector<std::string> roles, contents;
     const jsize n_msgs = env->GetArrayLength(jroles);
     for (jsize i = 0; i < n_msgs; i++) {
@@ -168,7 +168,7 @@ Java_com_bandar9994_balimda_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlo
     TokenSink sink{env, callback, env->GetMethodID(cb_cls, "onToken", "(Ljava/lang/String;)Z")};
     char * error = nullptr;
     char * result = be_complete(reinterpret_cast<be_engine *>(handle), c_roles.data(), c_contents.data(), int(n_msgs),
-                                max_tokens, temperature, on_token, &sink, &error);
+                                max_tokens, temperature, background ? 1 : 0, on_token, &sink, &error);
     if (!result) {
         throw_engine_error(env, error, "The model failed.");
         return nullptr;

@@ -290,6 +290,7 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
         let gpu = call.getBool("gpu") ?? true
         let maxTokens = Int32(call.getInt("maxTokens") ?? 1024)
         let temperature = Float(call.getDouble("temperature") ?? 0.7)
+        let background = call.getBool("background") ?? false
         let messages = call.getArray("messages", JSObject.self) ?? []
 
         let stop = StopFlag()
@@ -339,7 +340,7 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
                     return !stop.value
                 }
                 let result = try self.complete(roles: roles, contents: contents, maxTokens: maxTokens,
-                                               temperature: temperature, sink: sink)
+                                               temperature: temperature, background: background, sink: sink)
                 call.resolve(self.resultObject(result))
             } catch {
                 call.reject(error.localizedDescription)
@@ -347,7 +348,7 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func complete(roles: [String], contents: [String], maxTokens: Int32, temperature: Float,
+    private func complete(roles: [String], contents: [String], maxTokens: Int32, temperature: Float, background: Bool,
                           sink: TokenSink) throws -> String {
         guard let e = engine else { throw PluginError("Model is not loaded") }
         let rolePtrs: [UnsafePointer<CChar>?] = roles.map { UnsafePointer(strdup($0)) }
@@ -363,7 +364,7 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
         var error: UnsafeMutablePointer<CChar>?
         let user = Unmanaged.passUnretained(sink).toOpaque()
         let raw = withExtendedLifetime(sink) {
-            be_complete(e, rolePtrs, contentPtrs, Int32(roles.count), maxTokens, temperature, onToken, user, &error)
+            be_complete(e, rolePtrs, contentPtrs, Int32(roles.count), maxTokens, temperature, background ? 1 : 0, onToken, user, &error)
         }
         guard let raw = raw else {
             let message = error.map { String(cString: $0) } ?? "The model failed."

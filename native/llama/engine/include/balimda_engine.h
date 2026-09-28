@@ -37,8 +37,10 @@ const char * be_offload(const be_engine * engine);
 // "<reason>\t<prompt tokens>\t<prompt ms>\t<generated tokens>\t<generation ms>
 // \t<chat tokens>\t<messages sent>\t<context size>" where reason is "end_turn",
 // "max_tokens" or "aborted" (free with be_string_free); on failure NULL and *error.
+// A background job (background != 0, e.g. updating memory) runs beside the
+// chat in the KV cache instead of replacing it.
 char * be_complete(be_engine * engine, const char * const * roles, const char * const * contents, int n_messages,
-                   int max_tokens, float temperature, be_token_fn on_token, void * user, char ** error);
+                   int max_tokens, float temperature, int background, be_token_fn on_token, void * user, char ** error);
 
 void be_free(be_engine * engine);
 

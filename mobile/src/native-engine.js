@@ -228,7 +228,8 @@ export const nativeEngine = {
         contextSize: ctx,
         gpu: cfg.nativeGpu !== false,
         maxTokens: replyTokens,
-        temperature
+        temperature,
+        background: !!req.background
       });
       if (stopReason === 'aborted') throw new DOMException('Aborted', 'AbortError');
       return { text, stopReason, stats: stats ? { engine: 'llama.cpp (native)', ...stats, messagesTotal: req.messages.length } : stats };

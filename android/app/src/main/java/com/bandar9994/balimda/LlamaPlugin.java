@@ -344,6 +344,7 @@ public class LlamaPlugin extends Plugin {
         boolean gpu = call.getBoolean("gpu", true);
         int maxTokens = call.getInt("maxTokens", 1024);
         float temperature = call.getFloat("temperature", 0.7f);
+        boolean background = Boolean.TRUE.equals(call.getBoolean("background", false));
         JSONArray messages = call.getArray("messages", new JSArray());
 
         AtomicBoolean stop = new AtomicBoolean(false);
@@ -389,7 +390,7 @@ public class LlamaPlugin extends Plugin {
                     roles[i] = m.optString("role", "user");
                     contents[i] = m.optString("content", "");
                 }
-                String result = LlamaEngine.nativeComplete(handle, roles, contents, maxTokens, temperature, (text) -> {
+                String result = LlamaEngine.nativeComplete(handle, roles, contents, maxTokens, temperature, background, (text) -> {
                     if (!text.isEmpty()) {
                         JSObject evt = new JSObject();
                         evt.put("requestId", requestId);
