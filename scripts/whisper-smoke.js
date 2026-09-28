@@ -49,12 +49,12 @@ const timed = async (fn) => {
     const clip = cut(wav, 60); // as the app records it
     const full = await timed(() => voice.transcribe(clip, 'en', m.id, { fullWindow: true }));
     const sized = await timed(() => voice.transcribe(clip, 'en', m.id));
-    const short = await timed(() => voice.transcribe(cut(wav, 4), 'en', m.id));
+    const short = await timed(() => voice.transcribe(cut(wav, 3), 'en', m.id)); // "And so my fellow Americans"
     const auto = await timed(() => voice.transcribe(clip, 'auto', m.id));
     const ok = !load.error && [full, sized, auto].every((r) => !r.error && r.text.toLowerCase().includes(expected.toLowerCase())) && !short.error && short.text;
     if (!ok) failed = true;
     console.log(`${ok ? '✓' : '✗'} ${m.name} (${os.cpus().length} CPU threads; starting it: ${load.s} s)`);
-    for (const [label, r] of [['30 s window', full], ['window sized to the recording', sized], ['a 4 s phrase', short], ['language found automatically', auto]]) {
+    for (const [label, r] of [['30 s window', full], ['window sized to the recording', sized], ['a 3 s phrase', short], ['language found automatically', auto]]) {
       console.log(`    ${label}: ${r.s} s  "${r.text || r.error}"`);
     }
     voice.deleteModel(m.id);

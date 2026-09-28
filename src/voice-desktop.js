@@ -74,8 +74,9 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
   let server = null;           // { proc, port, modelId, dead, ready }
   let idleTimer = null;
 
-  // The large model is quick enough with a Mac's GPU or a CPU with many cores.
-  const recommended = (process.platform === 'darwin' && process.arch === 'arm64') || os.cpus().length >= 8 ? 'turbo' : 'small';
+  // The large model is quick enough with a Mac's GPU or a CPU with many cores
+  // (on 4 threads it takes about 18 s for 11 s of speech; the small one 3 s).
+  const recommended = (process.platform === 'darwin' && process.arch === 'arm64') || os.cpus().length >= 16 ? 'turbo' : 'small';
 
   function status() {
     return {
@@ -205,8 +206,9 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
 
   // wav: 16 kHz mono WAV. lang: 'ar', 'en' or 'auto'. Returns { text }.
   // Whisper normally works on 30 seconds of sound however little was said;
-  // a window sized to the recording makes a short sentence several times
-  // faster (opts.fullWindow turns this off).
+  // a window sized to the recording makes a sentence about twice as fast
+  // (opts.fullWindow turns this off). Below 15 seconds the large model
+  // starts repeating itself, so the window is never smaller.
   async function transcribe(wav, lang, modelId, opts = {}) {
     const m = byId(modelId);
     if (!fs.existsSync(exe)) throw new Error("Speech recognition isn't included in this copy of Balimda.");
@@ -220,7 +222,7 @@ function createVoice({ binDir, modelsDir, onEvent = () => {}, fetch: fetchImpl =
     form.append('temperature', '0.0');
     form.append('no_timestamps', 'true');
     const seconds = Math.max(0, wav.length - 44) / (16000 * 2);
-    if (!opts.fullWindow && seconds < 26) form.append('audio_ctx', String(Math.min(1500, Math.ceil(seconds * 50) + 200)));
+    if (!opts.fullWindow && seconds < 25) form.append('audio_ctx', String(Math.max(750, Math.ceil(seconds * 50) + 250)));
     let json;
     try {
       const res = await fetch(`http://127.0.0.1:${server.port}/inference`, { method: 'POST', body: form });

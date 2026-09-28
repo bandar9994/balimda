@@ -2035,7 +2035,7 @@ function desktopVoiceView(onCleanup, field, check, lang, rate, s) {
   return [
     h('p', { class: 'help', text: 'Click the microphone in the message box to talk instead of typing. When the box is empty, click "Talk" for a voice chat: you talk, the reply is read aloud, and it listens again.' }),
     V.avail && V.avail.recognition ? null : h('div', { class: 'notice', text: 'Speech recognition isn\'t included in this copy of Balimda, so you can\'t talk to it here. Replies can still be read aloud.' }),
-    field('Speech recognition', list, 'Whisper turns what you say into text on this computer: nothing is sent anywhere. It\'s downloaded once.'),
+    field('Speech recognition', list, 'Whisper turns what you say into text on this computer: nothing is sent anywhere. It\'s downloaded once. The large model understands Arabic best, but without a Mac\'s GPU or a fast processor it can take several seconds per sentence.'),
     field('The language you talk in', lang, 'Choosing the language makes Whisper more accurate. Replies are read in the language they\'re written in.'),
     check('Read replies aloud', s, 'readAloud'),
     h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: V.avail && V.avail.tts
