@@ -272,7 +272,8 @@ window.balimda = {
       return res.text();
     },
     async exit() {
-      if (isNative) await App.minimizeApp();
+      // Android only: iOS apps don't close or minimize themselves.
+      if (Capacitor.getPlatform() === 'android') await App.minimizeApp();
     }
   },
   ai: {

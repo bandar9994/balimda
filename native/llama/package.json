@@ -1,0 +1,12 @@
+{
+  "name": "balimda-llama",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Balimda's on-device engine (llama.cpp) as a Capacitor plugin for iOS. The Android app builds the same engine from android/app/src/main/cpp.",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  }
+}

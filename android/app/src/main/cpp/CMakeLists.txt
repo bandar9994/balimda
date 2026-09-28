@@ -93,7 +93,10 @@ endif ()
 add_subdirectory(${llama_src} ${CMAKE_CURRENT_BINARY_DIR}/llama.cpp EXCLUDE_FROM_ALL)
 
 # ---- JNI library ----------------------------------------------------------------
-add_library(balimda_llama SHARED balimda_llama.cpp)
+# The engine itself is shared with the iOS app (native/llama/engine).
+set(BALIMDA_ENGINE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../native/llama/engine)
+add_library(balimda_llama SHARED balimda_llama.cpp ${BALIMDA_ENGINE_DIR}/balimda_engine.cpp)
+target_include_directories(balimda_llama PRIVATE ${BALIMDA_ENGINE_DIR}/include)
 target_link_libraries(balimda_llama PRIVATE llama ggml)
 if (ANDROID)
     target_link_libraries(balimda_llama PRIVATE log android)

@@ -1,0 +1,50 @@
+name: iOS app
+
+on:
+  push:
+    branches: ['main', 'claude/**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:web
+      - run: npx cap sync ios
+      # Built for iPhones (arm64), without signing: signing needs an Apple
+      # Developer account, set up separately. The version is 1.0.<run number>,
+      # like the Android app.
+      - name: Build the app (unsigned)
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build-ios \
+            MARKETING_VERSION=1.0.${{ github.run_number }} CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            -quiet build
+      # The native engine (llama.cpp on the Apple GPU) must be inside the app.
+      - name: Check the native engine is in the app
+        run: |
+          APP=build-ios/Build/Products/Release-iphoneos/App.app
+          ls "$APP/Frameworks"
+          test -d "$APP/Frameworks/llama.framework" || { echo "::error::llama.framework is missing from the app"; exit 1; }
+      # An unsigned .ipa, for installing with a signing tool (e.g. Sideloadly or
+      # AltStore with a free Apple ID) until the app is on TestFlight.
+      - name: Package
+        run: |
+          mkdir -p Payload
+          cp -R build-ios/Build/Products/Release-iphoneos/App.app Payload/Balimda.app
+          zip -qry Balimda-iOS-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Balimda-iOS-unsigned
+          path: Balimda-iOS-unsigned.ipa
+          if-no-files-found: error
