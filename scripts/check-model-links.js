@@ -5,6 +5,7 @@
 // Checks that every model in the phone catalogs can be downloaded and is
 // about the size the app shows. Run by .github/workflows/model-links.yml.
 //   node scripts/check-model-links.js
+//   node scripts/check-model-links.js --urls   (the phone engine's model links, one per line)
 
 const fs = require('fs');
 const path = require('path');
@@ -35,7 +36,9 @@ async function sizeOf(url) {
   }
 }
 
-(async () => {
+if (require.main === module && process.argv[2] === '--urls') {
+  for (const m of catalog(FILES[0])) console.log(m.url);
+} else if (require.main === module) (async () => {
   let failed = 0;
   for (const file of FILES) {
     const models = catalog(file);
