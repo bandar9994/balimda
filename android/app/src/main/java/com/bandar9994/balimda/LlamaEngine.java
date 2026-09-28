@@ -67,13 +67,17 @@ public final class LlamaEngine {
 
     public static native void nativeFree(long handle);
 
-    /** Returns "reason\tpromptTokens\tpromptMs\tgeneratedTokens\tgenerationMs". */
+    /**
+     * Returns the engine's result line (see balimda_engine.h). A background job
+     * (e.g. updating memory) runs beside the chat instead of replacing it.
+     */
     public static native String nativeComplete(
         long handle,
         String[] roles,
         String[] contents,
         int maxTokens,
         float temperature,
+        boolean background,
         TokenCallback callback
     );
 }

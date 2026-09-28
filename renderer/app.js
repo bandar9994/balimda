@@ -1029,6 +1029,8 @@ async function askModel(model, prompt, maxTokens = 0) {
     think: false,
     temperature: 0.1,
     maxTokens,
+    // On the phone's own models, run beside the chat without replacing it.
+    background: true,
     messages: [{ role: 'user', content: prompt }]
   });
   return res.ok && res.text ? splitThinking(res.text).answer.trim() : null;
@@ -1152,14 +1154,22 @@ async function rememberFrom(userMsg, model) {
 }
 
 // Earlier chats that match what the user just asked, for the model.
+// The phone's own models look them up once per chat: new excerpts with every
+// message would change the system prompt, and the phone would have to read
+// the whole chat again before each reply.
+const phoneRecall = new Map(); // chat id -> excerpts
 async function recallFor(chat, model) {
   if (!S.settings.recallChats || !api.chats.recall) return [];
+  const small = model.provider === 'onDevice';
+  if (small && phoneRecall.has(chat.id)) return phoneRecall.get(chat.id);
   const userTexts = chat.messages.filter((m) => m.role === 'user').slice(-2).map((m) => m.content);
   if (!userTexts.length) return [];
-  const small = model.provider === 'onDevice';
   const search = api.chats.recall(userTexts.join('\n'), { excludeId: chat.id, limit: small ? 2 : 3, maxChars: small ? 600 : 1500 }).catch(() => []);
   // Never hold up a reply for long; the search keeps warming its cache.
-  return Promise.race([search, new Promise((r) => setTimeout(() => r([]), 1500))]);
+  const found = await Promise.race([search, new Promise((r) => setTimeout(() => r(null), 1500))]);
+  if (!found) return [];
+  if (small) phoneRecall.set(chat.id, found);
+  return found;
 }
 
 function buildSystemPrompt(chat, recalled = [], model = null) {

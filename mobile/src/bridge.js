@@ -298,7 +298,8 @@ window.balimda = {
             messages: normalizeMessages(req.messages),
             temperature: req.temperature,
             maxTokens: req.maxTokens,
-            think: req.think
+            think: req.think,
+            background: !!req.background
           },
           (text) => {
             for (const cb of aiListeners) cb({ requestId: req.requestId, type: 'delta', text });
