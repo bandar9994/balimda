@@ -1177,6 +1177,10 @@ function buildSystemPrompt(chat, recalled = [], model = null) {
       ...recalled.map((r) => `- [${r.title}${r.updatedAt ? `, ${when(r.updatedAt)}` : ''}] ${r.role === 'user' ? 'User' : 'Assistant'}: ${r.text}`)
     ].join('\n'));
   }
+  // These instructions are in English, and smaller models tend to answer in
+  // the language of the instructions rather than the user's: say it plainly,
+  // last, where small models pay the most attention.
+  parts.push('Always reply in the same language as the user\'s latest message (for example, Arabic to Arabic, English to English).');
   return parts.join('\n\n');
 }
 
