@@ -2234,7 +2234,7 @@ function openSettings(tab = 'general') {
       const lang = bind(h('select', { class: 'select' },
         h('option', { value: 'ar-SA', text: 'Arabic (Saudi Arabia)' }),
         h('option', { value: 'en-US', text: 'English' }),
-        desktop ? h('option', { value: 'auto', text: 'Arabic or English (found automatically)' }) : null), s, 'voiceLang');
+        desktop ? h('option', { value: 'auto', text: 'Arabic or English (found automatically, slower)' }) : null), s, 'voiceLang');
       lang.value = voiceLang();
       const rate = bind(h('select', { class: 'select' },
         h('option', { value: '0.85', text: 'Slower' }),

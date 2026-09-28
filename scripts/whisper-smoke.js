@@ -21,13 +21,17 @@ const voice = createVoice({
   onEvent: (e) => { if (e.download.done) console.log(`downloaded ${e.download.id}: ${e.download.error || 'ok'}`); }
 });
 
-// The first `seconds` of a 16 kHz mono WAV, as a WAV.
+// The first `seconds` of a 16 kHz mono 16-bit WAV, as a plain WAV like the app records.
 function cut(wav, seconds) {
-  const bytes = Math.min(wav.length - 44, Math.round(seconds * 16000) * 2);
-  const out = Buffer.concat([wav.subarray(0, 44), wav.subarray(44, 44 + bytes)]);
-  out.writeUInt32LE(36 + bytes, 4);
-  out.writeUInt32LE(bytes, 40);
-  return out;
+  const data = wav.indexOf('data', 12);
+  const samples = wav.subarray(data + 8, data + 8 + wav.readUInt32LE(data + 4));
+  const pcm = samples.subarray(0, Math.min(samples.length, Math.round(seconds * 16000) * 2));
+  const head = Buffer.alloc(44);
+  head.write('RIFF', 0); head.writeUInt32LE(36 + pcm.length, 4); head.write('WAVEfmt ', 8);
+  head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22);
+  head.writeUInt32LE(16000, 24); head.writeUInt32LE(32000, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34);
+  head.write('data', 36); head.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([head, pcm]);
 }
 
 const timed = async (fn) => {
@@ -42,11 +46,12 @@ const timed = async (fn) => {
   for (const m of WHISPER_MODELS) {
     await voice.download(m.id);
     const load = await timed(() => voice.transcribe(cut(wav, 2), 'en', m.id));
-    const full = await timed(() => voice.transcribe(wav, 'en', m.id, { fullWindow: true }));
-    const sized = await timed(() => voice.transcribe(wav, 'en', m.id));
+    const clip = cut(wav, 60); // as the app records it
+    const full = await timed(() => voice.transcribe(clip, 'en', m.id, { fullWindow: true }));
+    const sized = await timed(() => voice.transcribe(clip, 'en', m.id));
     const short = await timed(() => voice.transcribe(cut(wav, 4), 'en', m.id));
-    const auto = await timed(() => voice.transcribe(wav, 'auto', m.id));
-    const ok = [full, sized, auto].every((r) => !r.error && r.text.toLowerCase().includes(expected.toLowerCase())) && short.text;
+    const auto = await timed(() => voice.transcribe(clip, 'auto', m.id));
+    const ok = !load.error && [full, sized, auto].every((r) => !r.error && r.text.toLowerCase().includes(expected.toLowerCase())) && !short.error && short.text;
     if (!ok) failed = true;
     console.log(`${ok ? '✓' : '✗'} ${m.name} (${os.cpus().length} CPU threads; starting it: ${load.s} s)`);
     for (const [label, r] of [['30 s window', full], ['window sized to the recording', sized], ['a 4 s phrase', short], ['language found automatically', auto]]) {
