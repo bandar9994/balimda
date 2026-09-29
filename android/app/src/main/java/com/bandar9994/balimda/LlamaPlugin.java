@@ -52,6 +52,8 @@ public class LlamaPlugin extends Plugin {
     // Loaded model state (only touched on the inference thread).
     private long handle = 0;
     private String loadedKey = null;
+    private boolean visionLoaded = false;  // the loaded model's vision file is loaded too
+    private String visionError = null;     // why it couldn't be
     private String loadedDevice = "CPU";   // where the loaded model runs
     private String loadedOffload = "";
 
@@ -72,6 +74,13 @@ public class LlamaPlugin extends Plugin {
     private File modelFile(String name) {
         File f = new File(modelsDir(), name.replaceAll("[/\\\\]", "_"));
         return f;
+    }
+
+    // A vision model's image part (its mmproj file) is kept next to the model
+    // as "<model>.mmproj", and loaded with it.
+    private static String visionNameFor(String modelName) {
+        String base = modelName.toLowerCase().endsWith(".gguf") ? modelName.substring(0, modelName.length() - 5) : modelName;
+        return base + ".mmproj";
     }
 
     // ---- record of downloads -------------------------------------------------------
@@ -187,6 +196,7 @@ public class LlamaPlugin extends Plugin {
                 JSObject m = new JSObject();
                 m.put("name", f.getName());
                 m.put("size", f.length());
+                m.put("vision", modelFile(visionNameFor(f.getName())).exists());
                 list.put(m);
             }
         }
@@ -217,25 +227,36 @@ public class LlamaPlugin extends Plugin {
         String name = call.getString("name", "");
         inference.execute(() -> {
             File f = modelFile(name);
-            if (loadedKey != null && loadedKey.startsWith(f.getAbsolutePath() + "|")) unload();
+            boolean isVision = f.getName().endsWith(".mmproj");
+            if (isVision || (loadedKey != null && loadedKey.startsWith(f.getAbsolutePath() + "|"))) unload();
             boolean ok = !f.exists() || f.delete();
-            if (ok) noteDeleted(f.getName());
+            // A model's vision file goes with it.
+            if (!isVision) modelFile(visionNameFor(f.getName())).delete();
+            if (ok && !isVision) noteDeleted(f.getName());
             JSObject ret = new JSObject();
             ret.put("deleted", ok);
             call.resolve(ret);
         });
     }
 
+    // download({url}) saves a model under its file name; download({url, saveAs:
+    // "<model>.mmproj"}) saves a model's vision file.
     @PluginMethod
     public void download(PluginCall call) {
         String url = call.getString("url", "");
+        String saveAs = call.getString("saveAs", null);
         String name;
         try {
             name = fileNameFor(url);
+            if (saveAs != null) {
+                if (!saveAs.matches("[A-Za-z0-9._-]+\\.mmproj")) throw new IllegalArgumentException("A vision file is saved as <model>.mmproj");
+                name = saveAs;
+            }
         } catch (Exception e) {
             call.reject(e.getMessage());
             return;
         }
+        final boolean isVision = saveAs != null;
         JSObject started = new JSObject();
         started.put("name", name);
         // Already downloading (e.g. still going in the background after the app's
@@ -260,7 +281,7 @@ public class LlamaPlugin extends Plugin {
             try {
                 transfer(url, part, cancelled, state);
                 if (!part.renameTo(target)) throw new Exception("Couldn't save the model file.");
-                noteDownloaded(target.getName(), url, target.length());
+                if (!isVision) noteDownloaded(target.getName(), url, target.length());
                 emitDownload(url, state[1], state[0], true, null);
             } catch (InterruptedException e) {
                 part.delete();
@@ -412,6 +433,8 @@ public class LlamaPlugin extends Plugin {
             handle = 0;
         }
         loadedKey = null;
+        visionLoaded = false;
+        visionError = null;
     }
 
     private static int threadCount() {
@@ -456,7 +479,8 @@ public class LlamaPlugin extends Plugin {
                     }
                     throw new Exception("\"" + model + "\" isn't downloaded. Download it in Settings → Models & providers.");
                 }
-                String key = file.getAbsolutePath() + "|" + nCtx + "|" + gpu;
+                File vision = modelFile(visionNameFor(file.getName()));
+                String key = file.getAbsolutePath() + "|" + nCtx + "|" + gpu + "|" + vision.exists();
                 if (!key.equals(loadedKey)) {
                     unload();
                     emitStatus(requestId, "loading");
@@ -478,6 +502,15 @@ public class LlamaPlugin extends Plugin {
                         loadedOffload = LlamaEngine.nativeOffload(handle);
                         loadedDevice = describeDevice(loadedOffload);
                     }
+                    if (vision.exists()) {
+                        // On the CPU: llama.cpp's OpenCL backend doesn't run the image part.
+                        try {
+                            LlamaEngine.nativeLoadVision(handle, vision.getAbsolutePath(), false, threadCount());
+                            visionLoaded = true;
+                        } catch (RuntimeException e) {
+                            visionError = e.getMessage();
+                        }
+                    }
                     loadedKey = key;
                 }
                 if (stop.get()) {
@@ -489,12 +522,28 @@ public class LlamaPlugin extends Plugin {
 
                 String[] roles = new String[messages.length()];
                 String[] contents = new String[messages.length()];
+                int[] imageCounts = new int[messages.length()];
+                java.util.List<byte[]> images = new java.util.ArrayList<>();
                 for (int i = 0; i < messages.length(); i++) {
                     JSONObject m = messages.getJSONObject(i);
                     roles[i] = m.optString("role", "user");
                     contents[i] = m.optString("content", "");
+                    // Pictures: base64 image files (a "data:" URL prefix is allowed).
+                    JSONArray pics = m.optJSONArray("images");
+                    for (int k = 0; pics != null && k < pics.length(); k++) {
+                        String b64 = pics.optString(k, "");
+                        int comma = b64.startsWith("data:") ? b64.indexOf(',') : -1;
+                        images.add(android.util.Base64.decode(b64.substring(comma + 1), android.util.Base64.DEFAULT));
+                        imageCounts[i]++;
+                    }
                 }
-                String result = LlamaEngine.nativeComplete(handle, roles, contents, null, null, maxTokens, temperature, background, (text) -> {
+                if (!images.isEmpty() && !visionLoaded) {
+                    throw new Exception(visionError != null
+                        ? "Couldn't load this model's vision file: " + visionError
+                        : "This model can't see pictures. Add its vision file (mmproj) in Settings → Models & providers, or pick a model that can.");
+                }
+                String result = LlamaEngine.nativeComplete(handle, roles, contents, imageCounts,
+                        images.toArray(new byte[0][]), maxTokens, temperature, background, (text) -> {
                     if (!text.isEmpty()) {
                         JSObject evt = new JSObject();
                         evt.put("requestId", requestId);

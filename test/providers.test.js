@@ -245,3 +245,53 @@ test('openai-compatible shows a thinking model\'s reasoning', async () => {
   s.close();
   assert.strictEqual(r.text, '<think>Hmm, easy.</think>\n\n4');
 });
+
+// A tiny JPEG as a data URL (the app keeps pictures like this).
+const PIC = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+
+test('normalizeMessages keeps the user\'s pictures, even with no text, and drops anything else', () => {
+  const out = normalizeMessages([
+    { role: 'user', content: '', images: [PIC] },
+    { role: 'user', content: 'What is this?', images: ['https://example.com/x.jpg', 42] },
+    { role: 'assistant', content: 'A cat.', images: [PIC] }
+  ]);
+  assert.deepStrictEqual(out, [
+    { role: 'user', content: 'What is this?', images: [PIC] },
+    { role: 'assistant', content: 'A cat.' }
+  ]);
+});
+
+test('pictures go to each provider the way its API takes them', async () => {
+  const bodies = [];
+  const s = await server(async (req, res) => {
+    const body = await readBody(req);
+    bodies.push({ url: req.url, body });
+    if (req.url === '/api/chat') return res.end(`${JSON.stringify({ message: { content: 'ok' }, done: true })}\n`);
+    if (req.url === '/v1/messages') return sse(res, claudeEvents('ok'));
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.end('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+  });
+  const messages = [{ role: 'user', content: 'What is this?', images: [PIC] }, { role: 'assistant', content: 'A cat.' }, { role: 'user', content: 'Sure?' }];
+
+  await PROVIDERS.ollama.impl.streamChat({ baseUrl: s.url }, { model: 'm', messages }, () => {});
+  const ollama = bodies.find((b) => b.url === '/api/chat').body.messages;
+  assert.deepStrictEqual(ollama[0], { role: 'user', content: 'What is this?', images: ['/9j/4AAQSkZJRg=='] });
+  assert.deepStrictEqual(ollama[2], { role: 'user', content: 'Sure?' });
+
+  await PROVIDERS.openaiCompatible.impl.streamChat({ baseUrl: `${s.url}/v1` }, { model: 'm', messages }, () => {});
+  const openai = bodies.find((b) => b.url === '/v1/chat/completions').body.messages;
+  assert.deepStrictEqual(openai[0].content, [
+    { type: 'image_url', image_url: { url: PIC } },
+    { type: 'text', text: 'What is this?' }
+  ]);
+  assert.strictEqual(openai[2].content, 'Sure?');
+
+  await PROVIDERS.anthropic.impl.streamChat({ apiKey: 'k', baseUrl: s.url }, { model: 'claude-haiku-4-5', messages }, () => {});
+  const claude = bodies.find((b) => b.url === '/v1/messages').body.messages;
+  assert.deepStrictEqual(claude[0].content, [
+    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/4AAQSkZJRg==' } },
+    { type: 'text', text: 'What is this?' }
+  ]);
+  assert.strictEqual(claude[2].content, 'Sure?');
+  s.close();
+});

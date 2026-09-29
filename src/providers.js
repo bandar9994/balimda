@@ -5,7 +5,9 @@
 // Model providers. Every provider exposes:
 //   listModels(config)                          -> Promise<string[]>
 //   streamChat(config, request, onDelta, signal) -> Promise<{ stopReason, text }>
-// where request = { model, system, messages: [{role, content}], temperature, maxTokens }.
+// where request = { model, system, messages: [{role, content, images?}], temperature, maxTokens }.
+// A user message's pictures are data URLs ("data:image/jpeg;base64,..."); each
+// provider sends them the way its API takes them.
 
 const Anthropic = require('@anthropic-ai/sdk');
 
@@ -61,6 +63,40 @@ function withSystem(system, messages) {
   return system ? [{ role: 'system', content: system }, ...messages] : messages;
 }
 
+// "data:image/jpeg;base64,AAA" -> { mediaType: 'image/jpeg', data: 'AAA' }
+function splitDataUrl(url) {
+  const m = /^data:([^;,]+);base64,(.*)$/s.exec(String(url || ''));
+  return m ? { mediaType: m[1], data: m[2] } : null;
+}
+const picturesOf = (m) => (Array.isArray(m.images) ? m.images : []).map(splitDataUrl).filter(Boolean);
+
+// Text only, for servers that don't take pictures.
+const textOnly = (messages) => messages.map(({ role, content }) => ({ role, content }));
+
+// Ollama: base64 pictures in the message's "images".
+const ollamaMessages = (messages) => messages.map((m) => {
+  const pics = picturesOf(m);
+  return pics.length ? { role: m.role, content: m.content, images: pics.map((p) => p.data) } : { role: m.role, content: m.content };
+});
+
+// OpenAI-style APIs: a message with pictures has a list of parts.
+const openaiMessages = (messages) => messages.map((m) => {
+  const pics = picturesOf(m);
+  if (!pics.length) return { role: m.role, content: m.content };
+  const parts = pics.map((p) => ({ type: 'image_url', image_url: { url: `data:${p.mediaType};base64,${p.data}` } }));
+  if (m.content) parts.push({ type: 'text', text: m.content });
+  return { role: m.role, content: parts };
+});
+
+// Claude: image blocks before the text.
+const anthropicMessages = (messages) => messages.map((m) => {
+  const pics = picturesOf(m);
+  if (!pics.length) return { role: m.role, content: m.content };
+  const blocks = pics.map((p) => ({ type: 'image', source: { type: 'base64', media_type: p.mediaType, data: p.data } }));
+  if (m.content) blocks.push({ type: 'text', text: m.content });
+  return { role: m.role, content: blocks };
+});
+
 // ---- Ollama (local) ------------------------------------------------------
 
 // Whether a model can think before answering (Qwen 3/3.5, DeepSeek-R1…).
@@ -101,7 +137,7 @@ const ollama = {
     if (req.maxTokens > 0) options.num_predict = req.maxTokens;
     const body = {
       model: req.model,
-      messages: withSystem(req.system, req.messages),
+      messages: withSystem(req.system, ollamaMessages(req.messages)),
       stream: true,
       // Keep the model in memory between messages; Ollama's default of
       // 5 minutes means reloading it (slow for big models) after a pause.
@@ -183,7 +219,7 @@ function openaiLike({ sendSampling }) {
     async streamChat(cfg, req, onDelta, signal) {
       const body = {
         model: req.model,
-        messages: withSystem(req.system, req.messages),
+        messages: withSystem(req.system, openaiMessages(req.messages)),
         stream: true
       };
       if (sendSampling) {
@@ -294,7 +330,7 @@ const hermes = {
     const res = await fetch(`${trimSlash(cfg.baseUrl)}/chat/completions`, {
       method: 'POST',
       headers: hermesHeaders(cfg),
-      body: JSON.stringify({ model: req.model, messages: withSystem(req.system, req.messages), stream: true }),
+      body: JSON.stringify({ model: req.model, messages: withSystem(req.system, textOnly(req.messages)), stream: true }),
       signal
     });
     if (!res.ok) throw await hermesError(res);
@@ -407,7 +443,7 @@ const anthropic = {
     const params = {
       model: req.model,
       max_tokens: Math.min(req.maxTokens > 0 ? req.maxTokens : DEFAULT_ANTHROPIC_MAX_TOKENS, limit),
-      messages: req.messages
+      messages: anthropicMessages(req.messages)
     };
     if (req.system) params.system = req.system;
     if (SUMMARIZED_THINKING.test(req.model) && req.think !== false) params.thinking = { type: 'adaptive', display: 'summarized' };
@@ -471,10 +507,16 @@ function normalizeMessages(messages) {
   for (const m of messages) {
     if (m.role !== 'user' && m.role !== 'assistant') continue;
     const content = String(m.content || '').trim();
-    if (!content) continue;
+    // Pictures only come from the user.
+    const images = m.role === 'user' && Array.isArray(m.images) ? m.images.filter((u) => typeof u === 'string' && u.startsWith('data:image/')) : [];
+    if (!content && !images.length) continue;
     const prev = out[out.length - 1];
-    if (prev && prev.role === m.role) prev.content += `\n\n${content}`;
-    else out.push({ role: m.role, content });
+    if (prev && prev.role === m.role) {
+      prev.content = [prev.content, content].filter(Boolean).join('\n\n');
+      if (images.length) prev.images = [...(prev.images || []), ...images];
+    } else {
+      out.push(images.length ? { role: m.role, content, images } : { role: m.role, content });
+    }
   }
   while (out.length && out[0].role !== 'user') out.shift();
   return out;

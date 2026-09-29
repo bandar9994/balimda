@@ -16,13 +16,17 @@ export function estimateTokens(text) {
   return Math.ceil(latin / 3 + other / 1.5);
 }
 
+// A picture takes up to about this many tokens (the phone engine scales
+// bigger ones down to it).
+export const PICTURE_TOKENS = 1024;
+
 // Keep the newest messages that fit, always leaving room for the reply.
 export function fitToContext(messages, system, ctx, replyTokens) {
   const budget = Math.max(256, ctx - replyTokens - 64);
   let used = estimateTokens(system);
   const kept = [];
   for (let i = messages.length - 1; i >= 0; i--) {
-    used += estimateTokens(messages[i].content) + 8;
+    used += estimateTokens(messages[i].content) + 8 + (messages[i].images || []).length * PICTURE_TOKENS;
     if (used > budget && kept.length) break;
     kept.unshift(messages[i]);
   }

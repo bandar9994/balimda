@@ -83,7 +83,7 @@ jobs:
             vision=()
             if [ -n "$MMPROJ" ]; then
               curl -sSfL --retry 3 -o mmproj.gguf "$MMPROJ"
-              vision=(mmproj.gguf build-engine/_deps/llama_cpp-src/tools/mtmd/test-1.jpeg)
+              vision=(mmproj.gguf build-engine/_deps/llama_cpp-src/tools/mtmd/test-1.jpeg 1969)
             fi
             if { [ -f model.gguf ] || curl -sSfL --retry 3 -o model.gguf "$url"; } && ./model-smoke model.gguf "${vision[@]}" 2>engine.log; then
               echo "ok"

@@ -390,6 +390,17 @@ window.balimda = {
     download: async (url) => (await engine()).download(url),
     cancel: async (url) => (await engine()).cancelDownload(url),
     remove: async (url) => (await engine()).remove(url),
+    // A model's vision file (mmproj), so it can see pictures (native engine only).
+    downloadVision: async (modelName, url) => {
+      const e = await engine();
+      if (!e.downloadVision) throw new Error('Pictures need the native engine, which this phone can\'t run.');
+      // The model by name, or by its download link.
+      return e.downloadVision(/^https?:/i.test(modelName) ? e.modelName(modelName) : modelName, url);
+    },
+    removeVision: async (modelName) => {
+      const e = await engine();
+      if (e.removeVision) await e.removeVision(modelName);
+    },
     downloads: async () => (await engine()).downloadState(),
     missing: async () => {
       const e = await engine();

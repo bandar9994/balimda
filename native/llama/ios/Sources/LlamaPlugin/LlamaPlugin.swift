@@ -42,6 +42,8 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
     private var loadedKey: String?
     private var loadedDevice = "CPU"
     private var loadedOffload = ""
+    private var visionLoaded = false  // the loaded model's vision file is loaded too
+    private var visionError: String?  // why it couldn't be
 
     // ---- files -----------------------------------------------------------------
 
@@ -62,6 +64,13 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
     private func modelFile(_ name: String) -> URL {
         let safe = name.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_")
         return modelsDir().appendingPathComponent(safe)
+    }
+
+    // A vision model's image part (its mmproj file) is kept next to the model
+    // as "<model>.mmproj", and loaded with it.
+    private static func visionName(for model: String) -> String {
+        let base = model.lowercased().hasSuffix(".gguf") ? String(model.dropLast(5)) : model
+        return base + ".mmproj"
     }
 
     private static func fileName(for url: String) throws -> String {
@@ -157,7 +166,8 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
             guard name.hasSuffix(".gguf") else { continue }
             present.insert(name)
             if record[name] == nil { noteDownloaded(name, url: nil, size: fileSize(f)) }
-            models.append(["name": name, "size": fileSize(f)])
+            let vision = fm.fileExists(atPath: modelFile(LlamaPlugin.visionName(for: name)).path)
+            models.append(["name": name, "size": fileSize(f), "vision": vision])
         }
         // On the record but gone from the phone, without being deleted in Balimda.
         var missing: [[String: Any]] = []
@@ -179,25 +189,39 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
         let name = call.getString("name") ?? ""
         inference.async {
             let f = self.modelFile(name)
+            let isVision = f.lastPathComponent.hasSuffix(".mmproj")
+            if isVision { self.unload() }
             if let key = self.loadedKey, key.hasPrefix(f.path + "|") { self.unload() }
             var ok = true
             if FileManager.default.fileExists(atPath: f.path) {
                 ok = (try? FileManager.default.removeItem(at: f)) != nil
             }
-            if ok { self.noteDeleted(f.lastPathComponent) }
+            // A model's vision file goes with it.
+            if !isVision { try? FileManager.default.removeItem(at: self.modelFile(LlamaPlugin.visionName(for: f.lastPathComponent))) }
+            if ok && !isVision { self.noteDeleted(f.lastPathComponent) }
             call.resolve(["deleted": ok])
         }
     }
 
+    // download({url}) saves a model under its file name; download({url, saveAs:
+    // "<model>.mmproj"}) saves a model's vision file.
     @objc func download(_ call: CAPPluginCall) {
         let url = call.getString("url") ?? ""
-        let name: String
+        let saveAs = call.getString("saveAs")
+        var name: String
         do {
             name = try LlamaPlugin.fileName(for: url)
+            if let saveAs = saveAs {
+                guard saveAs.range(of: "^[A-Za-z0-9._-]+\\.mmproj$", options: .regularExpression) != nil else {
+                    throw PluginError("A vision file is saved as <model>.mmproj")
+                }
+                name = saveAs
+            }
         } catch {
             call.reject(error.localizedDescription)
             return
         }
+        let isVision = saveAs != nil
         guard let source = URL(string: url) else {
             call.reject("The link isn't valid")
             return
@@ -220,7 +244,7 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
                 self.activeParts.remove(part.lastPathComponent)
                 self.downloads.removeValue(forKey: url)
                 self.lock.unlock()
-                if error == nil { self.noteDownloaded(target.lastPathComponent, url: url, size: self.fileSize(target)) }
+                if error == nil && !isVision { self.noteDownloaded(target.lastPathComponent, url: url, size: self.fileSize(target)) }
             }
             var evt: [String: Any] = ["url": url, "loaded": loaded, "total": total, "done": done]
             if let error = error { evt["error"] = error }
@@ -251,6 +275,8 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
             engine = nil
         }
         loadedKey = nil
+        visionLoaded = false
+        visionError = nil
     }
 
     private static func threadCount() -> Int32 {
@@ -283,6 +309,16 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
         engine = e
         loadedOffload = String(cString: be_offload(e))
         loadedDevice = LlamaPlugin.describeDevice(loadedOffload)
+    }
+
+    private func loadVision(path: String, gpu: Bool) throws {
+        guard let e = engine else { return }
+        var error: UnsafeMutablePointer<CChar>?
+        if !be_load_vision(e, path, gpu, LlamaPlugin.threadCount(), &error) {
+            let message = error.map { String(cString: $0) } ?? "Couldn't load the vision file."
+            be_string_free(error)
+            throw PluginError(message)
+        }
     }
 
     private func emitStatus(_ requestId: String, _ status: String) {
@@ -321,7 +357,9 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
                     }
                     throw PluginError("\"\(model)\" isn't downloaded. Download it in Settings → Models & providers.")
                 }
-                let key = "\(file.path)|\(nCtx)|\(gpu)"
+                let vision = self.modelFile(LlamaPlugin.visionName(for: file.lastPathComponent))
+                let hasVision = FileManager.default.fileExists(atPath: vision.path)
+                let key = "\(file.path)|\(nCtx)|\(gpu)|\(hasVision)"
                 if key != self.loadedKey {
                     self.unload()
                     self.emitStatus(requestId, "loading")
@@ -339,6 +377,23 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
                         self.unload()
                         try self.load(path: file.path, nCtx: nCtx, gpuLayers: 0, threads: LlamaPlugin.threadCount())
                     }
+                    if hasVision {
+                        // On the GPU with the model; on the CPU if the GPU can't take it.
+                        let onGpu = self.loadedDevice != "CPU"
+                        do {
+                            try self.loadVision(path: vision.path, gpu: onGpu)
+                            self.visionLoaded = true
+                        } catch where onGpu {
+                            do {
+                                try self.loadVision(path: vision.path, gpu: false)
+                                self.visionLoaded = true
+                            } catch {
+                                self.visionError = error.localizedDescription
+                            }
+                        } catch {
+                            self.visionError = error.localizedDescription
+                        }
+                    }
                     self.loadedKey = key
                 }
                 if stop.value {
@@ -349,14 +404,32 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
 
                 let roles = messages.map { ($0["role"] as? String) ?? "user" }
                 let contents = messages.map { ($0["content"] as? String) ?? "" }
+                // Pictures: base64 image files (a "data:" URL prefix is allowed).
+                var imageCounts: [Int32] = []
+                var images: [Data] = []
+                for m in messages {
+                    let pics = (m["images"] as? JSArray)?.compactMap { $0 as? String } ?? []
+                    for pic in pics {
+                        let b64 = pic.hasPrefix("data:") ? String(pic[pic.index(after: pic.firstIndex(of: ",") ?? pic.startIndex)...]) : pic
+                        guard let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) else {
+                            throw PluginError("One of the pictures couldn't be read.")
+                        }
+                        images.append(data)
+                    }
+                    imageCounts.append(Int32(pics.count))
+                }
+                if !images.isEmpty && !self.visionLoaded {
+                    if let why = self.visionError { throw PluginError("Couldn't load this model's vision file: \(why)") }
+                    throw PluginError("This model can't see pictures. Add its vision file (mmproj) in Settings → Models & providers, or pick a model that can.")
+                }
                 let sink = TokenSink { text in
                     if !text.isEmpty {
                         self.notifyListeners("token", data: ["requestId": requestId, "text": text])
                     }
                     return !stop.value
                 }
-                let result = try self.complete(roles: roles, contents: contents, maxTokens: maxTokens,
-                                               temperature: temperature, background: background, sink: sink)
+                let result = try self.complete(roles: roles, contents: contents, imageCounts: imageCounts, images: images,
+                                               maxTokens: maxTokens, temperature: temperature, background: background, sink: sink)
                 call.resolve(self.resultObject(result))
             } catch {
                 call.reject(error.localizedDescription)
@@ -364,8 +437,8 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func complete(roles: [String], contents: [String], maxTokens: Int32, temperature: Float, background: Bool,
-                          sink: TokenSink) throws -> String {
+    private func complete(roles: [String], contents: [String], imageCounts: [Int32], images: [Data], maxTokens: Int32,
+                          temperature: Float, background: Bool, sink: TokenSink) throws -> String {
         guard let e = engine else { throw PluginError("Model is not loaded") }
         let rolePtrs: [UnsafePointer<CChar>?] = roles.map { UnsafePointer(strdup($0)) }
         let contentPtrs: [UnsafePointer<CChar>?] = contents.map { UnsafePointer(strdup($0)) }
@@ -379,8 +452,23 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         var error: UnsafeMutablePointer<CChar>?
         let user = Unmanaged.passUnretained(sink).toOpaque()
+        // The pictures, one after another in one buffer that stays put during the call.
+        var blob = [UInt8]()
+        var spans: [(offset: Int, size: Int)] = []
+        for d in images {
+            spans.append((blob.count, d.count))
+            blob.append(contentsOf: d)
+        }
         let raw = withExtendedLifetime(sink) {
-            be_complete(e, rolePtrs, contentPtrs, Int32(roles.count), nil, nil, maxTokens, temperature, background ? 1 : 0, onToken, user, &error)
+            blob.withUnsafeBufferPointer { buf -> UnsafeMutablePointer<CChar>? in
+                let pics = spans.map { span in be_image(data: buf.baseAddress.map { $0 + span.offset }, size: span.size) }
+                return imageCounts.withUnsafeBufferPointer { counts in
+                    pics.withUnsafeBufferPointer { p in
+                        be_complete(e, rolePtrs, contentPtrs, Int32(roles.count), counts.baseAddress, p.baseAddress,
+                                    maxTokens, temperature, background ? 1 : 0, onToken, user, &error)
+                    }
+                }
+            }
         }
         guard let raw = raw else {
             let message = error.map { String(cString: $0) } ?? "The model failed."

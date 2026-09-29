@@ -129,6 +129,7 @@ export async function probe() {
 // ---- downloads -------------------------------------------------------------
 
 const downloads = new Map(); // url -> { loaded, total, error }
+const visionUrls = new Map(); // vision file url -> the model's name
 const progressListeners = new Set();
 const namesByUrl = new Map();
 
@@ -152,9 +153,13 @@ export function onDownloadProgress(cb) {
   return () => progressListeners.delete(cb);
 }
 
+// url -> { loaded, total, error, vision }: `vision` names the model a vision
+// file is for (it's not a model of its own).
 export function downloadState() {
   const out = {};
-  for (const [url, d] of downloads) out[url] = { loaded: d.loaded || 0, total: d.total || 0, error: d.error || null };
+  for (const [url, d] of downloads) {
+    out[url] = { loaded: d.loaded || 0, total: d.total || 0, error: d.error || null, vision: visionUrls.get(url) || null };
+  }
   return out;
 }
 
@@ -168,7 +173,7 @@ function urlsByName() {
 export async function listDownloaded() {
   const { models } = await Llama.listModels();
   const byName = urlsByName();
-  return models.map((m) => ({ name: m.name, size: m.size, url: byName.get(m.name) || `local:${m.name}` }));
+  return models.map((m) => ({ name: m.name, size: m.size, url: byName.get(m.name) || `local:${m.name}`, vision: !!m.vision }));
 }
 
 // Models Balimda downloaded that are gone from the phone although they were
@@ -196,6 +201,28 @@ export async function download(url) {
     downloads.set(url, { error: err.message || String(err) });
     emitProgress();
   }
+}
+
+// A vision model's image part (its "mmproj" GGUF, made for that model) is
+// kept next to the model and loaded with it, so the model can see pictures.
+export const visionFileFor = (model) => `${String(model).replace(/\.gguf$/i, '')}.mmproj`;
+
+export async function downloadVision(model, url) {
+  if (!/^https?:\/\/.+\.gguf(\?.*)?$/i.test(url)) throw new Error('The vision file link must point to a .gguf file (usually named mmproj-….gguf)');
+  if (downloads.has(url) && !downloads.get(url).error) return;
+  visionUrls.set(url, model);
+  downloads.set(url, { loaded: 0, total: 0 });
+  emitProgress();
+  try {
+    await Llama.download({ url, saveAs: visionFileFor(model) });
+  } catch (err) {
+    downloads.set(url, { error: err.message || String(err) });
+    emitProgress();
+  }
+}
+
+export async function removeVision(model) {
+  await Llama.deleteModel({ name: visionFileFor(model) });
 }
 
 export async function cancelDownload(url) {
