@@ -206,3 +206,17 @@ test('recall finds relevant parts of earlier chats', async () => {
   const small = await storage.recall('AlUla resort Hegra', { maxChars: 150 });
   assert.ok(small.reduce((n, h) => n + h.text.length, 0) <= 150);
 });
+
+test('importing a backup merges a chat that is still on this device (nothing added since is lost)', async () => {
+  const storage = await Storage.open(nodeFsBackend(fs.mkdtempSync(path.join(os.tmpdir(), 'balimda-import-'))));
+  const chat = await storage.createChat({ title: 'Trip' });
+  chat.messages.push({ id: 'a', role: 'user', content: 'Plan my trip', createdAt: 1 });
+  await storage.saveChat(chat);
+  const backup = JSON.parse(JSON.stringify(await storage.exportAll()));
+  const now = await storage.getChat(chat.id);
+  now.messages.push({ id: 'b', role: 'assistant', content: 'Here is a plan', createdAt: 2 });
+  await storage.saveChat(now);
+  assert.strictEqual(await storage.importAll(backup), 1);
+  const after = await storage.getChat(chat.id);
+  assert.deepStrictEqual(after.messages.map((m) => m.id), ['a', 'b']);
+});

@@ -56,6 +56,12 @@
       "THIRD-PARTY-NOTICES.md",
       "google-oauth.json"
     ],
+    "extraResources": [
+      {
+        "from": "whisper-bin/${os}-${arch}",
+        "to": "whisper"
+      }
+    ],
     "directories": {
       "output": "dist"
     },
@@ -81,6 +87,9 @@
         }
       ],
       "category": "public.app-category.productivity",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Balimda listens when you click the microphone, so you can talk to your AI instead of typing. What you say is turned into text on this Mac."
+      },
       "identity": "-",
       "hardenedRuntime": false
     },

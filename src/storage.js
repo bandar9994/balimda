@@ -27,6 +27,14 @@ const DEFAULT_SETTINGS = {
   memory: '',
   computers: {},
   shareWithPhone: false,
+  // Voice chat (per device, not synced): the language you talk in ('' = the
+  // device's language), recognising speech only on the device, reading
+  // replies aloud, and how fast they're read.
+  voiceLang: '',
+  voicePrivate: false,
+  readAloud: false,
+  voiceRate: 1,
+  voiceModel: 'turbo', // the computer's Whisper model (src/voice-desktop.js)
   providers: {
     ollama: { enabled: true, baseUrl: 'http://127.0.0.1:11434', think: true },
     openaiCompatible: { enabled: true, baseUrl: 'http://127.0.0.1:1234/v1', apiKey: '' },
@@ -469,14 +477,19 @@ class Storage {
     return { app: 'balimda', version: 1, exportedAt: new Date().toISOString(), chats };
   }
 
+  // Adds the chats of a backup. A chat that's also on this device is merged
+  // with it (as sync does), so messages added since the backup are kept.
   async importAll(data) {
     const chats = Array.isArray(data) ? data : data && data.chats;
     if (!Array.isArray(chats)) throw new Error('This is not a Balimda backup file');
+    const { mergeChats } = require('./sync');
     let imported = 0;
     for (const chat of chats) {
       if (!chat || !Array.isArray(chat.messages)) continue;
       if (!chat.id || !ID_RE.test(chat.id)) chat.id = newId();
-      await this.saveChat(chat);
+      upgradeChat(chat);
+      const existing = await this.getChat(chat.id).catch(() => null);
+      await this.saveChat(existing ? mergeChats(existing, chat) : chat);
       imported++;
     }
     return imported;

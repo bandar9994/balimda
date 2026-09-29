@@ -2,7 +2,7 @@
 // Licensed under the Balimda License (see LICENSE): non-commercial use only;
 // keep the Balimda name and the "Balimda by Bandar Altariqi" credit; no rebranding.
 
-const { app, BrowserWindow, ipcMain, Menu, shell, dialog, safeStorage, nativeTheme, screen, net } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell, dialog, safeStorage, nativeTheme, screen, net, systemPreferences } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { Storage } = require('./src/storage');
@@ -12,6 +12,7 @@ const { Sync } = require('./src/sync');
 const { desktopGoogleAuth } = require('./src/google-auth-desktop');
 const { linkKey } = require('./src/remote');
 const { startRemoteServer, localAddresses } = require('./src/remote-server');
+const { createVoice } = require('./src/voice-desktop');
 const os = require('os');
 
 // Allow a custom data folder (e.g. a synced folder) via BALIMDA_DATA_DIR.
@@ -21,6 +22,15 @@ let storage;
 let sync;
 let mainWindow;
 const activeRequests = new Map();
+
+// Voice chat: Whisper (built by scripts/build-whisper.js, packed into the
+// app's resources) recognises speech on this computer.
+const whisperDir = app.isPackaged
+  ? path.join(process.resourcesPath, 'whisper')
+  : path.join(__dirname, 'whisper-bin', `${{ win32: 'win', darwin: 'mac' }[process.platform] || 'linux'}-${process.arch}`);
+let voice;
+// Chromium reads text aloud through speech-dispatcher on Linux.
+if (process.platform === 'linux') app.commandLine.appendSwitch('enable-speech-dispatcher');
 
 // Only one copy runs; a second launch focuses the first. exit() rather than
 // quit(), so the second copy never starts sync or sharing with the phone.
@@ -403,7 +413,12 @@ function registerIpc() {
       filters: [{ name: 'JSON', extensions: ['json'] }]
     });
     if (canceled || !filePaths.length) return null;
-    const data = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
+    } catch {
+      throw new Error('This file isn\'t a Balimda backup (it can\'t be read as one).');
+    }
     return { count: await storage.importAll(data) };
   });
 
@@ -419,7 +434,9 @@ function registerIpc() {
     if (canceled || !filePath) return null;
     const lines = [`# ${chat.title}`, ''];
     for (const m of chat.messages) {
-      lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', m.content || '', '');
+      // A reasoning model's thinking isn't part of the reply.
+      const text = String(m.content || '').replace(/^\s*<think>[\s\S]*?(<\/think>|$)\s*/, '');
+      lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', text, '');
     }
     fs.writeFileSync(filePath, lines.join('\n'));
     return { filePath };
@@ -462,6 +479,14 @@ function registerIpc() {
     if (c) c.abort();
     return !!c;
   });
+
+  ipcMain.handle('voice:status', () => voice.status());
+  ipcMain.handle('voice:download', (_e, id) => { voice.download(id); });
+  ipcMain.handle('voice:cancelDownload', (_e, id) => voice.cancelDownload(id));
+  ipcMain.handle('voice:deleteModel', (_e, id) => voice.deleteModel(id));
+  ipcMain.handle('voice:transcribe', (_e, wav, lang, model) => voice.transcribe(Buffer.from(wav), lang, model));
+  // macOS asks the user once before an app can use the microphone.
+  ipcMain.handle('voice:askMic', () => (process.platform === 'darwin' ? systemPreferences.askForMediaAccess('microphone') : true));
 }
 
 app.whenReady().then(async () => {
@@ -480,6 +505,12 @@ app.whenReady().then(async () => {
     }
   });
   await sync.load();
+  voice = createVoice({
+    binDir: whisperDir,
+    modelsDir: path.join(app.getPath('userData'), 'whisper'),
+    fetch: (url, opts) => net.fetch(url, opts),
+    onEvent: (evt) => send('voice:event', evt)
+  });
   registerIpc();
   buildMenu();
   await createWindow();
@@ -507,6 +538,10 @@ app.on('before-quit', (e) => {
   syncedBeforeQuit = true;
   const timeout = new Promise((r) => setTimeout(r, 8000));
   Promise.race([sync.run(), timeout]).finally(() => app.quit());
+});
+
+app.on('will-quit', () => {
+  if (voice) voice.stop();
 });
 
 app.on('window-all-closed', () => {

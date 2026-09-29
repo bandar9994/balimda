@@ -9,9 +9,9 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 
-const ANTHROPIC_DEFAULT_MODELS = ['claude-opus-5', 'claude-fable-5-1', 'claude-sonnet-5', 'claude-haiku-4-5'];
+const ANTHROPIC_DEFAULT_MODELS = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5', 'claude-haiku-4-5'];
 // Models that support server-side refusal fallbacks ("default" routing).
-const FALLBACK_MODELS = new Set(['claude-opus-5', 'claude-fable-5-1']);
+const FALLBACK_MODELS = new Set(['claude-opus-5-5', 'claude-opus-5', 'claude-fable-5-1', 'claude-sonnet-5-5']);
 
 function trimSlash(url) {
   return String(url || '').replace(/\/+$/, '');
@@ -211,7 +211,12 @@ function openaiLike({ sendSampling }) {
         if (!line.startsWith('data:')) continue;
         const data = line.slice(5).trim();
         if (data === '[DONE]') break;
-        const evt = JSON.parse(data);
+        let evt;
+        try {
+          evt = JSON.parse(data);
+        } catch {
+          continue; // an empty keep-alive or a line that isn't JSON
+        }
         if (evt.error) throw new Error(evt.error.message || JSON.stringify(evt.error));
         const choice = evt.choices && evt.choices[0];
         const delta = (choice && choice.delta) || {};

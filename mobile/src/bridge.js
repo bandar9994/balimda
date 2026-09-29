@@ -17,6 +17,7 @@ import { remoteComputers } from '../../src/remote.js';
 import * as local from './on-device.js';
 import * as native from './native-engine.js';
 
+const Voice = registerPlugin('Voice');
 const ROOT = 'balimda-data';
 const isNative = Capacitor.isNativePlatform();
 
@@ -194,7 +195,11 @@ function pickTextFile(accept) {
 
 function chatToMarkdown(chat) {
   const lines = [`# ${chat.title}`, ''];
-  for (const m of chat.messages) lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', m.content || '', '');
+  for (const m of chat.messages) {
+    // A reasoning model's thinking isn't part of the reply.
+    const text = String(m.content || '').replace(/^\s*<think>[\s\S]*?(<\/think>|$)\s*/, '');
+    lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', text, '');
+  }
   return lines.join('\n');
 }
 
@@ -241,7 +246,13 @@ window.balimda = {
     importAll: withStorage(async (s) => {
       const text = await pickTextFile('application/json,.json');
       if (!text) return null;
-      return { count: await s.importAll(JSON.parse(text)) };
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error('This file isn\'t a Balimda backup (it can\'t be read as one).');
+      }
+      return { count: await s.importAll(data) };
     })
   },
   app: {
@@ -340,6 +351,20 @@ window.balimda = {
       return () => aiListeners.delete(cb);
     }
   },
+  // Talking instead of typing, and replies read aloud, with the phone's own
+  // speech services (android/.../VoicePlugin.java, native/llama/ios/.../VoicePlugin.swift).
+  voice: isNative ? {
+    available: (opts) => Voice.available(opts || {}),
+    listen: (opts) => Voice.listen(opts),
+    stopListening: () => Voice.stopListening(),
+    cancelListening: () => Voice.cancelListening(),
+    speak: (opts) => Voice.speak(opts),
+    stopSpeaking: () => Voice.stopSpeaking(),
+    onEvent(cb) {
+      const handle = Voice.addListener('voice', cb);
+      return () => handle.then((h) => h.remove());
+    }
+  } : undefined,
   sync: {
     status: withSync((s) => s.status()),
     connect: withSync((s, opts) => s.connect(opts)),
