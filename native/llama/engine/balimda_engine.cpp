@@ -58,9 +58,14 @@ namespace {
 std::once_flag backend_once;
 std::mutex log_mutex;
 std::string last_offload;  // captured from llama.cpp's log while a model loads
+std::string last_error;    // llama.cpp's last error, to explain a model that won't load
 
 void on_log(ggml_log_level level, const char * text, void *) {
     if (level >= GGML_LOG_LEVEL_WARN) LOGI("%s", text);
+    if (level == GGML_LOG_LEVEL_ERROR && strstr(text, "error loading model")) {
+        std::lock_guard<std::mutex> lock(log_mutex);
+        last_error = text;
+    }
     // llama.cpp reports how many layers went to the GPU; keep it so the app
     // can show where the model really runs.
     const char * p = strstr(text, "offloaded ");
@@ -91,6 +96,35 @@ char * copy_string(const std::string & s) {
 
 void set_error(char ** error, const std::string & msg) {
     if (error) *error = copy_string(msg);
+}
+
+// Why llama.cpp couldn't load a model, in words for the user, with its own
+// reason at the end (from the log, e.g. "llama_model_load: error loading
+// model: error loading model hyperparameters: key ... has wrong array length").
+std::string load_error(std::string reason) {
+    const std::string marker = "error loading model: ";
+    size_t at;
+    while ((at = reason.find(marker)) != std::string::npos) reason.erase(0, at + marker.size());
+    while (!reason.empty() && (reason.back() == '\n' || reason.back() == ' ')) reason.pop_back();
+    const auto has = [&](const char * s) { return reason.find(s) != std::string::npos; };
+
+    // An unreadable or cut-off file (llama.cpp then names the file, not the problem).
+    if (reason.empty() || has("failed to load model from") || has("not within the file bounds")) {
+        return "Couldn't load the model file. It may be incomplete or not a GGUF model; try deleting and downloading it again.";
+    }
+    std::string msg;
+    if (has("unknown model architecture") || has("unknown pre-tokenizer")) {
+        msg = "This version of Balimda can't run this kind of model yet. Try another model, or update Balimda.";
+    } else {
+        // Wrong or missing settings or parts: the file was made for another app
+        // (e.g. Ollama, whose files can hold the vision part too) or by a tool
+        // llama.cpp doesn't read. Downloading it again gives the same file.
+        msg = "This GGUF file isn't in the format Balimda (llama.cpp) reads. It was probably made for another app, "
+              "such as Ollama, so downloading it again won't help. Look for a version of this model made for "
+              "llama.cpp, e.g. from bartowski, unsloth or mradermacher on Hugging Face.";
+    }
+    msg += " (" + reason + ")";
+    return msg;
 }
 
 // Length of the longest prefix of `s` that doesn't end inside a UTF-8
@@ -179,10 +213,16 @@ be_engine * be_load(const char * path, int n_ctx, int n_gpu_layers, int n_thread
     {
         std::lock_guard<std::mutex> lock(log_mutex);
         last_offload.clear();
+        last_error.clear();
     }
     llama_model * model = llama_model_load_from_file(path, mp);
     if (!model) {
-        set_error(error, "Couldn't load the model file. It may be incomplete or not a GGUF model; try deleting and downloading it again.");
+        std::string reason;
+        {
+            std::lock_guard<std::mutex> lock(log_mutex);
+            reason = last_error;
+        }
+        set_error(error, load_error(reason));
         return nullptr;
     }
 
