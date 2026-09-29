@@ -86,7 +86,7 @@ function modelName(computer, entry, model) {
  * @param getComputers  async () => settings.computers
  * @param fetch         fetch implementation
  */
-function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probeMs = 3000 }) {
+function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probeMs = 3000, quietMs = 60000 }) {
   const found = new Map();   // computer id -> { url, at }
   const models = new Map();  // shown model name -> { computer, provider, model }
   let keyCache = null;       // { syncKey, key }
@@ -107,6 +107,7 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
   }
 
   // One request; calls onEvent for each event and returns the final result.
+  // A lost connection throws a RemoteError with `lost` set.
   async function call(url, op, payload, { onEvent, signal, timeoutMs } = {}) {
     const k = await key();
     const nonce = newNonce();
@@ -117,6 +118,24 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
       signal.addEventListener('abort', abort);
     }
     const timer = timeoutMs ? setTimeout(abort, timeoutMs) : null;
+    // The computer sends a heartbeat while its model is busy. Once one has
+    // come, a long silence means the connection is gone (e.g. the computer
+    // went to sleep), rather than waiting for ever. (Older versions of the
+    // desktop app send none, so this never starts for them.)
+    let watchdog = null;
+    let stalled = false;
+    const watch = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        stalled = true;
+        abort();
+      }, quietMs);
+    };
+    const lost = (why) => {
+      const e = new RemoteError(why);
+      e.lost = true;
+      return e;
+    };
     try {
       const res = await fetch(`${url}${PATH}`, {
         method: 'POST',
@@ -133,6 +152,8 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
         if (!line.trim()) continue;
         const evt = await unlock(k, line.trim());
         if (evt.re !== nonce) throw new RemoteError('mismatched reply');
+        if (evt.t === 'ping' || watchdog) watch();
+        if (evt.t === 'ping') continue;
         if (evt.t === 'done') return evt.result;
         if (evt.t === 'error') {
           const e = new RemoteError(evt.message);
@@ -141,9 +162,16 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
         }
         if (onEvent) onEvent(evt);
       }
-      throw new RemoteError('The connection to your computer closed before the reply finished.');
+      throw lost('The connection to your computer closed before the reply finished.');
+    } catch (err) {
+      if (stalled) throw lost('Your computer stopped answering.');
+      if (signal && signal.aborted) throw err;
+      // fetch's own "network error" / "Failed to fetch": the connection broke.
+      if (err instanceof TypeError) throw lost(`The connection to your computer was lost (${err.message}).`);
+      throw err;
     } finally {
       if (timer) clearTimeout(timer);
+      clearTimeout(watchdog);
       if (signal) signal.removeEventListener('abort', abort);
     }
   }
@@ -219,6 +247,9 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
       result = await send(url);
     } catch (err) {
       if (signal && signal.aborted) throw err;
+      if (started && err.lost) {
+        throw new RemoteError(`The connection to ${target.computer.name} was lost while it was replying. The computer may have gone to sleep, or the phone's Wi-Fi changed. The reply so far is kept: tap Regenerate to try again.`);
+      }
       if (err.fromComputer || started) throw err;
       // The computer may have a new address (or went to sleep): look again.
       url = await locate(target.computer, { fresh: true });

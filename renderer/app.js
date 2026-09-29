@@ -2089,10 +2089,13 @@ function shareWithPhoneCard(s, check, onCleanup) {
   box.querySelector('input').addEventListener('change', () => {
     status.textContent = s.shareWithPhone ? 'Starting…' : '';
   });
+  const awake = check('Keep this computer awake while sharing', s, 'shareKeepAwake');
   return h('div', { class: 'provider-card' },
     h('h4', { text: 'Use from your phone' }),
     box,
     status,
+    awake,
+    h('div', { class: 'help', text: 'Otherwise the computer can go to sleep while you use it from your phone (sleep settings only count the keyboard and mouse), and the phone can\'t reach it. The screen can still turn off. It always stays awake while it\'s answering the phone.' }),
     h('div', { class: 'help', text: 'Your phone sends chats here and this computer answers with its models (Ollama, LM Studio, and your API keys, which never leave this computer). The connection is encrypted with your sync passphrase, so only your own devices can use it. Balimda needs to stay open.' }));
 }
 

@@ -213,3 +213,88 @@ test('a phone that drops the connection mid-request doesn\'t upset the computer'
     await pc.server.close();
   }
 });
+
+test('a reply cut off halfway says the connection was lost, and keeps what came', async () => {
+  const key = syncKey();
+  let started;
+  const onStart = new Promise((r) => { started = r; });
+  const server = await startRemoteServer({
+    port: 0,
+    host: '127.0.0.1',
+    getKey: async () => linkKey(key),
+    handlers: {
+      hello: async () => ({}),
+      models: async () => [{ provider: 'ollama', label: 'Ollama', short: 'Ollama', models: ['m'] }],
+      chat: async (_msg, { emit, signal }) => {
+        emit({ t: 'delta', text: 'Day 1: ' });
+        started();
+        await new Promise((r) => signal.addEventListener('abort', r));
+        throw new Error('aborted');
+      }
+    }
+  });
+  const phone = client(key, { desk: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: server.port, enabled: true } });
+  await phone.listModels();
+  const pieces = [];
+  const run = phone.streamChat({}, { model: 'm (Desk)', messages: [] }, (t) => pieces.push(t));
+  await onStart;
+  await sleep(100);
+  await server.close(); // e.g. the computer went to sleep
+  await assert.rejects(run, /connection to Desk was lost while it was replying/);
+  assert.strictEqual(pieces.join(''), 'Day 1: ');
+});
+
+test('a computer that goes quiet after its heartbeat is reported, not waited on for ever', async () => {
+  const key = syncKey();
+  const server = await startRemoteServer({
+    port: 0,
+    host: '127.0.0.1',
+    heartbeatMs: 60 * 60 * 1000,
+    getKey: async () => linkKey(key),
+    handlers: {
+      hello: async () => ({}),
+      models: async () => [{ provider: 'ollama', label: 'Ollama', short: 'Ollama', models: ['m'] }],
+      chat: async (_msg, { emit, signal }) => {
+        emit({ t: 'ping' });
+        await new Promise((r) => signal.addEventListener('abort', r));
+        throw new Error('aborted');
+      }
+    }
+  });
+  try {
+    const phone = client(key, { desk: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: server.port, enabled: true } }, { quietMs: 300 });
+    await phone.listModels();
+    await assert.rejects(phone.streamChat({}, { model: 'm (Desk)', messages: [] }, () => {}), /stopped answering/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('heartbeats keep a slow model\'s reply going', async () => {
+  const key = syncKey();
+  const server = await startRemoteServer({
+    port: 0,
+    host: '127.0.0.1',
+    heartbeatMs: 50,
+    getKey: async () => linkKey(key),
+    handlers: {
+      hello: async () => ({}),
+      models: async () => [{ provider: 'ollama', label: 'Ollama', short: 'Ollama', models: ['m'] }],
+      chat: async (_msg, { emit }) => {
+        await sleep(500); // thinking, with heartbeats and no text
+        emit({ t: 'delta', text: 'Done' });
+        return { text: 'Done', stopReason: 'end_turn' };
+      }
+    }
+  });
+  try {
+    const phone = client(key, { desk: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: server.port, enabled: true } }, { quietMs: 300 });
+    await phone.listModels();
+    const pieces = [];
+    const r = await phone.streamChat({}, { model: 'm (Desk)', messages: [] }, (t) => pieces.push(t));
+    assert.strictEqual(r.text, 'Done');
+    assert.strictEqual(pieces.join(''), 'Done');
+  } finally {
+    await server.close();
+  }
+});

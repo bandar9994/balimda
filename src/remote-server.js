@@ -33,7 +33,7 @@ function localAddresses(interfaces = os.networkInterfaces()) {
  * @param getKey    async () => AES-GCM link key, or null when sharing is off
  * @param handlers  { op: async (msg, { emit, signal }) => result }
  */
-function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0' }) {
+function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0', heartbeatMs = 15000 }) {
   const seen = new Map();  // nonce -> time, to refuse replayed requests
 
   const server = http.createServer((req, res) => {
@@ -134,6 +134,9 @@ function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0' }) 
       flush();
       write(evt);
     };
+    // A heartbeat while the model is busy (loading, reading a long chat,
+    // thinking): the phone can tell a slow model from a lost connection.
+    const beat = setInterval(() => write({ t: 'ping' }), heartbeatMs);
     try {
       const result = await handler(msg, { emit, signal: controller.signal });
       flush();
@@ -141,6 +144,8 @@ function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0' }) 
     } catch (err) {
       flush();
       await write({ t: 'error', message: err.message || String(err) });
+    } finally {
+      clearInterval(beat);
     }
     res.end();
   };

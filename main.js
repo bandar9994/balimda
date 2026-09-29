@@ -2,7 +2,7 @@
 // Licensed under the Balimda License (see LICENSE): non-commercial use only;
 // keep the Balimda name and the "Balimda by Bandar Altariqi" credit; no rebranding.
 
-const { app, BrowserWindow, ipcMain, Menu, shell, dialog, safeStorage, nativeTheme, screen, net, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell, dialog, safeStorage, nativeTheme, screen, net, systemPreferences, powerSaveBlocker } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { Storage } = require('./src/storage');
@@ -171,6 +171,34 @@ let remoteKey = null;     // { syncKey, key }
 let remoteError = null;
 let shareWanted = false;  // settings.shareWithPhone, as last read
 
+// Keeping the computer awake for the phone. An idle computer goes to sleep
+// however busy it is answering the phone (only the keyboard and mouse count),
+// which cut replies off and left the phone unable to reach it. It stays awake
+// while it's answering the phone, and while sharing if settings.shareKeepAwake
+// (the default); the screen can still turn off.
+let keepAwake = true;    // settings.shareKeepAwake, as last read
+let phoneRequests = 0;   // replies being written for the phone
+let awakeId = null;      // powerSaveBlocker id
+function updateAwake() {
+  const want = phoneRequests > 0 || (!!remote && keepAwake);
+  if (want && awakeId === null) {
+    awakeId = powerSaveBlocker.start('prevent-app-suspension');
+  } else if (!want && awakeId !== null) {
+    powerSaveBlocker.stop(awakeId);
+    awakeId = null;
+  }
+}
+async function whileAnswering(work) {
+  phoneRequests++;
+  updateAwake();
+  try {
+    return await work();
+  } finally {
+    phoneRequests--;
+    updateAwake();
+  }
+}
+
 async function currentLinkKey() {
   const syncKey = sync && sync.linkKey();
   if (!syncKey) return null;
@@ -248,7 +276,7 @@ const remoteHandlers = {
   },
   chat: async (msg, { emit, signal }) => {
     await checkShared(msg.provider);
-    return runChat(msg.provider, msg.req || {}, (text) => emit({ t: 'delta', text }), signal, (info) => emit({ t: 'info', info }));
+    return whileAnswering(() => runChat(msg.provider, msg.req || {}, (text) => emit({ t: 'delta', text }), signal, (info) => emit({ t: 'info', info })));
   },
   // The phone answering an agent's request for permission.
   approve: async (msg) => {
@@ -272,6 +300,7 @@ function updateRemote() {
 async function doUpdateRemote() {
   const settings = await storage.getSettings();
   shareWanted = !!settings.shareWithPhone;
+  keepAwake = settings.shareKeepAwake !== false;
   const wanted = shareWanted && !!sync.linkKey();
   try {
     if (wanted && !remote) {
@@ -285,6 +314,7 @@ async function doUpdateRemote() {
     remote = null;
     remoteError = `Couldn't start sharing: ${err.message}`;
   }
+  updateAwake();
   if (sync.linkKey()) {
     const id = await computerId();
     const known = (settings.computers || {})[id];
@@ -371,6 +401,8 @@ function registerIpc() {
     const saved = await storage.saveSettings(s);
     const was = !!remote;
     if (!!saved.shareWithPhone !== was) await updateRemote();
+    keepAwake = saved.shareKeepAwake !== false;
+    updateAwake();
     return saved;
   });
   ipcMain.handle('remote:status', () => remoteStatus());
