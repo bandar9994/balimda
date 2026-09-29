@@ -6,7 +6,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const invoke = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
 
-// ---- voice chat -------------------------------------------------------------------
+// ---- voice: typing by talking, and reading replies aloud ---------------------------
 // Listening: the microphone is recorded here until the user stops talking,
 // then Whisper turns it into text on this computer (src/voice-desktop.js).
 // Speaking: the computer's own voices. Same methods and events as the

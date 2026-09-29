@@ -776,12 +776,6 @@ function agentEvent(chat, msg, evt) {
     if (known) known.status = evt.status || known.status;
     else if (evt.status !== 'completed') msg.tools.push({ id: evt.id || uid(), emoji: evt.emoji || '', label: String(evt.label || evt.tool || 'tool').slice(0, 200), status: evt.status || 'running' });
   } else if (evt.kind === 'approval') {
-    // The agent asks before doing something: the question is in the chat, so
-    // leave voice chat to answer it.
-    if (V.mode && V.mode.msg === msg) {
-      closeVoiceMode();
-      toast('The agent is asking for your approval. Answer it in the chat.', 7000);
-    }
     msg.approvals = msg.approvals || [];
     msg.approvals.push({ runId: evt.runId, approvalId: evt.approvalId || null, command: String(evt.command || '').slice(0, 2000), description: String(evt.description || '').slice(0, 500), choices: Array.isArray(evt.choices) && evt.choices.length ? evt.choices : ['once', 'deny'], state: 'pending' });
     if (S.current !== chat || document.hidden) toast('Hermes is asking for permission. Open the chat to answer.', 5000);
@@ -905,14 +899,12 @@ function updateComposer() {
   }
 }
 
-// "Send", "Stop" while a reply is written, or "Talk" (voice chat) when the box is empty.
+// "Send", or "Stop" while a reply is written.
 function updateSendButton() {
   const streaming = isStreaming(S.current);
-  const talk = !streaming && !V.dictating && !el.input.value.trim() && !pictures.length && canListen() && canSpeak();
-  el.sendBtn.textContent = streaming ? 'Stop' : talk ? 'Talk' : 'Send';
-  el.sendBtn.title = talk ? 'Voice chat: talk and hear the replies' : streaming ? 'Stop' : 'Send';
+  el.sendBtn.textContent = streaming ? 'Stop' : 'Send';
+  el.sendBtn.title = streaming ? 'Stop' : 'Send';
   el.sendBtn.classList.toggle('danger', streaming);
-  el.sendBtn.dataset.mode = streaming ? 'stop' : talk ? 'talk' : 'send';
 }
 
 // ---------------------------------------------------------------------------
@@ -992,7 +984,6 @@ const V = {
   dictBase: '',      // what was in the message box before
   dictSession: 0,    // bumped when the words of the dictation under way are no longer wanted
   understanding: false, // the dictation's recording is done and turned into text (on the computer this takes a moment)
-  mode: null,        // voice chat screen, while open
   reading: null,     // { msg, spoken, pending, finished, token, onDone } reply being read aloud
   token: 0           // bumped to drop the rest of a reading that was stopped
 };
@@ -1028,7 +1019,6 @@ async function initVoice() {
 }
 
 function onVoiceEvent(evt) {
-  const m = V.mode;
   if (evt.download && evt.download.done && !evt.download.error) {
     api.voice.available({ lang: voiceLang() }).then((a) => { V.avail = a; updateComposer(); }).catch(() => {});
   }
@@ -1038,16 +1028,13 @@ function onVoiceEvent(evt) {
       V.understanding = true;
       el.hint.textContent = 'Understanding what you said…';
     }
-    if (m && m.phase === 'listening') setVoicePhase('understanding', 'Understanding…');
   }
   if (evt.partial != null) {
     if (V.dictating && !V.understanding) {
       el.input.value = V.dictBase + evt.partial;
       autoGrow();
     }
-    if (m && m.phase === 'listening') m.said.textContent = evt.partial;
   }
-  if (evt.level != null && m && m.phase === 'listening') m.orb.style.setProperty('--level', evt.level.toFixed(2));
 }
 
 // The mic in the message box: what you say is written into the box, to
@@ -1094,13 +1081,6 @@ async function toggleDictation() {
 function toggleVoiceLang() {
   S.settings.voiceLang = voiceLang() === 'en-US' ? 'ar-SA' : 'en-US';
   saveSettings();
-  if (V.mode) {
-    V.mode.langBtn.textContent = VOICE_LANGS[voiceLang()];
-    if (V.mode.phase === 'listening') { // (not while it's being understood)
-      V.mode.restart = true;
-      api.voice.cancelListening().catch(() => {});
-    }
-  }
   if (V.dictating && !V.understanding) {
     V.relisten = true;
     api.voice.cancelListening().catch(() => {});
@@ -1122,9 +1102,9 @@ function dropDictation() {
 // ---- reading replies aloud
 
 // Reads `msg` aloud, following along while it's still being written.
-function startReading(msg, onDone) {
+function startReading(msg) {
   stopReading();
-  V.reading = { msg, spoken: 0, pending: 0, finished: false, token: ++V.token, onDone };
+  V.reading = { msg, spoken: 0, pending: 0, finished: false, token: ++V.token };
   followReading(msg);
   syncReadButtons();
 }
@@ -1149,7 +1129,6 @@ function followReading(msg) {
 
 function speakPiece(r, text) {
   r.pending++;
-  if (V.mode && V.mode.msg === r.msg) setVoicePhase('speaking');
   api.voice.speak({ text, lang: speechLang(text), rate: Number(S.settings.voiceRate) || 1 })
     .catch((err) => {
       if (r.token !== V.token || r.failed) return; // say it once, not for every sentence
@@ -1167,7 +1146,6 @@ function readingDone(r) {
   V.reading = null;
   if (r.failed) api.voice.stopSpeaking().catch(() => {});
   syncReadButtons();
-  if (r.onDone) r.onDone(r);
 }
 
 function stopReading() {
@@ -1184,134 +1162,13 @@ function syncReadButtons() {
   }
 }
 
-// A reply starts: read it aloud in voice chat, or when "Read replies aloud" is on.
+// A reply starts: read it aloud when "Read replies aloud" is on.
 function voiceReplyStarted(chat, msg) {
-  if (!canSpeak() || chat !== S.current) return;
-  if (V.mode) {
-    const m = V.mode;
-    m.msg = msg;
-    m.reply.textContent = '';
-    startReading(msg, () => voiceReplyFinished(m, msg));
-  } else if (S.settings.readAloud) {
-    startReading(msg);
-  }
+  if (canSpeak() && chat === S.current && S.settings.readAloud) startReading(msg);
 }
 
 function voiceReplyUpdated(msg) {
   if (V.reading && V.reading.msg === msg) followReading(msg);
-  if (V.mode && V.mode.msg === msg) {
-    const { answer } = splitThinking(msg.content);
-    V.mode.reply.textContent = SpeechText.speakable(answer);
-  }
-}
-
-// ---- voice chat: talk, hear the reply, talk again
-
-function openVoiceMode() {
-  if (!canListen() || !canSpeak() || voiceNeedsModel()) return;
-  if (!currentModel()) {
-    toast('Choose a model first (top right).');
-    return;
-  }
-  stopReading();
-  const orb = h('button', { class: 'voice-orb', 'aria-label': 'Talk' }, h('span', { class: 'voice-orb-core' }));
-  const status = h('div', { class: 'voice-status', 'aria-live': 'polite' });
-  const said = h('div', { class: 'voice-said', dir: 'auto' });
-  const reply = h('div', { class: 'voice-reply', dir: 'auto' });
-  const langBtn = h('button', { class: 'btn voice-lang', title: 'The language you talk in', text: VOICE_LANGS[voiceLang()], onclick: toggleVoiceLang });
-  const root = h('div', { class: 'voice-overlay', role: 'dialog', 'aria-label': 'Voice chat' },
-    h('div', { class: 'voice-top' },
-      langBtn,
-      h('span', { class: 'voice-private', text: S.settings.voicePrivate ? 'Private voice' : '' })),
-    h('div', { class: 'voice-center' }, orb, status, said),
-    reply,
-    h('div', { class: 'voice-bottom' }, h('button', { class: 'btn', text: 'End voice chat', onclick: closeVoiceMode })));
-  document.body.append(root);
-  V.mode = { root, orb, status, said, reply, langBtn, phase: 'idle', msg: null };
-  orb.addEventListener('click', () => {
-    const m = V.mode;
-    if (!m) return;
-    if (m.phase === 'listening') api.voice.stopListening().catch(() => {});
-    else if (m.phase === 'speaking') {
-      // Interrupted: stop reading, and the reply too if it's still being written.
-      stopReading();
-      if (isStreaming(S.current)) stopCurrent();
-      voiceListen();
-    } else if (m.phase === 'thinking' && isStreaming(S.current)) {
-      // Stop the reply; what's written so far is read, then it listens again.
-      stopCurrent();
-    } else if (m.phase === 'idle') voiceListen();
-  });
-  voiceListen();
-}
-
-function setVoicePhase(phase, text) {
-  const m = V.mode;
-  if (!m) return;
-  m.phase = phase;
-  m.root.dataset.phase = phase;
-  m.orb.style.setProperty('--level', '0');
-  m.status.textContent = text || {
-    listening: `Listening in ${VOICE_LANGS[voiceLang()]}…`,
-    thinking: `Thinking… · ${S.info.mobile ? 'tap' : 'click'} to stop`,
-    speaking: `Speaking · ${S.info.mobile ? 'tap' : 'click'} to interrupt`,
-    idle: `${S.info.mobile ? 'Tap' : 'Click'} to talk`
-  }[phase];
-}
-
-async function voiceListen() {
-  const m = V.mode;
-  if (!m) return;
-  m.said.textContent = '';
-  setVoicePhase('listening');
-  let text = '';
-  try {
-    ({ text } = await api.voice.listen(listenOpts()));
-  } catch (err) {
-    if (V.mode === m) setVoicePhase('idle', errorText(err));
-    return;
-  }
-  if (V.mode !== m) return;
-  if (m.restart) {
-    m.restart = false;
-    voiceListen();
-    return;
-  }
-  const tap = S.info.mobile ? 'Tap' : 'Click';
-  if (!text) {
-    setVoicePhase('idle', `Didn't hear anything. ${tap} to talk.`);
-    return;
-  }
-  if (isStreaming(S.current)) {
-    setVoicePhase('idle', `Still writing the last reply. ${tap} to talk when it's done.`);
-    return;
-  }
-  m.said.textContent = text;
-  m.reply.textContent = '';
-  setVoicePhase('thinking');
-  el.input.value = text;
-  const before = m.msg;
-  await send();
-  // Nothing was sent (e.g. no model): don't wait for a reply that isn't coming.
-  if (V.mode === m && m.msg === before && m.phase === 'thinking') setVoicePhase('idle', `Couldn't send that. ${tap} to try again.`);
-}
-
-function voiceReplyFinished(m, msg) {
-  if (V.mode !== m) return;
-  if (msg.error) {
-    setVoicePhase('idle', msg.error.replace(/^Error: /, ''));
-    return;
-  }
-  voiceListen();
-}
-
-function closeVoiceMode() {
-  const m = V.mode;
-  if (!m) return;
-  V.mode = null;
-  api.voice.cancelListening().catch(() => {});
-  stopReading();
-  m.root.remove();
 }
 
 // ---------------------------------------------------------------------------
@@ -1649,7 +1506,7 @@ async function send() {
   const text = el.input.value.trim();
   const images = pictures.slice();
   if (!text && !images.length) return;
-  if (!V.mode) stopReading();
+  stopReading();
   dropDictation();
   const model = currentModel();
   if (!model) {
@@ -1793,7 +1650,7 @@ async function generateTitle(chat, model = chat.model) {
 }
 
 function stopCurrent() {
-  if (!V.mode) stopReading();
+  stopReading();
   for (const [rid, r] of S.requests) if (r.chat === S.current) api.ai.abort(rid);
 }
 
@@ -2157,7 +2014,7 @@ function desktopVoiceView(onCleanup, field, check, lang, rate, s) {
   }));
   draw();
   return [
-    h('p', { class: 'help', text: 'Click the microphone in the message box to talk instead of typing. When the box is empty, click "Talk" for a voice chat: you talk, the reply is read aloud, and it listens again.' }),
+    h('p', { class: 'help', text: 'Click the microphone in the message box to talk instead of typing: what you say is written into the box, to check before sending.' }),
     V.avail && V.avail.recognition ? null : h('div', { class: 'notice', text: 'Speech recognition isn\'t included in this copy of Balimda, so you can\'t talk to it here. Replies can still be read aloud.' }),
     field('Speech recognition', list, 'Whisper turns what you say into text on this computer: nothing is sent anywhere. It\'s downloaded once. The large model understands Arabic best, but without a Mac\'s GPU or a fast processor it can take several seconds per sentence.'),
     field('The language you talk in', lang, 'Choosing the language makes Whisper more accurate. Replies are read in the language they\'re written in.'),
@@ -2376,7 +2233,7 @@ function openSettings(tab = 'general') {
       lang.addEventListener('change', describePrivate);
       describePrivate();
       return [
-        h('p', { class: 'help', text: 'Tap the microphone in the message box to talk instead of typing. When the box is empty, tap "Talk" for a voice chat: you talk, the reply is read aloud, and it listens again.' }),
+        h('p', { class: 'help', text: 'Tap the microphone in the message box to talk instead of typing: what you say is written into the box, to check before sending.' }),
         canListen() ? null : h('div', { class: 'notice', text: 'This phone has no speech recognition service, so you can\'t talk to Balimda yet. Install or turn on "Speech Services by Google" (Android), then restart Balimda.' }),
         field('The language you talk in', lang, 'You can also switch while talking. Replies are read in the language they\'re written in.'),
         check('Private voice: understand speech only on this phone', s, 'voicePrivate'),
@@ -2769,10 +2626,6 @@ function closeDrawer() {
 
 // Android back button: close whatever is on top, else leave the app.
 function goBack() {
-  if (V.mode) {
-    closeVoiceMode();
-    return;
-  }
   const top = el.modalRoot.lastElementChild;
   if (top) {
     top.querySelector('.modal-head .icon-btn').click();
@@ -2805,10 +2658,7 @@ function bindEvents() {
   el.title.addEventListener('click', renameChat);
   el.modelSelect.addEventListener('change', onModelChange);
   el.assistantSelect.addEventListener('change', onAssistantChange);
-  el.sendBtn.addEventListener('click', () => {
-    if (el.sendBtn.dataset.mode === 'talk') openVoiceMode();
-    else send();
-  });
+  el.sendBtn.addEventListener('click', send);
   el.micBtn.addEventListener('click', toggleDictation);
   el.attachBtn.addEventListener('click', () => el.attachInput.click());
   el.attachInput.addEventListener('change', () => {
@@ -2851,8 +2701,7 @@ function bindEvents() {
     }
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && V.mode) closeVoiceMode();
-    else if (e.key === 'Escape' && !el.modalRoot.children.length && isStreaming(S.current)) stopCurrent();
+    if (e.key === 'Escape' && !el.modalRoot.children.length && isStreaming(S.current)) stopCurrent();
   });
 
   $('#chatMenuBtn').addEventListener('click', (e) => {
