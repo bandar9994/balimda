@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: "Check this GGUF model link instead of the app's list"
+        description: "Check this GGUF model link instead of the app's list (or give a Hugging Face repo link to list its files)"
         required: false
         default: ''
 
@@ -51,6 +51,12 @@ jobs:
         env:
           URL: ${{ inputs.url }}
         run: |
+          # A repo link (https://huggingface.co/owner/name): list its files.
+          if [[ "$URL" =~ ^https://huggingface\.co/([^/]+/[^/]+)/?$ ]]; then
+            curl -sSfL "https://huggingface.co/api/models/${BASH_REMATCH[1]}/tree/main" |
+              jq -r '.[] | "\(.size)\t\(.path)"' | numfmt --field=1 --to=iec
+            exit 0
+          fi
           pip install --quiet gguf
           curl -sSfL --retry 3 -o model.gguf "$URL"
           ls -l model.gguf
@@ -62,6 +68,7 @@ jobs:
           URL: ${{ inputs.url }}
         run: |
           fail=0
+          [[ "$URL" == *.gguf ]] || [ -z "$URL" ] || exit 0
           urls="$URL"
           [ -n "$urls" ] || urls=$(node scripts/check-model-links.js --urls)
           for url in $urls; do
