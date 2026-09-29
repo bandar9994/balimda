@@ -132,7 +132,7 @@ test('Hermes through "On your computer": the phone sees the steps and answers ap
     }
   });
   try {
-    const phone = remoteComputers({ getKey: async () => syncKey, getComputers: async () => ({ desk: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: pc.port, enabled: true } }), probeMs: 500 });
+    const phone = remoteComputers({ getKey: async () => syncKey, getComputers: async () => ({ desk: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: pc.port, enabled: true } }) });
     const name = 'hermes-agent (Desk, Hermes Agent)';
     assert.deepStrictEqual(await phone.listModels(), [name]);
     const kinds = [];
