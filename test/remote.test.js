@@ -49,10 +49,11 @@ async function computer(key, { words = ['Hello', ' from', ' your', ' PC'], delay
   return { server, seen, addr: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: server.port, enabled: true } };
 }
 
+// The app's own probe time (3 s): a busy test machine can take longer than a
+// fraction of a second to answer, even on 127.0.0.1.
 const client = (key, computers, opts = {}) => remoteComputers({
   getKey: async () => key,
   getComputers: async () => computers,
-  probeMs: 500,
   ...opts
 });
 
@@ -106,7 +107,8 @@ test('finds the computer on whichever address answers, and explains when none do
   const pc = await computer(key);
   try {
     // 192.0.2.1 is a documentation address that never answers.
-    const phone = client(key, { desk: { ...pc.addr, addrs: ['192.0.2.1', '127.0.0.1'] } });
+    // (A short probe time, so the one to 192.0.2.1 doesn't outlive the test for long.)
+    const phone = client(key, { desk: { ...pc.addr, addrs: ['192.0.2.1', '127.0.0.1'] } }, { probeMs: 500 });
     assert.strictEqual((await phone.listModels()).length, 2);
   } finally {
     await pc.server.close();
