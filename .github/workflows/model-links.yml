@@ -3,7 +3,8 @@ name: Model links
 # Checks that the phone models in the app can still be downloaded (a model
 # can be moved or renamed on Hugging Face), when the list changes and weekly.
 # When the list changes, each model is also loaded with the phone engine and
-# asked a question, to check the engine can run it.
+# asked a question, to check the engine can run it. Run it by hand with a
+# link in "url" to check any other GGUF model the same way.
 on:
   push:
     branches: ['main', 'claude/**']
@@ -13,6 +14,11 @@ on:
   schedule:
     - cron: '17 6 * * 1'
   workflow_dispatch:
+    inputs:
+      url:
+        description: "Check this GGUF model link instead of the app's list"
+        required: false
+        default: ''
 
 jobs:
   links:
@@ -40,16 +46,31 @@ jobs:
           cmake --build build-engine -j4
           gcc -std=c11 -Inative/llama/engine/include scripts/model-smoke.c -Lbuild-engine -lbalimda_llama \
             -Wl,-rpath,"$PWD/build-engine" -o model-smoke
+      - name: Show what's inside the model
+        if: inputs.url != ''
+        env:
+          URL: ${{ inputs.url }}
+        run: |
+          pip install --quiet gguf
+          curl -sSfL --retry 3 -o model.gguf "$URL"
+          ls -l model.gguf
+          gguf-dump --no-tensors model.gguf | head -80
+          echo "Tensors, by kind:"
+          gguf-dump model.gguf | awk -F'|' 'NF >= 4 { n = $4; gsub(/ /, "", n); sub(/\.[0-9]+\..*/, "", n); print n }' | sort | uniq -c
       - name: Load each model and ask it a question
+        env:
+          URL: ${{ inputs.url }}
         run: |
           fail=0
-          for url in $(node scripts/check-model-links.js --urls); do
+          urls="$URL"
+          [ -n "$urls" ] || urls=$(node scripts/check-model-links.js --urls)
+          for url in $urls; do
             name=$(basename "$url")
             echo "::group::$name"
-            if curl -sSfL --retry 3 -o model.gguf "$url" && ./model-smoke model.gguf 2>engine.log; then
+            if { [ -f model.gguf ] || curl -sSfL --retry 3 -o model.gguf "$url"; } && ./model-smoke model.gguf 2>engine.log; then
               echo "ok"
             else
-              tail -20 engine.log
+              tail -40 engine.log
               echo "::error::$name doesn't work with the phone engine"
               fail=1
             fi
