@@ -419,8 +419,14 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
                     imageCounts.append(Int32(pics.count))
                 }
                 if !images.isEmpty && !self.visionLoaded {
-                    if let why = self.visionError { throw PluginError("Couldn't load this model's vision file: \(why)") }
-                    throw PluginError("This model can't see pictures. Add its vision file (mmproj) in Settings → Models & providers, or pick a model that can.")
+                    // Pictures in the message being answered need a model that can see;
+                    // earlier ones (e.g. sent to another model) are left out.
+                    if (imageCounts.last ?? 0) > 0 {
+                        if let why = self.visionError { throw PluginError("Couldn't load this model's vision file: \(why)") }
+                        throw PluginError("This model can't see pictures. Add its vision file (mmproj) in Settings → Models & providers, or pick a model that can.")
+                    }
+                    images.removeAll()
+                    imageCounts = imageCounts.map { _ in 0 }
                 }
                 let sink = TokenSink { text in
                     if !text.isEmpty {

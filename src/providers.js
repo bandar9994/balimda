@@ -99,27 +99,29 @@ const anthropicMessages = (messages) => messages.map((m) => {
 
 // ---- Ollama (local) ------------------------------------------------------
 
-// Whether a model can think before answering (Qwen 3/3.5, DeepSeek-R1…).
-// Ollama rejects `think` for models that can't, so ask it once per model.
-const thinkingModels = new Map();
-async function supportsThinking(cfg, model) {
+// What a model can do, from Ollama (asked once per model): whether it can
+// think before answering (Qwen 3/3.5, DeepSeek-R1…; Ollama rejects `think`
+// for models that can't) and whether it can see pictures. null if unknown.
+const modelCapabilities = new Map();
+async function capabilitiesOf(cfg, model) {
   const key = `${trimSlash(cfg.baseUrl)}|${model}`;
-  if (!thinkingModels.has(key)) {
-    let yes = false;
+  if (!modelCapabilities.has(key)) {
+    let caps = null;
     try {
       const res = await fetch(`${trimSlash(cfg.baseUrl)}/api/show`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model })
       });
-      if (res.ok) yes = ((await res.json()).capabilities || []).includes('thinking');
+      if (res.ok) caps = (await res.json()).capabilities || [];
     } catch {
-      // unknown: leave thinking as the model's default
+      // unknown
     }
-    thinkingModels.set(key, yes);
+    modelCapabilities.set(key, caps);
   }
-  return thinkingModels.get(key);
+  return modelCapabilities.get(key);
 }
+const supportsThinking = async (cfg, model) => ((await capabilitiesOf(cfg, model)) || []).includes('thinking');
 
 const ns = (v) => (Number(v) || 0) / 1e6;
 
@@ -135,9 +137,21 @@ const ollama = {
     const options = {};
     if (req.temperature != null) options.temperature = req.temperature;
     if (req.maxTokens > 0) options.num_predict = req.maxTokens;
+    let messages = req.messages;
+    if (messages.some((m) => picturesOf(m).length)) {
+      const caps = await capabilitiesOf(cfg, req.model);
+      if (caps && !caps.includes('vision')) {
+        // Pictures in the message being answered need a model that can see;
+        // earlier ones (e.g. sent to another model) are left out.
+        if (picturesOf(messages[messages.length - 1] || {}).length) {
+          throw new Error(`${req.model} can't see pictures. Pick a model that can (in Ollama, a vision model such as gemma3 or qwen2.5vl).`);
+        }
+        messages = textOnly(messages);
+      }
+    }
     const body = {
       model: req.model,
-      messages: withSystem(req.system, ollamaMessages(req.messages)),
+      messages: withSystem(req.system, ollamaMessages(messages)),
       stream: true,
       // Keep the model in memory between messages; Ollama's default of
       // 5 minutes means reloading it (slow for big models) after a pause.

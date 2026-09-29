@@ -538,9 +538,15 @@ public class LlamaPlugin extends Plugin {
                     }
                 }
                 if (!images.isEmpty() && !visionLoaded) {
-                    throw new Exception(visionError != null
-                        ? "Couldn't load this model's vision file: " + visionError
-                        : "This model can't see pictures. Add its vision file (mmproj) in Settings → Models & providers, or pick a model that can.");
+                    // Pictures in the message being answered need a model that can see;
+                    // earlier ones (e.g. sent to another model) are left out.
+                    if (imageCounts.length > 0 && imageCounts[imageCounts.length - 1] > 0) {
+                        throw new Exception(visionError != null
+                            ? "Couldn't load this model's vision file: " + visionError
+                            : "This model can't see pictures. Add its vision file (mmproj) in Settings → Models & providers, or pick a model that can.");
+                    }
+                    images.clear();
+                    java.util.Arrays.fill(imageCounts, 0);
                 }
                 String result = LlamaEngine.nativeComplete(handle, roles, contents, imageCounts,
                         images.toArray(new byte[0][]), maxTokens, temperature, background, (text) -> {

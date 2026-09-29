@@ -295,3 +295,21 @@ test('pictures go to each provider the way its API takes them', async () => {
   assert.strictEqual(claude[2].content, 'Sure?');
   s.close();
 });
+
+test('ollama: a model that can\'t see gets the chat without its earlier pictures, and a clear error for a new one', async () => {
+  const chats = [];
+  const s = await server(async (req, res) => {
+    const body = await readBody(req);
+    if (req.url === '/api/show') return res.end(JSON.stringify({ capabilities: ['completion'] }));
+    chats.push(body);
+    res.end(`${JSON.stringify({ message: { content: 'ok' }, done: true })}\n`);
+  });
+  const cfg = { baseUrl: s.url };
+  const earlier = [{ role: 'user', content: 'What is this?', images: [PIC] }, { role: 'assistant', content: 'A cat.' }];
+  await PROVIDERS.ollama.impl.streamChat(cfg, { model: 'text-only', messages: [...earlier, { role: 'user', content: 'Thanks' }] }, () => {});
+  assert.deepStrictEqual(chats[0].messages[0], { role: 'user', content: 'What is this?' });
+  await assert.rejects(
+    PROVIDERS.ollama.impl.streamChat(cfg, { model: 'text-only', messages: [{ role: 'user', content: 'And this?', images: [PIC] }] }, () => {}),
+    /can't see pictures/);
+  s.close();
+});
