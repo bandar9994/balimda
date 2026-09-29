@@ -33,8 +33,9 @@ function localAddresses(interfaces = os.networkInterfaces()) {
  * @param getKey    async () => AES-GCM link key, or null when sharing is off
  * @param handlers  { op: async (msg, { emit, signal }) => result }
  */
-function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0', heartbeatMs = 15000 }) {
+function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0', heartbeatMs = 15000, graceMs = 5 * 60 * 1000 }) {
   const seen = new Map();  // nonce -> time, to refuse replayed requests
+  const jobs = new Map();  // job id -> reply that can be picked up again (see startJob)
 
   const server = http.createServer((req, res) => {
     // A phone that drops the connection mid-request (or any other failure)
@@ -97,32 +98,84 @@ function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0', he
     }
     seen.set(msg.nonce, now);
 
+    // Replies the phone can pick up again after a lost connection (see Job).
+    if (msg.op === 'cancel') {
+      const job = jobs.get(String(msg.job));
+      if (job) job.controller.abort();
+      const write = open(res, key, msg.nonce);
+      await write({ t: 'done', result: null });
+      res.end();
+      return;
+    }
+    if (msg.job != null) {
+      const id = String(msg.job);
+      const from = Math.max(0, Number(msg.from) || 0);
+      let job = jobs.get(id);
+      if (!job) {
+        if (from > 0 || !handlers[msg.op]) {
+          // Picking up a reply this computer no longer has (it was restarted,
+          // or no one came back for it in time).
+          const write = open(res, key, msg.nonce);
+          await write({ t: 'error', code: 'gone', message: 'The computer no longer has this reply (Balimda was restarted, or the connection was lost for too long).' });
+          res.end();
+          return;
+        }
+        job = startJob(id, handlers[msg.op], msg);
+      }
+      await follow(job, from, res, open(res, key, msg.nonce));
+      return;
+    }
+
+    // One reply per connection (phones without resumable replies).
     const handler = handlers[msg.op];
     if (!handler) {
       res.writeHead(400).end();
       return;
     }
-
-    // The reply is a stream of encrypted lines. Text pieces are sent in small
-    // batches so a fast model doesn't mean hundreds of tiny writes.
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+    const write = open(res, key, msg.nonce);
     const controller = new AbortController();
     res.on('close', () => {
       if (!res.writableFinished) controller.abort();
     });
+    const emit = batcher(write);
+    // A heartbeat while the model is busy (loading, reading a long chat,
+    // thinking): the phone can tell a slow model from a lost connection.
+    const beat = setInterval(() => write({ t: 'ping' }), heartbeatMs);
+    try {
+      const result = await handler(msg, { emit, signal: controller.signal });
+      emit.flush();
+      await write({ t: 'done', result: result === undefined ? null : result });
+    } catch (err) {
+      emit.flush();
+      await write({ t: 'error', message: err.message || String(err) });
+    } finally {
+      clearInterval(beat);
+    }
+    res.end();
+  };
+
+  // Starts the reply stream: encrypted lines, each tagged with the request's
+  // nonce. Returns write(evt), which resolves once that line is written.
+  function open(res, key, nonce) {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
     let chain = Promise.resolve();
-    const write = (evt) => {
+    return (evt) => {
       chain = chain.then(async () => {
-        if (!res.destroyed) res.write(`${await lock(key, { ...evt, re: msg.nonce })}\n`);
-      });
+        if (!res.destroyed) res.write(`${await lock(key, { ...evt, re: nonce })}\n`);
+      }).catch(() => {});
       return chain;
     };
+  }
+
+  // Text pieces are sent in small batches, so a fast model doesn't mean
+  // hundreds of tiny writes. emit.flush() sends what's waiting.
+  function batcher(send) {
     let pending = '';
     let timer = null;
     const flush = () => {
       clearTimeout(timer);
       timer = null;
-      if (pending) write({ t: 'delta', text: pending });
+      if (pending) send({ t: 'delta', text: pending });
       pending = '';
     };
     const emit = (evt) => {
@@ -132,23 +185,81 @@ function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0', he
         return;
       }
       flush();
-      write(evt);
+      send(evt);
     };
-    // A heartbeat while the model is busy (loading, reading a long chat,
-    // thinking): the phone can tell a slow model from a lost connection.
-    const beat = setInterval(() => write({ t: 'ping' }), heartbeatMs);
-    try {
-      const result = await handler(msg, { emit, signal: controller.signal });
-      flush();
-      await write({ t: 'done', result: result === undefined ? null : result });
-    } catch (err) {
-      flush();
-      await write({ t: 'error', message: err.message || String(err) });
-    } finally {
-      clearInterval(beat);
+    emit.flush = flush;
+    return emit;
+  }
+
+  // A reply the phone asked for with a job id. It keeps being written when
+  // the connection drops (e.g. the phone's Wi-Fi changed), and everything it
+  // says is kept, so the phone can come back and carry on from where its
+  // text stopped. With no one following it for `graceMs`, it's stopped; a
+  // finished one is kept as long, for a phone that comes back late.
+  function startJob(id, handler, msg) {
+    const job = { id, events: [], listeners: new Set(), finished: false, controller: new AbortController(), timer: null };
+    const push = (evt) => {
+      if (job.finished) return;
+      job.events.push(evt);
+      if (evt.t === 'done' || evt.t === 'error') {
+        job.finished = true;
+        clearTimeout(job.timer);
+        job.timer = setTimeout(() => jobs.delete(id), graceMs);
+        if (job.timer.unref) job.timer.unref();
+      }
+      for (const l of [...job.listeners]) l(evt);
+    };
+    job.unfollowed = () => {
+      if (job.finished || job.listeners.size) return;
+      clearTimeout(job.timer);
+      job.timer = setTimeout(() => job.controller.abort(), graceMs);
+      if (job.timer.unref) job.timer.unref();
+    };
+    jobs.set(id, job);
+    const emit = batcher(push);
+    (async () => {
+      try {
+        const result = await handler(msg, { emit, signal: job.controller.signal });
+        emit.flush();
+        push({ t: 'done', result: result === undefined ? null : result });
+      } catch (err) {
+        emit.flush();
+        push({ t: 'error', message: err.message || String(err) });
+      }
+    })();
+    return job;
+  }
+
+  // Sends a job's events from number `from` on, then the new ones as they come.
+  async function follow(job, from, res, write) {
+    await write({ t: 'job', events: job.events.length });
+    for (const evt of job.events.slice(from)) write(evt);
+    if (!job.finished) {
+      await new Promise((resolve) => {
+        const beat = setInterval(() => write({ t: 'ping' }), heartbeatMs);
+        const listener = (evt) => {
+          write(evt);
+          if (evt.t === 'done' || evt.t === 'error') stop();
+        };
+        const stop = () => {
+          clearInterval(beat);
+          job.listeners.delete(listener);
+          res.off('close', gone);
+          resolve();
+        };
+        const gone = () => {
+          stop();
+          job.unfollowed();
+        };
+        clearTimeout(job.timer);
+        job.listeners.add(listener);
+        if (res.destroyed) gone();  // the phone is already gone
+        else res.on('close', gone);
+      });
     }
+    await write({ t: 'ping' });  // waits for everything before it to be written
     res.end();
-  };
+  }
 
   return new Promise((resolve, reject) => {
     const listen = (p) => {
@@ -166,6 +277,9 @@ function startRemoteServer({ getKey, handlers, port = PORT, host = '0.0.0.0', he
         resolve({
           port: server.address().port,
           close: () => new Promise((r) => {
+            // Sharing stops: so do the replies still being written.
+            for (const job of jobs.values()) job.controller.abort();
+            jobs.clear();
             server.close(() => r());
             server.closeAllConnections?.();
           })
