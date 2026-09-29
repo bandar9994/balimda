@@ -65,16 +65,23 @@ public final class LlamaEngine {
     /** e.g. "offloaded 29/29 layers to GPU", or "" when the model runs on the CPU only. */
     public static native String nativeOffload(long handle);
 
+    /** Loads a vision model's image part (its mmproj file); throws on failure. */
+    public static native void nativeLoadVision(long handle, String mmprojPath, boolean useGpu, int nThreads);
+
     public static native void nativeFree(long handle);
 
     /**
-     * Returns the engine's result line (see balimda_engine.h). A background job
-     * (e.g. updating memory) runs beside the chat instead of replacing it.
+     * Returns the engine's result line (see balimda_engine.h). Message i has
+     * imageCounts[i] of the pictures in images (image files, in order); both
+     * may be null. A background job (e.g. updating memory) runs beside the
+     * chat instead of replacing it.
      */
     public static native String nativeComplete(
         long handle,
         String[] roles,
         String[] contents,
+        int[] imageCounts,
+        byte[][] images,
         int maxTokens,
         float temperature,
         boolean background,

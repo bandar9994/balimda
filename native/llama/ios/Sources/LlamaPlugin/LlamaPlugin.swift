@@ -380,7 +380,7 @@ public class LlamaPlugin: CAPPlugin, CAPBridgedPlugin {
         var error: UnsafeMutablePointer<CChar>?
         let user = Unmanaged.passUnretained(sink).toOpaque()
         let raw = withExtendedLifetime(sink) {
-            be_complete(e, rolePtrs, contentPtrs, Int32(roles.count), maxTokens, temperature, background ? 1 : 0, onToken, user, &error)
+            be_complete(e, rolePtrs, contentPtrs, Int32(roles.count), nil, nil, maxTokens, temperature, background ? 1 : 0, onToken, user, &error)
         }
         guard let raw = raw else {
             let message = error.map { String(cString: $0) } ?? "The model failed."

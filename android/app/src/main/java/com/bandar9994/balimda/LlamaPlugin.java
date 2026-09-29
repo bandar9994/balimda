@@ -494,7 +494,7 @@ public class LlamaPlugin extends Plugin {
                     roles[i] = m.optString("role", "user");
                     contents[i] = m.optString("content", "");
                 }
-                String result = LlamaEngine.nativeComplete(handle, roles, contents, maxTokens, temperature, background, (text) -> {
+                String result = LlamaEngine.nativeComplete(handle, roles, contents, null, null, maxTokens, temperature, background, (text) -> {
                     if (!text.isEmpty()) {
                         JSObject evt = new JSObject();
                         evt.put("requestId", requestId);

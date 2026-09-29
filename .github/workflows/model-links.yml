@@ -19,6 +19,10 @@ on:
         description: "Check this GGUF model link instead of the app's list (or give a Hugging Face repo link to list its files)"
         required: false
         default: ''
+      mmproj:
+        description: "With url: its vision file (mmproj GGUF), to ask the model about a picture"
+        required: false
+        default: ''
 
 jobs:
   links:
@@ -66,6 +70,7 @@ jobs:
       - name: Load each model and ask it a question
         env:
           URL: ${{ inputs.url }}
+          MMPROJ: ${{ inputs.mmproj }}
         run: |
           fail=0
           [[ "$URL" == *.gguf ]] || [ -z "$URL" ] || exit 0
@@ -74,7 +79,13 @@ jobs:
           for url in $urls; do
             name=$(basename "$url")
             echo "::group::$name"
-            if { [ -f model.gguf ] || curl -sSfL --retry 3 -o model.gguf "$url"; } && ./model-smoke model.gguf 2>engine.log; then
+            # With a vision file: ask about llama.cpp's test picture (a newspaper: "Men walk on Moon").
+            vision=()
+            if [ -n "$MMPROJ" ]; then
+              curl -sSfL --retry 3 -o mmproj.gguf "$MMPROJ"
+              vision=(mmproj.gguf build-engine/_deps/llama_cpp-src/tools/mtmd/test-1.jpeg)
+            fi
+            if { [ -f model.gguf ] || curl -sSfL --retry 3 -o model.gguf "$url"; } && ./model-smoke model.gguf "${vision[@]}" 2>engine.log; then
               echo "ok"
             else
               tail -40 engine.log

@@ -11,6 +11,7 @@
 #define BALIMDA_ENGINE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,14 +34,31 @@ be_engine * be_load(const char * path, int n_ctx, int n_gpu_layers, int n_thread
 // Where the loaded model runs, e.g. "offloaded 29/29 layers to GPU" ("" = CPU only).
 const char * be_offload(const be_engine * engine);
 
-// Writes a reply to the chat (roles "system", "user", "assistant"). Returns
+// Loads a vision model's image part (its "mmproj" GGUF, made for this model),
+// so messages can hold images. Returns false and sets *error on failure.
+bool be_load_vision(be_engine * engine, const char * mmproj_path, bool use_gpu, int n_threads, char ** error);
+
+// Whether the loaded model can see images (be_load_vision succeeded).
+bool be_has_vision(const be_engine * engine);
+
+// An image file (JPEG, PNG, ...) in memory.
+typedef struct be_image {
+    const unsigned char * data;
+    size_t size;
+} be_image;
+
+// Writes a reply to the chat (roles "system", "user", "assistant"). Message i
+// comes with image_counts[i] images (image_counts may be NULL: no images),
+// taken in order from `images`; they go before the message's text. Images
+// are left out when the model can't see (no be_load_vision). Returns
 // "<reason>\t<prompt tokens>\t<prompt ms>\t<generated tokens>\t<generation ms>
 // \t<chat tokens>\t<messages sent>\t<context size>" where reason is "end_turn",
 // "max_tokens" or "aborted" (free with be_string_free); on failure NULL and *error.
 // A background job (background != 0, e.g. updating memory) runs beside the
 // chat in the KV cache instead of replacing it.
 char * be_complete(be_engine * engine, const char * const * roles, const char * const * contents, int n_messages,
-                   int max_tokens, float temperature, int background, be_token_fn on_token, void * user, char ** error);
+                   const int * image_counts, const be_image * images, int max_tokens, float temperature, int background,
+                   be_token_fn on_token, void * user, char ** error);
 
 void be_free(be_engine * engine);
 

@@ -7,6 +7,7 @@
 
 #include <jni.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -137,17 +138,30 @@ Java_com_bandar9994_balimda_LlamaEngine_nativeOffload(JNIEnv * env, jclass, jlon
     return to_jstring(env, be_offload(reinterpret_cast<be_engine *>(handle)));
 }
 
+// Loads a vision model's image part (its mmproj file); throws on failure.
+JNIEXPORT void JNICALL
+Java_com_bandar9994_balimda_LlamaEngine_nativeLoadVision(JNIEnv * env, jclass, jlong handle, jstring jpath,
+                                                     jboolean use_gpu, jint n_threads) {
+    const std::string path = to_utf8(env, jpath);
+    char * error = nullptr;
+    if (!be_load_vision(reinterpret_cast<be_engine *>(handle), path.c_str(), use_gpu, n_threads, &error)) {
+        throw_engine_error(env, error, "Couldn't load the vision file.");
+    }
+}
+
 JNIEXPORT void JNICALL
 Java_com_bandar9994_balimda_LlamaEngine_nativeFree(JNIEnv *, jclass, jlong handle) {
     be_free(reinterpret_cast<be_engine *>(handle));
 }
 
-// Streams a reply. `callback.onToken(String)` receives text pieces and returns
-// false to stop. Returns the engine's result line (see balimda_engine.h).
+// Streams a reply. Message i has imageCounts[i] of the pictures in `images`
+// (image files, in order). `callback.onToken(String)` receives text pieces
+// and returns false to stop. Returns the engine's result line (see balimda_engine.h).
 JNIEXPORT jstring JNICALL
 Java_com_bandar9994_balimda_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlong handle, jobjectArray jroles,
-                                                   jobjectArray jcontents, jint max_tokens, jfloat temperature,
-                                                   jboolean background, jobject callback) {
+                                                   jobjectArray jcontents, jintArray jimage_counts, jobjectArray jimages,
+                                                   jint max_tokens, jfloat temperature, jboolean background,
+                                                   jobject callback) {
     std::vector<std::string> roles, contents;
     const jsize n_msgs = env->GetArrayLength(jroles);
     for (jsize i = 0; i < n_msgs; i++) {
@@ -163,12 +177,35 @@ Java_com_bandar9994_balimda_LlamaEngine_nativeComplete(JNIEnv * env, jclass, jlo
         c_roles.push_back(roles[i].c_str());
         c_contents.push_back(contents[i].c_str());
     }
+    std::vector<int> image_counts(size_t(n_msgs), 0);
+    std::vector<std::vector<unsigned char>> image_data;
+    if (jimage_counts && jimages && env->GetArrayLength(jimage_counts) == n_msgs) {
+        env->GetIntArrayRegion(jimage_counts, 0, n_msgs, image_counts.data());
+        const jsize n_images = env->GetArrayLength(jimages);
+        for (jsize i = 0; i < n_images; i++) {
+            auto bytes = (jbyteArray) env->GetObjectArrayElement(jimages, i);
+            const jsize len = bytes ? env->GetArrayLength(bytes) : 0;
+            std::vector<unsigned char> data(static_cast<size_t>(len));
+            if (len) env->GetByteArrayRegion(bytes, 0, len, reinterpret_cast<jbyte *>(data.data()));
+            image_data.push_back(std::move(data));
+            if (bytes) env->DeleteLocalRef(bytes);
+        }
+        size_t wanted = 0;
+        for (int n : image_counts) wanted += size_t(std::max(n, 0));
+        if (wanted != image_data.size()) {
+            throw_java(env, "The pictures didn't arrive in one piece. Try again.");
+            return nullptr;
+        }
+    }
+    std::vector<be_image> images;
+    for (auto & d : image_data) images.push_back({d.data(), d.size()});
 
     jclass cb_cls = env->GetObjectClass(callback);
     TokenSink sink{env, callback, env->GetMethodID(cb_cls, "onToken", "(Ljava/lang/String;)Z")};
     char * error = nullptr;
     char * result = be_complete(reinterpret_cast<be_engine *>(handle), c_roles.data(), c_contents.data(), int(n_msgs),
-                                max_tokens, temperature, background ? 1 : 0, on_token, &sink, &error);
+                                image_counts.data(), images.data(), max_tokens, temperature, background ? 1 : 0,
+                                on_token, &sink, &error);
     if (!result) {
         throw_engine_error(env, error, "The model failed.");
         return nullptr;
