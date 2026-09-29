@@ -1764,7 +1764,7 @@ async function runCompletion(chat) {
 async function generateTitle(chat, model = chat.model) {
   const first = chat.messages.find((m) => m.role === 'user');
   const provisional = chat.title;
-  if (!first) return;
+  if (!first || !first.content) return;  // just a picture: keep "Picture"
   const res = await api.ai.chat({
     requestId: uid(),
     provider: model.provider,

@@ -436,7 +436,9 @@ function registerIpc() {
     for (const m of chat.messages) {
       // A reasoning model's thinking isn't part of the reply.
       const text = String(m.content || '').replace(/^\s*<think>[\s\S]*?(<\/think>|$)\s*/, '');
-      lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', text, '');
+      // Pictures stay in the file, as data URLs.
+      const pics = (Array.isArray(m.images) ? m.images : []).filter((u) => typeof u === 'string' && u.startsWith('data:image/'));
+      lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', ...pics.map((u, i) => `![Picture ${i + 1}](${u})\n`), text, '');
     }
     fs.writeFileSync(filePath, lines.join('\n'));
     return { filePath };
