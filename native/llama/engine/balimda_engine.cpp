@@ -11,11 +11,18 @@
 // The chat lives in sequence 0 of the KV cache. Background jobs (e.g. updating
 // memory after a reply) run in sequence 1 and are removed afterwards, so they
 // don't throw away the chat and the next message doesn't have to re-read it.
+//
+// Images (vision models, with their mmproj file) go through llama.cpp's mtmd:
+// the prompt is split into text and image pieces. In the token lists below an
+// image's tokens are stood in for by one negative number made from the image's
+// hash, so the same image in the same place is recognised in the KV cache.
 
 #include "balimda_engine.h"
 
 #include <algorithm>
 #include <chrono>
+#include <functional>
+#include <memory>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -28,9 +35,13 @@
 #if __has_include(<llama/llama.h>)
 #include <llama/ggml-backend.h>
 #include <llama/llama.h>
+#include <llama/mtmd-helper.h>
+#include <llama/mtmd.h>
 #else
 #include "ggml-backend.h"
 #include "llama.h"
+#include "mtmd-helper.h"
+#include "mtmd.h"
 #endif
 
 #ifdef __ANDROID__
@@ -44,7 +55,9 @@ struct be_engine {
     llama_model * model = nullptr;
     llama_context * ctx = nullptr;
     const llama_vocab * vocab = nullptr;
-    std::vector<llama_token> cached;  // tokens currently in the KV cache
+    mtmd_context * vision = nullptr;  // the image part, when loaded
+    std::vector<llama_token> cached;  // tokens currently in the KV cache (images as negative ids)
+    std::vector<llama_pos> cached_pos;  // the position of each (an image's tokens share its first)
     std::string tmpl;                 // chat template ("" = built-in default)
     std::string offload;              // e.g. "offloaded 29/29 layers to GPU"
     // Where the kept part of the chat started last time (when it had to be
@@ -58,9 +71,14 @@ namespace {
 std::once_flag backend_once;
 std::mutex log_mutex;
 std::string last_offload;  // captured from llama.cpp's log while a model loads
+std::string last_error;    // llama.cpp's last error, to explain a model that won't load
 
 void on_log(ggml_log_level level, const char * text, void *) {
     if (level >= GGML_LOG_LEVEL_WARN) LOGI("%s", text);
+    if (level == GGML_LOG_LEVEL_ERROR && strstr(text, "error loading model")) {
+        std::lock_guard<std::mutex> lock(log_mutex);
+        last_error = text;
+    }
     // llama.cpp reports how many layers went to the GPU; keep it so the app
     // can show where the model really runs.
     const char * p = strstr(text, "offloaded ");
@@ -79,6 +97,7 @@ double now_ms() {
 void init_backend() {
     std::call_once(backend_once, [] {
         llama_log_set(on_log, nullptr);
+        mtmd_helper_log_set(on_log, nullptr);
         llama_backend_init();
     });
 }
@@ -91,6 +110,35 @@ char * copy_string(const std::string & s) {
 
 void set_error(char ** error, const std::string & msg) {
     if (error) *error = copy_string(msg);
+}
+
+// Why llama.cpp couldn't load a model, in words for the user, with its own
+// reason at the end (from the log, e.g. "llama_model_load: error loading
+// model: error loading model hyperparameters: key ... has wrong array length").
+std::string load_error(std::string reason) {
+    const std::string marker = "error loading model: ";
+    size_t at;
+    while ((at = reason.find(marker)) != std::string::npos) reason.erase(0, at + marker.size());
+    while (!reason.empty() && (reason.back() == '\n' || reason.back() == ' ')) reason.pop_back();
+    const auto has = [&](const char * s) { return reason.find(s) != std::string::npos; };
+
+    // An unreadable or cut-off file (llama.cpp then names the file, not the problem).
+    if (reason.empty() || has("failed to load model from") || has("not within the file bounds")) {
+        return "Couldn't load the model file. It may be incomplete or not a GGUF model; try deleting and downloading it again.";
+    }
+    std::string msg;
+    if (has("unknown model architecture") || has("unknown pre-tokenizer")) {
+        msg = "This version of Balimda can't run this kind of model yet. Try another model, or update Balimda.";
+    } else {
+        // Wrong or missing settings or parts: the file was made for another app
+        // (e.g. Ollama, whose files can hold the vision part too) or by a tool
+        // llama.cpp doesn't read. Downloading it again gives the same file.
+        msg = "This GGUF file isn't in the format Balimda (llama.cpp) reads. It was probably made for another app, "
+              "such as Ollama, so downloading it again won't help. Look for a version of this model made for "
+              "llama.cpp, e.g. from bartowski, unsloth or mradermacher on Hugging Face.";
+    }
+    msg += " (" + reason + ")";
+    return msg;
 }
 
 // Length of the longest prefix of `s` that doesn't end inside a UTF-8
@@ -108,6 +156,13 @@ size_t complete_utf8_prefix(const std::string & s) {
         back++;
     }
     return s.size();
+}
+
+// Stands in for an image's tokens in the token lists: a negative number made
+// from the image's id (its SHA-256, set by mtmd), never a real token.
+llama_token image_token(const char * id) {
+    const size_t h = std::hash<std::string>{}(id ? id : "");
+    return -2 - llama_token(h % 0x3fffffff);
 }
 
 // Decodes tokens into one sequence of the KV cache, starting at position
@@ -179,10 +234,16 @@ be_engine * be_load(const char * path, int n_ctx, int n_gpu_layers, int n_thread
     {
         std::lock_guard<std::mutex> lock(log_mutex);
         last_offload.clear();
+        last_error.clear();
     }
     llama_model * model = llama_model_load_from_file(path, mp);
     if (!model) {
-        set_error(error, "Couldn't load the model file. It may be incomplete or not a GGUF model; try deleting and downloading it again.");
+        std::string reason;
+        {
+            std::lock_guard<std::mutex> lock(log_mutex);
+            reason = last_error;
+        }
+        set_error(error, load_error(reason));
         return nullptr;
     }
 
@@ -220,8 +281,42 @@ const char * be_offload(const be_engine * e) {
     return e ? e->offload.c_str() : "";
 }
 
+bool be_load_vision(be_engine * e, const char * mmproj_path, bool use_gpu, int n_threads, char ** error) {
+    if (!e) {
+        set_error(error, "Model is not loaded");
+        return false;
+    }
+    if (e->vision) return true;
+    mtmd_context_params mp = mtmd_context_params_default();
+    mp.use_gpu = use_gpu;
+    mp.n_threads = n_threads;
+    mp.print_timings = false;
+    mp.warmup = false;
+    // Phones: big photos are scaled down to about a thousand tokens.
+    mp.image_max_tokens = 1024;
+    e->vision = mtmd_init_from_file(mmproj_path, e->model, mp);
+    if (!e->vision) {
+        set_error(error, "Couldn't load the vision file. It must be the mmproj file made for this model (same family and "
+                         "size); if it is, try deleting and downloading it again.");
+        return false;
+    }
+    if (!mtmd_support_vision(e->vision)) {
+        mtmd_free(e->vision);
+        e->vision = nullptr;
+        set_error(error, "This mmproj file is for sound, not images.");
+        return false;
+    }
+    LOGI("vision loaded from %s (gpu %d)", mmproj_path, use_gpu ? 1 : 0);
+    return true;
+}
+
+bool be_has_vision(const be_engine * e) {
+    return e && e->vision;
+}
+
 void be_free(be_engine * e) {
     if (!e) return;
+    if (e->vision) mtmd_free(e->vision);
     llama_free(e->ctx);
     llama_model_free(e->model);
     delete e;
@@ -232,15 +327,49 @@ void be_string_free(char * s) {
 }
 
 char * be_complete(be_engine * e, const char * const * c_roles, const char * const * c_contents, int n_messages,
-                   int max_tokens, float temperature, int background, be_token_fn on_token, void * user, char ** error) {
+                   const int * image_counts, const be_image * images, int max_tokens, float temperature, int background,
+                   be_token_fn on_token, void * user, char ** error) {
     if (!e) {
         set_error(error, "Model is not loaded");
         return nullptr;
     }
-    std::vector<std::string> roles, contents;
+    // Each message's images go before its text, as mtmd's marker. `keys`
+    // tell messages apart by their text and images (to find where the kept
+    // part of the chat started last time).
+    const std::string marker = mtmd_default_marker();
+    struct Bitmaps {
+        std::vector<mtmd_bitmap *> all;
+        ~Bitmaps() { for (auto * b : all) mtmd_bitmap_free(b); }
+    } bitmaps;
+    std::vector<std::vector<const mtmd_bitmap *>> message_images(size_t(std::max(n_messages, 0)));
+    std::vector<std::string> roles, contents, keys;
+    size_t next_image = 0;
     for (int i = 0; i < n_messages; i++) {
+        std::string text = c_contents[i] ? c_contents[i] : "";
+        // The marker typed in a message would be taken for an image.
+        for (size_t at; (at = text.find(marker)) != std::string::npos;) text.erase(at, marker.size());
+        std::string prefix, key = text;
+        const int n_images = image_counts ? std::max(image_counts[i], 0) : 0;
+        for (int k = 0; k < n_images; k++) {
+            const be_image & img = images[next_image++];
+            if (!e->vision) continue;  // the model can't see: text only
+            mtmd_helper_bitmap_wrapper w = mtmd_helper_bitmap_init_from_buf(e->vision, img.data, img.size, false,
+                                                                            mtmd_helper_init_opt_default());
+            if (w.video_ctx) mtmd_helper_video_free(w.video_ctx);
+            if (!w.bitmap || w.video_ctx || mtmd_bitmap_is_audio(w.bitmap)) {
+                if (w.bitmap) mtmd_bitmap_free(w.bitmap);
+                set_error(error, "Couldn't read one of the images. Try a JPEG or PNG picture.");
+                return nullptr;
+            }
+            bitmaps.all.push_back(w.bitmap);
+            message_images[size_t(i)].push_back(w.bitmap);
+            prefix += marker + "\n";
+            const char * id = mtmd_bitmap_get_id(w.bitmap);
+            key += std::string("\x01") + (id ? id : "");
+        }
         roles.emplace_back(c_roles[i] ? c_roles[i] : "user");
-        contents.emplace_back(c_contents[i] ? c_contents[i] : "");
+        contents.push_back(prefix + text);
+        keys.push_back(key);
     }
 
     // Tokenize a prompt (add BOS if the model wants it; the template's special tokens are parsed).
@@ -262,21 +391,62 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
     const int32_t reserve = std::max<int32_t>(256, std::min<int32_t>(max_tokens, n_ctx / 4));
     const int32_t fits = n_ctx - reserve;
     const size_t first = (!roles.empty() && roles[0] == "system") ? 1 : 0;
+    // The prompt: its tokens (an image's as its image_token), the position of
+    // each, the position after the last, and the pieces mtmd made of it.
     std::vector<llama_token> tokens;
+    std::vector<llama_pos> pos;
+    llama_pos end_pos = 0;
+    std::unique_ptr<mtmd_input_chunks, void (*)(mtmd_input_chunks *)> chunks(nullptr, mtmd_input_chunks_free);
+    std::vector<std::pair<size_t, const mtmd_input_chunk *>> image_chunks;  // (first token, piece)
+    bool images_failed = false;
     // The prompt for the chat from message `from` on (plus the system prompt).
     auto build = [&](size_t from) {
         std::vector<std::string> r, c;
-        if (first) {
-            r.push_back(roles[0]);
-            c.push_back(contents[0]);
-        }
-        for (size_t i = from; i < roles.size(); i++) {
+        std::vector<const mtmd_bitmap *> bm;
+        auto add = [&](size_t i) {
             r.push_back(roles[i]);
             c.push_back(contents[i]);
-        }
+            bm.insert(bm.end(), message_images[i].begin(), message_images[i].end());
+        };
+        if (first) add(0);
+        for (size_t i = from; i < roles.size(); i++) add(i);
         const std::string prompt = apply_template(*e, r, c);
         if (prompt.empty()) return false;
-        tokens = tokenize(prompt);
+        tokens.clear();
+        pos.clear();
+        image_chunks.clear();
+        chunks.reset();
+        if (bm.empty()) {
+            tokens = tokenize(prompt);
+            for (size_t i = 0; i < tokens.size(); i++) pos.push_back(llama_pos(i));
+            end_pos = llama_pos(tokens.size());
+            return true;
+        }
+        chunks.reset(mtmd_input_chunks_init());
+        const mtmd_input_text input{prompt.c_str(), prompt.size(), true, true};
+        if (mtmd_tokenize(e->vision, chunks.get(), &input, bm.data(), bm.size()) != 0) {
+            images_failed = true;
+            return false;
+        }
+        llama_pos p = 0;
+        for (size_t k = 0; k < mtmd_input_chunks_size(chunks.get()); k++) {
+            const mtmd_input_chunk * chunk = mtmd_input_chunks_get(chunks.get(), k);
+            if (mtmd_input_chunk_get_type(chunk) == MTMD_INPUT_CHUNK_TYPE_TEXT) {
+                size_t n = 0;
+                const llama_token * t = mtmd_input_chunk_get_tokens_text(chunk, &n);
+                for (size_t j = 0; j < n; j++) {
+                    tokens.push_back(t[j]);
+                    pos.push_back(p++);
+                }
+            } else {
+                image_chunks.emplace_back(tokens.size(), chunk);
+                const llama_token id = image_token(mtmd_input_chunk_get_id(chunk));
+                tokens.insert(tokens.end(), mtmd_input_chunk_get_n_tokens(chunk), id);
+                pos.insert(pos.end(), mtmd_input_chunk_get_n_tokens(chunk), p);
+                p += mtmd_input_chunk_get_n_pos(chunk);
+            }
+        }
+        end_pos = p;
         return true;
     };
     // The next user message after `from` (roles.size() if there's none).
@@ -286,12 +456,13 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
         return next;
     };
     auto format_failed = [&]() {
-        set_error(error, "Couldn't format the conversation for this model.");
+        set_error(error, images_failed ? "Couldn't prepare the images for this model."
+                                       : "Couldn't format the conversation for this model.");
         return nullptr;
     };
 
     size_t from = first;
-    if (!build(from)) return format_failed();
+    if (!build(from) || tokens.empty()) return format_failed();
     if (int32_t(tokens.size()) > fits) {
         // Start where the kept part started last time, while that still fits:
         // cutting one more message each turn would change the start of the
@@ -299,7 +470,7 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
         bool done = false;
         if (!background && !e->start_content.empty()) {
             for (size_t i = first + 1; i < roles.size(); i++) {
-                if (roles[i] != e->start_role || contents[i] != e->start_content) continue;
+                if (roles[i] != e->start_role || keys[i] != e->start_content) continue;
                 from = i;
                 if (!build(from)) return format_failed();
                 done = int32_t(tokens.size()) <= fits;
@@ -323,7 +494,7 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
     }
     if (!background) {
         e->start_role = from > first ? roles[from] : "";
-        e->start_content = from > first ? contents[from] : "";
+        e->start_content = from > first ? keys[from] : "";
     }
 
     llama_memory_t mem = llama_get_memory(e->ctx);
@@ -337,16 +508,20 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
         if (e->cached.size() + tokens.size() + size_t(std::max(max_tokens, 0)) + 1 > size_t(n_ctx)) {
             llama_memory_seq_rm(mem, 0, -1, -1);
             e->cached.clear();
+            e->cached_pos.clear();
         }
     } else {
         // Reuse the part of the conversation that's already in the KV cache.
         while (keep < e->cached.size() && keep < tokens.size() && e->cached[keep] == tokens[keep]) keep++;
         if (keep == tokens.size() && keep > 0) keep--;  // must decode at least one token to get logits
-        if (!llama_memory_seq_rm(mem, 0, llama_pos(keep), -1)) {
+        // An image is read as a whole, so none of it is kept if it has to be read again.
+        while (keep > 0 && tokens[keep] < 0 && tokens[keep - 1] == tokens[keep]) keep--;
+        if (!llama_memory_seq_rm(mem, 0, pos[keep], -1)) {
             llama_memory_clear(mem, true);
             keep = 0;
         }
         e->cached.assign(tokens.begin(), tokens.begin() + keep);
+        e->cached_pos.assign(pos.begin(), pos.begin() + keep);
     }
     // A background job always leaves the cache as it found it.
     struct Cleanup {
@@ -377,6 +552,7 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
         } else {
             llama_memory_clear(mem, true);
             e->cached.clear();
+            e->cached_pos.clear();
         }
         set_error(error, msg);
         return nullptr;
@@ -386,11 +562,29 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
     const double t_prompt = now_ms();
     const size_t n_new_prompt = tokens.size() - keep;
     const int32_t n_batch = int32_t(llama_n_batch(e->ctx));
-    for (size_t i = keep; i < tokens.size(); i += n_batch) {
-        const int32_t n = int32_t(std::min<size_t>(n_batch, tokens.size() - i));
-        if (decode(e->ctx, tokens.data() + i, n, llama_pos(i), seq) != 0) return failed("The model failed while reading the chat.");
+    for (size_t i = keep; i < tokens.size();) {
+        size_t n = 0;
+        if (tokens[i] >= 0) {
+            // Text, up to the next image, in batches.
+            while (n < size_t(n_batch) && i + n < tokens.size() && tokens[i + n] >= 0) n++;
+            if (decode(e->ctx, tokens.data() + i, int32_t(n), pos[i], seq) != 0) return failed("The model failed while reading the chat.");
+        } else {
+            // An image: mtmd encodes it and puts it in the KV cache.
+            const mtmd_input_chunk * chunk = nullptr;
+            for (auto & ic : image_chunks) if (ic.first == i) chunk = ic.second;
+            if (!chunk) return failed("The model failed while reading the images.");
+            n = mtmd_input_chunk_get_n_tokens(chunk);
+            llama_pos after = 0;
+            if (mtmd_helper_eval_chunk_single(e->vision, e->ctx, chunk, pos[i], seq, n_batch, false, &after) != 0) {
+                return failed("The model failed while looking at the images. Try a smaller picture, or free up memory.");
+            }
+        }
         n_pos += n;
-        if (!background) e->cached.insert(e->cached.end(), tokens.begin() + i, tokens.begin() + i + n);
+        if (!background) {
+            e->cached.insert(e->cached.end(), tokens.begin() + i, tokens.begin() + i + n);
+            e->cached_pos.insert(e->cached_pos.end(), pos.begin() + i, pos.begin() + i + n);
+        }
+        i += n;
         if (!emit("")) return result("aborted", n_new_prompt, now_ms() - t_prompt, 0, 0);
     }
     const double prompt_ms = now_ms() - t_prompt;
@@ -409,6 +603,7 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
     }
 
     std::string stop_reason = "end_turn";
+    llama_pos next_pos = end_pos;
     std::string pending;
     int generated = 0;
     const double t_gen = now_ms();
@@ -430,12 +625,16 @@ char * be_complete(be_engine * e, const char * const * c_roles, const char * con
             stop_reason = "max_tokens";
             break;
         }
-        if (decode(e->ctx, &tok, 1, llama_pos(n_pos), seq) != 0) {
+        if (decode(e->ctx, &tok, 1, next_pos, seq) != 0) {
             stop_reason = "max_tokens";
             break;
         }
         n_pos++;
-        if (!background) e->cached.push_back(tok);
+        if (!background) {
+            e->cached.push_back(tok);
+            e->cached_pos.push_back(next_pos);
+        }
+        next_pos++;
     }
     const double gen_ms = now_ms() - t_gen;
     if (!pending.empty() && stop_reason != "aborted") emit(pending);

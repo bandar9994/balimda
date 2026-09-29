@@ -310,6 +310,15 @@ details.thinking summary { cursor: pointer; }
 
 /* The microphone in the message box; red and pulsing while it listens. */
 .mic-btn { align-self: flex-end; display: grid; place-items: center; }
+.attach-btn { align-self: flex-end; display: grid; place-items: center; }
+.attachments { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.attachments[hidden] { display: none; }
+.attachment { position: relative; }
+.attachment img { display: block; width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+.attachment-remove { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; line-height: 1; cursor: pointer; display: grid; place-items: center; padding: 0; }
+.msg-pictures { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 6px; }
+.msg-pictures img { max-width: min(240px, 100%); max-height: 200px; border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; object-fit: contain; }
+.picture-full { display: block; max-width: 100%; max-height: 75vh; margin: 0 auto; border-radius: 8px; }
 .mic-btn[hidden] { display: none; }
 .mic-btn.listening { color: #fff; background: var(--danger); animation: mic-pulse 1.2s ease-in-out infinite; }
 @keyframes mic-pulse {
@@ -528,6 +537,11 @@ textarea.input { resize: vertical; }
 .od-row .sub { font-size: 12px; color: var(--text-dim); }
 .od-row .sub.bad { color: var(--danger); overflow-wrap: anywhere; }
 .od-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.od-vision { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin-top: 2px; }
+.od-vision .bad { color: var(--danger); overflow-wrap: anywhere; }
+.od-vision-add { display: grid; gap: 6px; margin-top: 6px; }
+.link-btn { background: none; border: none; padding: 0; font: inherit; font-size: 12px; color: var(--accent); cursor: pointer; text-decoration: underline; }
+.link-btn:hover { filter: brightness(1.15); }
 .od-missing { margin: 10px 0 0; padding: 10px 12px; border: 1px solid var(--danger); border-radius: 8px; display: grid; gap: 8px; }
 .od-missing > p { margin: 0; font-size: 13px; }
 .progress { width: 80px; height: 6px; border-radius: 3px; background: var(--bg-hover); overflow: hidden; }

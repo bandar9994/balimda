@@ -126,6 +126,7 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
         signal: controller.signal
       });
       if (res.status === 403) throw new RemoteError('forbidden');
+      if (res.status === 413) throw new RemoteError('This chat is too big to send to your computer (it has a lot of pictures). Start a new chat to carry on.');
       if (!res.ok) throw new RemoteError(`error ${res.status}`);
       if (timer) clearTimeout(timer);
       for await (const line of lines(res.body)) {

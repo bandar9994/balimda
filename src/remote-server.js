@@ -12,7 +12,7 @@ const http = require('http');
 const os = require('os');
 const { PORT, PATH, MAX_SKEW_MS, lock, unlock } = require('./remote');
 
-const MAX_BODY = 16 * 1024 * 1024;
+const MAX_BODY = 64 * 1024 * 1024;  // a chat with pictures (each about 350 KB here) can be big
 
 // IPv4 addresses the phone might reach this computer on: Wi-Fi/Ethernet, and
 // VPNs like Tailscale (100.64.0.0/10) that work away from home too.

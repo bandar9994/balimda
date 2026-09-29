@@ -35,6 +35,10 @@ const el = {
   input: $('#input'),
   sendBtn: $('#sendBtn'),
   micBtn: $('#micBtn'),
+  attachBtn: $('#attachBtn'),
+  attachInput: $('#attachInput'),
+  attachments: $('#attachments'),
+  composer: $('#composer'),
   hint: $('#composerHint'),
   chatMenu: $('#chatMenu'),
   modalRoot: $('#modalRoot'),
@@ -680,7 +684,9 @@ function renderMessage(chat, msg, index) {
         !isUser && msg.stats ? statsBadge(msg.stats) : null,
         !isUser && !msg.stats && msg.pending && msg.runningOn ? liveBadge(msg.runningOn) : null,
         when ? h('span', { text: `· ${when}` }) : null),
-      content,
+      picturesOf(msg).length ? h('div', { class: 'msg-pictures' },
+        ...picturesOf(msg).map((src) => h('img', { src, alt: 'Picture', title: 'Show larger', onclick: () => showPicture(src) }))) : null,
+      msg.content || !picturesOf(msg).length ? content : null,
       msg.recalled && msg.recalled.length ? h('div', { class: 'recalled' }, 'Used earlier chats: ',
         ...msg.recalled.flatMap((r, i) => [i ? ', ' : null, h('a', { href: '#', text: r.title, onclick: (e) => { e.preventDefault(); openChat(r.chatId); } })])) : null,
       msg.error ? h('div', { class: 'error', text: msg.error }) : null,
@@ -902,11 +908,73 @@ function updateComposer() {
 // "Send", "Stop" while a reply is written, or "Talk" (voice chat) when the box is empty.
 function updateSendButton() {
   const streaming = isStreaming(S.current);
-  const talk = !streaming && !V.dictating && !el.input.value.trim() && canListen() && canSpeak();
+  const talk = !streaming && !V.dictating && !el.input.value.trim() && !pictures.length && canListen() && canSpeak();
   el.sendBtn.textContent = streaming ? 'Stop' : talk ? 'Talk' : 'Send';
   el.sendBtn.title = talk ? 'Voice chat: talk and hear the replies' : streaming ? 'Stop' : 'Send';
   el.sendBtn.classList.toggle('danger', streaming);
   el.sendBtn.dataset.mode = streaming ? 'stop' : talk ? 'talk' : 'send';
+}
+
+// ---------------------------------------------------------------------------
+// pictures in messages (for models that can see; on the phone, a model with
+// its vision file). They're kept in the chat as JPEG data URLs.
+
+const MAX_PICTURES = 4;     // per message
+const PICTURE_SIDE = 1024;  // longest side after scaling down, in pixels
+let pictures = [];          // picked for the next message
+
+// A picture file, scaled down (bigger ones cost a model far more time) as JPEG.
+async function readPicture(file) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(1, PICTURE_SIDE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';  // see-through parts of a PNG would turn black in a JPEG
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
+async function addPictures(files) {
+  for (const file of [...files].filter((f) => f.type.startsWith('image/'))) {
+    if (pictures.length >= MAX_PICTURES) {
+      toast(`Up to ${MAX_PICTURES} pictures per message.`);
+      break;
+    }
+    try {
+      pictures.push(await readPicture(file));
+    } catch {
+      toast(`Couldn't open ${file.name || 'that picture'}. Try a JPEG or PNG.`);
+    }
+  }
+  drawPictures();
+}
+
+function drawPictures() {
+  el.attachments.hidden = !pictures.length;
+  el.attachments.replaceChildren(...pictures.map((src, i) => h('div', { class: 'attachment' },
+    h('img', { src, alt: 'Picture to send' }),
+    h('button', {
+      class: 'attachment-remove',
+      title: 'Remove',
+      'aria-label': 'Remove this picture',
+      text: '×',
+      onclick: () => {
+        pictures.splice(i, 1);
+        drawPictures();
+      }
+    }))));
+  updateSendButton();
+}
+
+// A message's pictures (only data: images are shown, whatever a synced chat holds).
+const picturesOf = (msg) => (Array.isArray(msg.images) ? msg.images : []).filter((u) => typeof u === 'string' && u.startsWith('data:image/'));
+
+function showPicture(src) {
+  openModal({ title: 'Picture', wide: true, body: h('img', { class: 'picture-full', src, alt: 'Picture' }) });
 }
 
 function autoGrow() {
@@ -1562,8 +1630,12 @@ function buildSystemPrompt(chat, recalled = [], model = null) {
 
 function historyFor(chat, uptoIndex) {
   let msgs = chat.messages.slice(0, uptoIndex)
-    .filter((m) => !m.error && m.content)
-    .map((m) => ({ role: m.role, content: m.role === 'assistant' ? splitThinking(m.content).answer.trim() : m.content }));
+    .filter((m) => !m.error && (m.content || picturesOf(m).length))
+    .map((m) => {
+      if (m.role === 'assistant') return { role: m.role, content: splitThinking(m.content).answer.trim() };
+      const images = m.role === 'user' ? picturesOf(m) : [];
+      return images.length ? { role: m.role, content: m.content, images } : { role: m.role, content: m.content };
+    });
   const limit = Number(S.settings.historyLimit) || 0;
   if (limit > 0 && msgs.length > limit) msgs = msgs.slice(-limit);
   return msgs;
@@ -1575,7 +1647,8 @@ async function send() {
     return;
   }
   const text = el.input.value.trim();
-  if (!text) return;
+  const images = pictures.slice();
+  if (!text && !images.length) return;
   if (!V.mode) stopReading();
   dropDictation();
   const model = currentModel();
@@ -1595,8 +1668,10 @@ async function send() {
     saveDraft('__new__', '');
   }
 
-  if (!chat.messages.length) chat.title = text.replace(/\s+/g, ' ').slice(0, 60);
-  chat.messages.push({ id: uid(), role: 'user', content: text, createdAt: Date.now() });
+  if (!chat.messages.length) chat.title = (text || 'Picture').replace(/\s+/g, ' ').slice(0, 60);
+  chat.messages.push({ id: uid(), role: 'user', content: text, ...(images.length ? { images } : {}), createdAt: Date.now() });
+  pictures = [];
+  drawPictures();
   el.input.value = '';
   autoGrow();
   saveDraft(chat.id, '');
@@ -1689,7 +1764,7 @@ async function runCompletion(chat) {
 async function generateTitle(chat, model = chat.model) {
   const first = chat.messages.find((m) => m.role === 'user');
   const provisional = chat.title;
-  if (!first) return;
+  if (!first || !first.content) return;  // just a picture: keep "Picture"
   const res = await api.ai.chat({
     requestId: uid(),
     provider: model.provider,
@@ -1755,7 +1830,7 @@ function startEdit(chat, msg, node) {
         text: 'Save & resend',
         onclick: async () => {
           const text = area.value.trim();
-          if (!text) return;
+          if (!text && !picturesOf(msg).length) return;
           const i = chat.messages.indexOf(msg);
           msg.content = text;
           chat.messages = chat.messages.slice(0, i + 1);
@@ -2399,9 +2474,14 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
   const gpuBox = h('div');
   const customHelp = h('div', { class: 'help' });
   const custom = h('input', { class: 'input', placeholder: 'https://huggingface.co/…/model-Q4_0.gguf' });
+  const customVision = h('input', { class: 'input', placeholder: 'Vision file (optional): https://huggingface.co/…/mmproj-F16.gguf' });
+  const visionOpen = new Set(); // models whose "add a vision file" box is open
+  let nativeEngine = false;
 
   // Which engine runs the models, and the matching GPU switch.
   od.engine().then((eng) => {
+    nativeEngine = eng.kind === 'native';
+    customVision.hidden = !nativeEngine;
     if (eng.kind === 'native') {
       engineLine.textContent = eng.gpu
         ? `Engine: llama.cpp (native) · GPU: ${eng.gpu}`
@@ -2465,7 +2545,59 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
     const have = new Map(downloaded.map((m) => [m.url, m]));
     const rows = [...catalog];
     for (const m of downloaded) if (!catalog.some((c) => c.url === m.url)) rows.push({ name: displayModel(m.name), note: 'Custom model', url: m.url, size: m.size });
-    for (const url of Object.keys(downloads)) if (!rows.some((r) => r.url === url)) rows.push({ name: displayModel(url.split('/').pop()), note: 'Custom model', url });
+    // (A vision file being downloaded shows on its model's row.)
+    for (const [url, d] of Object.entries(downloads)) if (!d.vision && !rows.some((r) => r.url === url)) rows.push({ name: displayModel(url.split('/').pop()), note: 'Custom model', url });
+
+    // A downloaded model's pictures: whether it can see them, and adding or removing its vision file.
+    const visionLine = (got) => {
+      if (!nativeEngine) return null;
+      const entry = Object.entries(downloads).find(([, d]) => d.vision === got.name);
+      if (got.vision) {
+        return h('div', { class: 'sub od-vision' },
+          h('span', { text: '🖼 Sees pictures' }),
+          h('button', {
+            class: 'link-btn',
+            text: 'Remove vision file',
+            onclick: async () => {
+              await od.removeVision(got.name);
+              draw();
+            }
+          }));
+      }
+      if (entry && !entry[1].error) {
+        const [url, d] = entry;
+        const pct = d.total ? Math.floor((d.loaded / d.total) * 100) : 0;
+        return h('div', { class: 'sub od-vision' },
+          h('span', { text: `Vision file: ${d.total ? `${pct}%` : 'starting…'}` }),
+          h('button', { class: 'link-btn', text: 'Cancel', onclick: () => od.cancel(url) }));
+      }
+      if (visionOpen.has(got.name)) {
+        const link = h('input', { class: 'input', placeholder: 'https://huggingface.co/…/mmproj-F16.gguf' });
+        return h('div', { class: 'od-vision-add' },
+          h('div', { class: 'help', text: 'To see pictures, a vision model needs its vision file ("mmproj"), made for the same model (same family and size). It\'s usually in the same place as the model, or in the original model\'s GGUF repository.' }),
+          h('div', { class: 'field-row' }, link,
+            h('button', {
+              class: 'btn',
+              text: 'Download',
+              onclick: () => {
+                if (!link.value.trim()) return;
+                visionOpen.delete(got.name);
+                od.downloadVision(got.name, link.value.trim()).catch((err) => toast(errorText(err)));
+              }
+            })),
+          entry && entry[1].error ? h('div', { class: 'sub bad', text: entry[1].error }) : null);
+      }
+      return h('div', { class: 'sub od-vision' },
+        entry && entry[1].error ? h('span', { class: 'bad', text: `Vision file failed: ${entry[1].error}` }) : null,
+        h('button', {
+          class: 'link-btn',
+          text: 'Add a vision file (to see pictures)',
+          onclick: () => {
+            visionOpen.add(got.name);
+            draw();
+          }
+        }));
+    };
 
     list.replaceChildren(...rows.map((m) => {
       const dl = downloads[m.url];
@@ -2499,7 +2631,8 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
         h('div', { class: 'grow' },
           h('div', { class: 'od-name', text: m.name }),
           h('div', { class: 'sub', text: [m.note, formatBytes(got ? got.size : m.size)].filter(Boolean).join(' · ') }),
-          dl && dl.error ? h('div', { class: 'sub bad', text: dl.error }) : null),
+          dl && dl.error ? h('div', { class: 'sub bad', text: dl.error }) : null,
+          got ? visionLine(got) : null),
         right);
     }));
   };
@@ -2527,16 +2660,23 @@ function onDeviceCard(p, changed, bind, field, onCleanup) {
     missingBox,
     list,
     legacyBox,
-    field('Add any GGUF model by link', h('div', { class: 'field-row' },
-      custom,
-      h('button', {
-        class: 'btn',
-        text: 'Download',
-        onclick: () => {
-          od.download(custom.value.trim()).catch((err) => toast(errorText(err)));
-          custom.value = '';
-        }
-      })), null),
+    field('Add any GGUF model by link', h('div', {},
+      h('div', { class: 'field-row' },
+        custom,
+        h('button', {
+          class: 'btn',
+          text: 'Download',
+          onclick: () => {
+            const url = custom.value.trim();
+            const vision = customVision.value.trim();
+            if (!url) return;
+            od.download(url).catch((err) => toast(errorText(err)));
+            if (vision) od.downloadVision(url, vision).catch((err) => toast(errorText(err)));
+            custom.value = '';
+            customVision.value = '';
+          }
+        })),
+      customVision), null),
     customHelp,
     field('Memory for the conversation (context)', bind(ctx, p, 'contextSize', Number),
       'Larger remembers more of a long chat but uses more RAM and is slower.'),
@@ -2667,6 +2807,26 @@ function bindEvents() {
     else send();
   });
   el.micBtn.addEventListener('click', toggleDictation);
+  el.attachBtn.addEventListener('click', () => el.attachInput.click());
+  el.attachInput.addEventListener('change', () => {
+    addPictures(el.attachInput.files);
+    el.attachInput.value = '';
+  });
+  // Pictures pasted into the message box, or dropped on it.
+  el.input.addEventListener('paste', (e) => {
+    const files = [...((e.clipboardData && e.clipboardData.files) || [])].filter((f) => f.type.startsWith('image/'));
+    if (!files.length) return;
+    e.preventDefault();
+    addPictures(files);
+  });
+  el.composer.addEventListener('dragover', (e) => {
+    if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault();
+  });
+  el.composer.addEventListener('drop', (e) => {
+    if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    addPictures(e.dataTransfer.files);
+  });
 
   el.search.addEventListener('input', debounce(() => {
     S.query = el.search.value;

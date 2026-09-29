@@ -198,7 +198,9 @@ function chatToMarkdown(chat) {
   for (const m of chat.messages) {
     // A reasoning model's thinking isn't part of the reply.
     const text = String(m.content || '').replace(/^\s*<think>[\s\S]*?(<\/think>|$)\s*/, '');
-    lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', text, '');
+    // Pictures stay in the file, as data URLs.
+    const pics = (Array.isArray(m.images) ? m.images : []).filter((u) => typeof u === 'string' && u.startsWith('data:image/'));
+    lines.push(`## ${m.role === 'user' ? 'You' : 'Assistant'}`, '', ...pics.map((u, i) => `![Picture ${i + 1}](${u})\n`), text, '');
   }
   return lines.join('\n');
 }
@@ -390,6 +392,17 @@ window.balimda = {
     download: async (url) => (await engine()).download(url),
     cancel: async (url) => (await engine()).cancelDownload(url),
     remove: async (url) => (await engine()).remove(url),
+    // A model's vision file (mmproj), so it can see pictures (native engine only).
+    downloadVision: async (modelName, url) => {
+      const e = await engine();
+      if (!e.downloadVision) throw new Error('Pictures need the native engine, which this phone can\'t run.');
+      // The model by name, or by its download link.
+      return e.downloadVision(/^https?:/i.test(modelName) ? e.modelName(modelName) : modelName, url);
+    },
+    removeVision: async (modelName) => {
+      const e = await engine();
+      if (e.removeVision) await e.removeVision(modelName);
+    },
     downloads: async () => (await engine()).downloadState(),
     missing: async () => {
       const e = await engine();

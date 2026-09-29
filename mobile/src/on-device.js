@@ -192,7 +192,9 @@ export const onDevice = {
       if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
       // A quarter of the context is kept for the reply; the rest is the chat.
-      const history = fitToContext(req.messages, req.system, ctx, Math.min(replyTokens, Math.floor(ctx / 4)));
+      // This engine can't see pictures: text only.
+      const textMessages = req.messages.map(({ role, content }) => ({ role, content: content || '(a picture)' }));
+      const history = fitToContext(textMessages, req.system, ctx, Math.min(replyTokens, Math.floor(ctx / 4)));
       const messages = req.system ? [{ role: 'system', content: req.system }, ...history] : history;
       const params = { messages, stream: true, max_tokens: replyTokens, abortSignal: signal };
       if (req.temperature != null && !Number.isNaN(req.temperature)) params.temperature = req.temperature;

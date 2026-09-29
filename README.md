@@ -127,6 +127,7 @@ The same chat continues on your phone and your computer, even with a different m
 ### A great chat experience
 
 - **Streaming replies** with Stop, Regenerate, and Edit & resend.
+- **Pictures.** Add a photo or screenshot to a message and ask about it: with Claude, a vision model in Ollama or LM Studio, or on your phone with a vision model and its vision file (mmproj), fully offline.
 - **Thinking models, tidied up.** Models that reason first (Qwen 3, DeepSeek-R1, Claude and others, on your phone, in Ollama or LM Studio, or in the cloud) show a collapsed "Thought process" you can open when you're curious.
 - **Assistants** with their own instructions and their own model. Assistant, Code Buddy and Writing Coach come built in; create as many as you like.
 - **Beautiful Markdown and code**, with one-tap copy for code blocks.

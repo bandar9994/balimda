@@ -31,3 +31,17 @@ test('on-device context: keeps the newest messages that fit, starting with the u
   const short = [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }, { role: 'user', content: 'how are you' }];
   assert.deepStrictEqual(fitToContext(short, '', 4096, 1024), short);
 });
+
+test('on-device context: a picture counts as many tokens', async () => {
+  const { fitToContext, PICTURE_TOKENS } = await load();
+  const pic = 'data:image/jpeg;base64,AAAA';
+  const messages = [
+    { role: 'user', content: 'old', images: [pic, pic] },
+    { role: 'assistant', content: 'ok' },
+    { role: 'user', content: 'new', images: [pic] }
+  ];
+  // Room for one picture, not three.
+  const kept = fitToContext(messages, '', PICTURE_TOKENS * 2 + 300, 0);
+  assert.deepStrictEqual(kept, [messages[2]]);
+  assert.strictEqual(fitToContext(messages, '', PICTURE_TOKENS * 4, 0).length, 3);
+});
