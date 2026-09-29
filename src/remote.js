@@ -57,6 +57,24 @@ async function unlock(key, text) {
 
 const newNonce = () => toBase64(globalThis.crypto.getRandomValues(new Uint8Array(16)));
 
+// Waits `ms`, or until `signal` aborts (then throws AbortError).
+function pause(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const done = () => {
+      clearTimeout(t);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    const t = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', done);
+      resolve();
+    }, ms);
+    if (signal) {
+      if (signal.aborted) done();
+      else signal.addEventListener('abort', done, { once: true });
+    }
+  });
+}
+
 // Splits a streamed body into lines.
 async function* lines(body) {
   const reader = body.getReader();
@@ -86,7 +104,7 @@ function modelName(computer, entry, model) {
  * @param getComputers  async () => settings.computers
  * @param fetch         fetch implementation
  */
-function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probeMs = 3000 }) {
+function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probeMs = 3000, quietMs = 60000, resumeMs = 5 * 60 * 1000 }) {
   const found = new Map();   // computer id -> { url, at }
   const models = new Map();  // shown model name -> { computer, provider, model }
   let keyCache = null;       // { syncKey, key }
@@ -107,6 +125,7 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
   }
 
   // One request; calls onEvent for each event and returns the final result.
+  // A lost connection throws a RemoteError with `lost` set.
   async function call(url, op, payload, { onEvent, signal, timeoutMs } = {}) {
     const k = await key();
     const nonce = newNonce();
@@ -117,6 +136,24 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
       signal.addEventListener('abort', abort);
     }
     const timer = timeoutMs ? setTimeout(abort, timeoutMs) : null;
+    // The computer sends a heartbeat while its model is busy. Once one has
+    // come, a long silence means the connection is gone (e.g. the computer
+    // went to sleep), rather than waiting for ever. (Older versions of the
+    // desktop app send none, so this never starts for them.)
+    let watchdog = null;
+    let stalled = false;
+    const watch = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        stalled = true;
+        abort();
+      }, quietMs);
+    };
+    const lost = (why) => {
+      const e = new RemoteError(why);
+      e.lost = true;
+      return e;
+    };
     try {
       const res = await fetch(`${url}${PATH}`, {
         method: 'POST',
@@ -133,17 +170,27 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
         if (!line.trim()) continue;
         const evt = await unlock(k, line.trim());
         if (evt.re !== nonce) throw new RemoteError('mismatched reply');
+        if (evt.t === 'ping' || watchdog) watch();
+        if (evt.t === 'ping') continue;
         if (evt.t === 'done') return evt.result;
         if (evt.t === 'error') {
           const e = new RemoteError(evt.message);
           e.fromComputer = true;
+          e.code = evt.code;
           throw e;
         }
         if (onEvent) onEvent(evt);
       }
-      throw new RemoteError('The connection to your computer closed before the reply finished.');
+      throw lost('The connection to your computer closed before the reply finished.');
+    } catch (err) {
+      if (stalled) throw lost('Your computer stopped answering.');
+      if (signal && signal.aborted) throw err;
+      // fetch's own "network error" / "Failed to fetch": the connection broke.
+      if (err instanceof TypeError) throw lost(`The connection to your computer was lost (${err.message}).`);
+      throw err;
     } finally {
       if (timer) clearTimeout(timer);
+      clearTimeout(watchdog);
       if (signal) signal.removeEventListener('abort', abort);
     }
   }
@@ -197,35 +244,92 @@ function remoteComputers({ getKey, getComputers, fetch = globalThis.fetch, probe
     if (!models.has(req.model)) await listModels().catch(() => {});
     const target = models.get(req.model);
     if (!target) throw new RemoteError(`${req.model} isn't available right now. Check that the computer is on with Balimda open.`);
-    let started = false;
-    const send = async (url) => call(url, 'chat', {
-      provider: target.provider,
-      req: { ...req, model: target.model }
-    }, {
-      signal,
-      onEvent: (evt) => {
-        if (evt.t === 'info') {
-          onInfo(evt.info);
-          return;
-        }
-        if (evt.t !== 'delta') return;
-        started = true;
-        onDelta(evt.text);
+    const name = target.computer.name;
+    // The reply is a job on the computer: if the connection drops, it carries
+    // on there, and the phone picks it up again from the part it got to.
+    // (Older versions of the desktop app don't say "job": then a lost
+    // connection ends the reply, as before.)
+    const job = newNonce();
+    let got = 0;             // parts of the reply received
+    let resumable = false;   // the computer keeps the reply for us
+    let started = false;     // text has arrived
+    let url = null;
+    const onEvent = (evt) => {
+      if (evt.t === 'job') {
+        resumable = true;
+        return;
       }
-    });
-    let url = await locate(target.computer);
-    let result;
+      got++;
+      if (evt.t === 'info') {
+        onInfo(evt.info);
+        return;
+      }
+      if (evt.t !== 'delta') return;
+      started = true;
+      onDelta(evt.text);
+    };
+    const send = (u) => call(u, 'chat', { provider: target.provider, req: { ...req, model: target.model }, job, from: got }, { signal, onEvent });
+    // Stop: the computer stops writing too (it would otherwise wait a few
+    // minutes for the phone to come back).
+    const cancel = () => {
+      if (url && resumable) call(url, 'cancel', { job }, { timeoutMs: 5000 }).catch(() => {});
+    };
+    if (signal) signal.addEventListener('abort', cancel);
     try {
-      result = await send(url);
-    } catch (err) {
-      if (signal && signal.aborted) throw err;
-      if (err.fromComputer || started) throw err;
-      // The computer may have a new address (or went to sleep): look again.
-      url = await locate(target.computer, { fresh: true });
-      result = await send(url);
+      url = await locate(target.computer);
+      let result;
+      try {
+        result = await send(url);
+      } catch (err) {
+        if (signal && signal.aborted) throw err;
+        if (resumable && err.lost) {
+          result = await resume(err);
+        } else if (err.lost && started) {
+          throw new RemoteError(`The connection to ${name} was lost while it was replying. The computer may have gone to sleep, or the phone's Wi-Fi changed. The reply so far is kept: tap Regenerate to try again.`);
+        } else if (err.fromComputer || started) {
+          throw err;
+        } else {
+          // The computer may have a new address (or went to sleep): look again.
+          url = await locate(target.computer, { fresh: true });
+          result = await send(url);
+        }
+      }
+      if (result && result.stats) result.stats = { ...result.stats, engine: `${result.stats.engine || 'Model'} on ${name}` };
+      return result;
+    } finally {
+      if (signal) signal.removeEventListener('abort', cancel);
     }
-    if (result && result.stats) result.stats = { ...result.stats, engine: `${result.stats.engine || 'Model'} on ${target.computer.name}` };
-    return result;
+
+    // Reconnects (the computer's address may have changed) and carries on
+    // from the part the phone got to, for up to resumeMs.
+    async function resume(first) {
+      const until = Date.now() + resumeMs;
+      let wait = 1000;
+      let last = first;
+      onInfo({ kind: 'status', text: `Connection to ${name} lost. Reconnecting…` });
+      try {
+        for (;;) {
+          try {
+            url = await locate(target.computer, { fresh: true });
+            const result = await send(url);
+            return result;
+          } catch (err) {
+            if (signal && signal.aborted) throw err;
+            if (err.code === 'gone') {
+              throw new RemoteError(`${name} no longer has this reply (Balimda was restarted there, or the connection was lost for too long). The reply so far is kept: tap Regenerate to try again.`);
+            }
+            if (err.fromComputer) throw err;
+            last = err;
+          }
+          if (Date.now() + wait > until) break;
+          await pause(wait, signal);
+          wait = Math.min(wait * 2, 10000);
+        }
+      } finally {
+        onInfo({ kind: 'status', text: '' });
+      }
+      throw new RemoteError(`Couldn't reconnect to ${name} to finish the reply (${last.message}). Check that it's on with Balimda open and on the same Wi-Fi. The reply so far is kept: tap Regenerate to try again.`);
+    }
   }
 
   // Pass the user's answer to an agent's request for permission back to the

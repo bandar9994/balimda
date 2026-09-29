@@ -5,12 +5,16 @@
 package com.bandar9994.balimda;
 
 import android.Manifest;
+import android.content.ComponentName;
 import android.content.Intent;
+import android.content.pm.ResolveInfo;
+import android.provider.Settings;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.speech.RecognitionListener;
+import android.speech.RecognitionService;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
@@ -50,6 +54,12 @@ public class VoicePlugin extends Plugin {
     private PluginCall listenCall;
     private String heard = "";
     private long lastLevel = 0;
+    private boolean ready = false;           // the recognizer started listening
+    private boolean triedOther = false;      // another speech service was tried for this listen
+    private boolean stopping = false;        // the user stopped listening
+    // A speech service that worked when the phone's default one didn't start
+    // (some phones' own voice input fails with apps). Kept while the app runs.
+    private static ComponentName workingService = null;
 
     // Speaking.
     private TextToSpeech tts;
@@ -88,8 +98,41 @@ public class VoicePlugin extends Plugin {
 
     private void startListening(PluginCall call) {
         finishListening(null, null);
+        triedOther = false;
+        stopping = false;
+        startRecognizer(call, workingService);
+    }
+
+    // The phone's default speech service, e.g. "com.google.android.tts/…", or null.
+    private ComponentName defaultService() {
+        try {
+            String s = Settings.Secure.getString(getContext().getContentResolver(), "voice_recognition_service");
+            return s == null || s.isEmpty() ? null : ComponentName.unflattenFromString(s);
+        } catch (Exception e) {
+            return null;  // not readable on this phone
+        }
+    }
+
+    // Another installed speech service to try when `failed` didn't start
+    // (Google's first), or null.
+    private ComponentName otherService(ComponentName failed) {
+        List<ResolveInfo> services = getContext().getPackageManager()
+            .queryIntentServices(new Intent(RecognitionService.SERVICE_INTERFACE), 0);
+        ComponentName pick = null;
+        for (ResolveInfo info : services) {
+            if (info.serviceInfo == null) continue;
+            ComponentName c = new ComponentName(info.serviceInfo.packageName, info.serviceInfo.name);
+            if (c.equals(failed)) continue;
+            if (pick == null || c.getPackageName().startsWith("com.google.")) pick = c;
+        }
+        return pick;
+    }
+
+    // Starts listening with `service` (null = the phone's default).
+    private void startRecognizer(PluginCall call, ComponentName service) {
         String lang = call.getString("lang", "en-US");
         boolean offline = Boolean.TRUE.equals(call.getBoolean("offline", false));
+        final ComponentName using = service != null ? service : defaultService();
 
         if (offline) {
             if (Build.VERSION.SDK_INT < 31 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(getContext())) {
@@ -102,7 +145,9 @@ public class VoicePlugin extends Plugin {
                 call.reject("This phone has no speech recognition service. Install or enable Google (or \"Speech Services by Google\") and try again.", "unavailable");
                 return;
             }
-            recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+            recognizer = service != null
+                ? SpeechRecognizer.createSpeechRecognizer(getContext(), service)
+                : SpeechRecognizer.createSpeechRecognizer(getContext());
         }
 
         Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
@@ -116,9 +161,12 @@ public class VoicePlugin extends Plugin {
 
         listenCall = call;
         heard = "";
+        ready = false;
         final SpeechRecognizer current = recognizer;
         recognizer.setRecognitionListener(new RecognitionListener() {
             @Override public void onReadyForSpeech(Bundle params) {
+                ready = true;
+                if (!offline && using != null && triedOther) workingService = using;
                 emit("state", "listening");
             }
             @Override public void onBeginningOfSpeech() {}
@@ -147,6 +195,25 @@ public class VoicePlugin extends Plugin {
             }
             @Override public void onError(int error) {
                 if (current != recognizer) return;
+                // The speech service failed before it listened at all: try another
+                // one once, then say what went wrong (not "didn't catch that").
+                if (!ready && !stopping && heard.isEmpty() && !offline && isQuietError(error)) {
+                    ComponentName other = triedOther ? null : otherService(using);
+                    if (other != null) {
+                        triedOther = true;
+                        destroyRecognizer();
+                        main.post(() -> {
+                            if (listenCall == call) startRecognizer(call, other);
+                        });
+                        return;
+                    }
+                    workingService = null;
+                    finishListening(null, "The phone's speech recognition didn't start (error " + error
+                        + (using != null ? ", " + using.getPackageName() : "") + "). Make sure \"Speech Services by Google\" "
+                        + "(or the Google app) is installed and up to date, and set it as the phone's voice input "
+                        + "(Settings → search for \"voice input\"). Or turn on \"Private voice\" in Balimda's Settings → Voice.");
+                    return;
+                }
                 onListenError(error, intent, offline, lang);
             }
             @Override public void onEvent(int eventType, Bundle params) {}
@@ -200,8 +267,13 @@ public class VoicePlugin extends Plugin {
         }
     }
 
-    // Ends listening: resolves the call with `text`, or rejects it with `error`.
-    private void finishListening(String text, String error) {
+    // Errors that otherwise mean "nothing was said".
+    private static boolean isQuietError(int error) {
+        return error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+            || error == SpeechRecognizer.ERROR_CLIENT;
+    }
+
+    private void destroyRecognizer() {
         if (recognizer != null) {
             try {
                 recognizer.destroy();
@@ -210,6 +282,11 @@ public class VoicePlugin extends Plugin {
             }
             recognizer = null;
         }
+    }
+
+    // Ends listening: resolves the call with `text`, or rejects it with `error`.
+    private void finishListening(String text, String error) {
+        destroyRecognizer();
         PluginCall call = listenCall;
         listenCall = null;
         if (call == null) return;
@@ -226,6 +303,7 @@ public class VoicePlugin extends Plugin {
     public void stopListening(PluginCall call) {
         // The recognizer then sends what it heard (onResults).
         main.post(() -> {
+            stopping = true;
             if (recognizer != null) recognizer.stopListening();
             call.resolve();
         });

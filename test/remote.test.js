@@ -213,3 +213,217 @@ test('a phone that drops the connection mid-request doesn\'t upset the computer'
     await pc.server.close();
   }
 });
+
+// A connection between the phone and the computer that can be cut, like a
+// Wi-Fi drop: the computer's server keeps running.
+function cuttable(port) {
+  const net = require('net');
+  const socks = new Set();
+  const srv = net.createServer((c) => {
+    const u = net.connect(port, '127.0.0.1');
+    socks.add(c);
+    socks.add(u);
+    const kill = () => {
+      c.destroy();
+      u.destroy();
+    };
+    c.pipe(u);
+    u.pipe(c);
+    for (const s of [c, u]) {
+      s.on('error', kill);
+      s.on('close', kill);
+    }
+  });
+  return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve({
+    port: srv.address().port,
+    cut: () => {
+      for (const s of socks) s.destroy();
+      socks.clear();
+    },
+    close: () => {
+      for (const s of socks) s.destroy();
+      srv.close();
+    }
+  })));
+}
+
+// A computer whose model writes `words`, one every `delay` ms.
+async function writer(key, words, { delay = 20, port = 0 } = {}) {
+  const runs = { count: 0, aborted: 0 };
+  const server = await startRemoteServer({
+    port,
+    host: '127.0.0.1',
+    getKey: async () => linkKey(key),
+    handlers: {
+      hello: async () => ({}),
+      models: async () => [{ provider: 'ollama', label: 'Ollama', short: 'Ollama', models: ['m'] }],
+      chat: async (_msg, { emit, signal }) => {
+        runs.count++;
+        let text = '';
+        for (const w of words) {
+          if (signal.aborted) {
+            runs.aborted++;
+            throw new Error('aborted');
+          }
+          await sleep(delay);
+          text += w;
+          emit({ t: 'delta', text: w });
+        }
+        return { text, stopReason: 'end_turn' };
+      }
+    }
+  });
+  return { server, runs };
+}
+
+const words = Array.from({ length: 40 }, (_, i) => `w${i} `);
+
+test('a reply picks up where it stopped when the connection comes back', async () => {
+  const key = syncKey();
+  const { server, runs } = await writer(key, words);
+  const link = await cuttable(server.port);
+  try {
+    const phone = client(key, { desk: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: link.port, enabled: true } }, { resumeMs: 10000 });
+    await phone.listModels();
+    const pieces = [];
+    const statuses = [];
+    let cut = false;
+    const r = await phone.streamChat({}, { model: 'm (Desk)', messages: [] }, (t) => {
+      pieces.push(t);
+      if (!cut && pieces.join('').length > 30) {
+        cut = true;
+        link.cut(); // the Wi-Fi drops mid-reply
+      }
+    }, undefined, (info) => statuses.push(info.text));
+    assert.ok(cut);
+    assert.strictEqual(pieces.join(''), words.join(''), 'nothing lost or repeated');
+    assert.strictEqual(r.text, words.join(''));
+    assert.strictEqual(runs.count, 1, 'the model wrote the reply once');
+    assert.deepStrictEqual(statuses, ['Connection to Desk lost. Reconnecting…', '']);
+  } finally {
+    link.close();
+    await server.close();
+  }
+});
+
+test('stopping on the phone stops the reply on the computer, even though it keeps replies for the phone', async () => {
+  const key = syncKey();
+  const { server, runs } = await writer(key, words);
+  try {
+    const phone = client(key, { desk: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: server.port, enabled: true } });
+    await phone.listModels();
+    const controller = new AbortController();
+    const pieces = [];
+    const run = phone.streamChat({}, { model: 'm (Desk)', messages: [] }, (t) => {
+      pieces.push(t);
+      if (pieces.length === 3) controller.abort();
+    }, controller.signal);
+    await assert.rejects(run);
+    await sleep(200);
+    assert.strictEqual(runs.aborted, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test('if the computer restarted, the phone says the reply is gone instead of starting over', async () => {
+  const key = syncKey();
+  let { server, runs } = await writer(key, words);
+  const port = server.port;
+  const link = await cuttable(port);
+  try {
+    const phone = client(key, { desk: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: link.port, enabled: true } }, { resumeMs: 10000 });
+    await phone.listModels();
+    const pieces = [];
+    let restarted = false;
+    const run = phone.streamChat({}, { model: 'm (Desk)', messages: [] }, (t) => {
+      pieces.push(t);
+      if (!restarted && pieces.length >= 3) {
+        restarted = true;
+        (async () => {
+          await server.close();
+          ({ server, runs } = await writer(key, words, { port }));
+        })();
+      }
+    });
+    await assert.rejects(run, /Desk no longer has this reply/);
+    assert.strictEqual(runs.count, 0, 'the restarted computer didn\'t start the reply again');
+    assert.ok(pieces.length >= 3);
+  } finally {
+    link.close();
+    await server.close();
+  }
+});
+
+test('a reply cut off for good says so after trying to reconnect, and keeps what came', async () => {
+  const key = syncKey();
+  const { server } = await writer(key, words, { delay: 50 });
+  const phone = client(key, { desk: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: server.port, enabled: true } }, { resumeMs: 1500 });
+  await phone.listModels();
+  const pieces = [];
+  let closed = false;
+  const run = phone.streamChat({}, { model: 'm (Desk)', messages: [] }, (t) => {
+    pieces.push(t);
+    if (!closed && pieces.length >= 2) {
+      closed = true;
+      server.close(); // e.g. the computer went to sleep and didn't come back
+    }
+  });
+  await assert.rejects(run, /Couldn't reconnect to Desk to finish the reply/);
+  assert.ok(pieces.join('').startsWith('w0 w1 '));
+});
+
+test('a computer that goes quiet after its heartbeat is reported, not waited on for ever', async () => {
+  const key = syncKey();
+  const server = await startRemoteServer({
+    port: 0,
+    host: '127.0.0.1',
+    heartbeatMs: 60 * 60 * 1000,
+    getKey: async () => linkKey(key),
+    handlers: {
+      hello: async () => ({}),
+      models: async () => [{ provider: 'ollama', label: 'Ollama', short: 'Ollama', models: ['m'] }],
+      chat: async (_msg, { emit, signal }) => {
+        emit({ t: 'ping' });
+        await new Promise((r) => signal.addEventListener('abort', r));
+        throw new Error('aborted');
+      }
+    }
+  });
+  try {
+    const phone = client(key, { desk: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: server.port, enabled: true } }, { quietMs: 300, resumeMs: 1000 });
+    await phone.listModels();
+    await assert.rejects(phone.streamChat({}, { model: 'm (Desk)', messages: [] }, () => {}), /Couldn't reconnect to Desk.*stopped answering/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('heartbeats keep a slow model\'s reply going', async () => {
+  const key = syncKey();
+  const server = await startRemoteServer({
+    port: 0,
+    host: '127.0.0.1',
+    heartbeatMs: 50,
+    getKey: async () => linkKey(key),
+    handlers: {
+      hello: async () => ({}),
+      models: async () => [{ provider: 'ollama', label: 'Ollama', short: 'Ollama', models: ['m'] }],
+      chat: async (_msg, { emit }) => {
+        await sleep(500); // thinking, with heartbeats and no text
+        emit({ t: 'delta', text: 'Done' });
+        return { text: 'Done', stopReason: 'end_turn' };
+      }
+    }
+  });
+  try {
+    const phone = client(key, { desk: { id: 'desk', name: 'Desk', addrs: ['127.0.0.1'], port: server.port, enabled: true } }, { quietMs: 300 });
+    await phone.listModels();
+    const pieces = [];
+    const r = await phone.streamChat({}, { model: 'm (Desk)', messages: [] }, (t) => pieces.push(t));
+    assert.strictEqual(r.text, 'Done');
+    assert.strictEqual(pieces.join(''), 'Done');
+  } finally {
+    await server.close();
+  }
+});

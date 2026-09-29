@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS = {
   memory: '',
   computers: {},
   shareWithPhone: false,
+  shareKeepAwake: true,   // keep the computer awake while sharing with the phone
   // Voice chat (per device, not synced): the language you talk in ('' = the
   // device's language), recognising speech only on the device, reading
   // replies aloud, and how fast they're read.
