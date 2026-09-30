@@ -38,6 +38,9 @@ header nav { margin-left: auto; display: flex; gap: 18px; font-size: 15px; white
 .showcase { padding: 32px 20px 4px; text-align: center; }
 .showcase h2 { font-size: 28px; margin: 0 0 4px; }
 .showcase .sub { color: var(--dim); font-size: 16px; margin: 6px auto 12px; max-width: 620px; }
+.showcase .points { list-style: none; padding: 0; margin: 14px auto 8px; max-width: 900px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; text-align: left; }
+.showcase .points li { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; font-size: 14px; color: var(--dim); }
+.showcase .points strong { color: var(--text); }
 .download h2 { font-size: 28px; margin: 0 0 4px; }
 .download .sub { color: var(--dim); font-size: 15px; margin: 6px 0 16px; }
 .platforms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; text-align: left; }

@@ -45,6 +45,12 @@ The easy way: let the Balimda desktop app answer for your phone.
 
 The phone finds the computer through sync, so there are no addresses to type. Everything the computer can use works: Ollama, LM Studio, and Claude or OpenAI with the computer's API keys, which never leave the computer. The connection is encrypted with a key derived from your sync passphrase, so only your own devices can use it. Balimda must be open on the computer, and both devices must be on the same Wi-Fi, or anywhere if both are on [Tailscale](https://tailscale.com).
 
+A few things that make it dependable:
+
+- **The computer stays awake while sharing**, so it's there when you reach for your phone (its screen can still turn off). You can turn this off under **Keep this computer awake while sharing**. It always stays awake while it's answering the phone.
+- **A dropped connection doesn't lose the reply.** If the phone's Wi-Fi drops halfway through a reply, the computer keeps writing it, and the phone shows "Reconnecting…" and carries on from where the text stopped, for up to five minutes. If it can't reconnect, the text so far stays and **Regenerate** tries again.
+- **Pictures work too:** add a photo on the phone and a vision model on the computer (in Ollama, LM Studio, or Claude) can answer about it.
+
 Or connect to the servers directly, on the same Wi-Fi:
 
 - **Ollama**: on the PC, set the environment variables `OLLAMA_HOST=0.0.0.0` and `OLLAMA_ORIGINS=*`, then restart Ollama. In Balimda on the phone, enable **Ollama** and enter `http://<your PC's IP>:11434`.

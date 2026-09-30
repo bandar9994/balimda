@@ -7,13 +7,15 @@
 ### Your private AI, on every device you own.
 
 Start a chat on your computer with a big model, continue the <b>same chat</b> on your phone with a small one,<br>
-and finish it back at your desk. Your chats, memory and assistants stay in sync, encrypted end to end.
+and finish it back at your desk. Or let your phone use your computer's big models from anywhere.<br>
+Your chats, memory and assistants stay in sync, encrypted end to end.
 
 [![Android](https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white)](#download)
 [![Windows](https://img.shields.io/badge/Windows-0078D4?logo=windows&logoColor=white)](#download)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#download)
 [![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](#download)
 [![Works offline](https://img.shields.io/badge/works-offline-5b5bd6)](#run-ai-anywhere)
+[![Your phone uses your PC's models](https://img.shields.io/badge/phone-uses%20your%20PC%27s%20models-5b5bd6)](#your-computers-brain-in-your-pocket)
 [![Free for personal use](https://img.shields.io/badge/free-for%20personal%20use-5b5bd6)](#license)
 [![Works with Hermes Agent](https://img.shields.io/badge/works%20with-Hermes%20Agent-5b5bd6)](#your-hermes-agent-in-a-real-app)
 [![Business license available](https://img.shields.io/badge/business%20license-available-2b2a6e)](#for-businesses)
@@ -48,6 +50,26 @@ Balimda keeps **the same conversation** on your phone and your computers, even w
 - **The whole conversation goes along**, so a small phone model picks up right where the big model left off.
 - **Nothing is lost.** Messages added on two devices before they synced are merged, and deleting a chat deletes it everywhere.
 - **Memory and assistants follow you too**, so every device knows you just as well.
+
+## Your computer's brain, in your pocket
+
+Your phone can use **every model on your computer**: the big 27B model in Ollama or LM Studio, and even Claude or OpenAI on your computer's API keys. Turn on one switch on the computer, then pick a model under **On your computer** on the phone. That's it.
+
+<div align="center">
+<img src="docs/images/phones.png" alt="Balimda on Android, chatting with qwen3.5:27b running on the computer" width="100%">
+<br><sub>A phone chatting with the computer's Qwen 3.5 27B, at 30 tokens a second · every chat, synced · code with syntax and copy</sub>
+</div>
+
+- **Nothing to set up on the phone.** It finds your computer through sync: no IP addresses, ports or server settings to type.
+- **A small phone, a big brain.** Models far too big for a phone answer on it at your computer's full speed, and the phone's battery barely notices.
+- **Every model the computer can use.** Ollama, LM Studio and other local servers, plus Claude and OpenAI with the computer's API keys, which never leave the computer. [Hermes Agent](#your-hermes-agent-in-a-real-app) too, approvals included.
+- **Private.** The connection is encrypted with a key from your sync passphrase, so only your own devices can use it, and it never goes through anyone's server.
+- **At home or away.** On your home Wi-Fi, or anywhere with [Tailscale](https://tailscale.com).
+- **Replies that don't get lost.** If the Wi-Fi drops halfway through a reply, the computer keeps writing it, and the phone picks up exactly where it stopped once it's back.
+- **Ready when you are.** The computer stays awake while it's sharing (its screen can still turn off), so it's there whenever you reach for your phone.
+- **Pictures too.** Snap a photo on your phone and ask a vision model on your computer about it.
+
+Setup takes a minute: see [Using the models on your PC from your phone](docs/GUIDE.md#using-the-models-on-your-pc-from-your-phone).
 
 ## Your Hermes Agent, in a real app
 
@@ -101,7 +123,7 @@ The same chat continues on your phone and your computer, even with a different m
 - **On your computer.** Use [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), llama.cpp, Jan, vLLM or any OpenAI-compatible server. Big models like Qwen 27B run at full speed on your own hardware.
 - **Your Hermes Agent, in a real app.** Connect [Hermes Agent](https://github.com/NousResearch/hermes-agent) and chat with it from your phone and computers instead of WhatsApp or Telegram. You see each tool it runs as it works, and when it wants to do something risky, Balimda shows **Allow once**, **Allow for this chat**, **Always allow** or **Deny**. Hermes keeps its own memory, so Balimda's isn't sent unless you turn that on.
 - **In the cloud, when you want it.** Anthropic Claude and OpenAI, with your own API key. Keys are stored on your device, encrypted with your system keychain on desktop.
-- **Your phone, your computer's brain.** Turn on one switch on your computer, and your phone can chat with every model the computer has, including cloud models on the computer's API keys. The phone finds the computer through sync, with nothing to type, over an encrypted connection only your devices can use. It works on your home Wi-Fi, or anywhere with [Tailscale](https://tailscale.com).
+- **Your phone, your computer's brain.** Turn on one switch on your computer, and your phone can chat with every model the computer has, including cloud models on the computer's API keys. The phone finds the computer through sync, with nothing to type, over an encrypted connection only your devices can use. It works on your home Wi-Fi, or anywhere with [Tailscale](https://tailscale.com). [More about it](#your-computers-brain-in-your-pocket).
 - **The right model on each device.** Every chat remembers which model to use on each device: a small, fast model on the phone and a 27B model on the PC, in the same conversation.
 
 ### Memory that grows with you
@@ -134,13 +156,6 @@ The same chat continues on your phone and your computer, even with a different m
 - **Arabic and English.** Right-to-left text lays out naturally, and automatic memory and the look-back through earlier chats understand Arabic.
 - **See the speed.** Replies from local models show tokens per second, and on the phone whether they ran on the GPU or the CPU.
 - **Light and dark themes**, and keyboard shortcuts on desktop.
-
-<br>
-
-<div align="center">
-<img src="docs/images/phones.png" alt="Balimda on Android: using a computer's model, the chat list, and code" width="100%">
-<br><sub>On Android: chatting with the computer's 27B model and recalling an earlier chat · every chat, synced · code with syntax and copy</sub>
-</div>
 
 <br>
 
