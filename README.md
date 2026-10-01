@@ -17,7 +17,12 @@ Your chats, memory and assistants stay in sync, encrypted end to end.
 [![Works offline](https://img.shields.io/badge/works-offline-5b5bd6)](#run-ai-anywhere)
 [![Your phone uses your PC's models](https://img.shields.io/badge/phone-uses%20your%20PC%27s%20models-5b5bd6)](#your-computers-brain-in-your-pocket)
 [![Free for personal use](https://img.shields.io/badge/free-for%20personal%20use-5b5bd6)](#license)
+<br>
 [![Works with Hermes Agent](https://img.shields.io/badge/works%20with-Hermes%20Agent-5b5bd6)](#your-hermes-agent-in-a-real-app)
+[![Works with Ollama](https://img.shields.io/badge/works%20with-Ollama-5b5bd6)](#run-ai-anywhere)
+[![Works with LM Studio](https://img.shields.io/badge/works%20with-LM%20Studio-5b5bd6)](#run-ai-anywhere)
+[![Works with the OpenAI API (ChatGPT models)](https://img.shields.io/badge/works%20with-OpenAI%20API%20%28ChatGPT%20models%29-5b5bd6)](#run-ai-anywhere)
+<br>
 [![Business license available](https://img.shields.io/badge/business%20license-available-2b2a6e)](#for-businesses)
 [![Support on Ko-fi](https://img.shields.io/badge/support-Ko--fi-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/bandaraltariqi)
 
