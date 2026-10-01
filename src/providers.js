@@ -330,9 +330,12 @@ async function hermesError(res) {
   return httpError(res);
 }
 
-const hermes = {
+// `doFetch` is the phone's own network code in the mobile app (see
+// src/native-fetch.js): Hermes only answers web pages from origins it lists,
+// and the app's web view always sends one.
+const hermesProvider = (doFetch = (...args) => fetch(...args)) => ({
   async listModels(cfg) {
-    const res = await fetch(`${trimSlash(cfg.baseUrl)}/models`, { headers: hermesHeaders(cfg) });
+    const res = await doFetch(`${trimSlash(cfg.baseUrl)}/models`, { headers: hermesHeaders(cfg) });
     if (!res.ok) throw await hermesError(res);
     const data = await res.json();
     const ids = (data.data || []).map((m) => m.id);
@@ -341,7 +344,7 @@ const hermes = {
 
   // onInfo receives { kind: 'tool' | 'approval' | 'status', ... } as the agent works.
   async streamChat(cfg, req, onDelta, signal, onInfo = () => {}) {
-    const res = await fetch(`${trimSlash(cfg.baseUrl)}/chat/completions`, {
+    const res = await doFetch(`${trimSlash(cfg.baseUrl)}/chat/completions`, {
       method: 'POST',
       headers: hermesHeaders(cfg),
       body: JSON.stringify({ model: req.model, messages: withSystem(req.system, textOnly(req.messages)), stream: true }),
@@ -413,7 +416,7 @@ const hermes = {
 
   // choice: 'once' | 'session' | 'always' | 'deny'
   async approve(cfg, { runId, choice, approvalId }) {
-    const res = await fetch(`${trimSlash(cfg.baseUrl)}/runs/${encodeURIComponent(runId)}/approval`, {
+    const res = await doFetch(`${trimSlash(cfg.baseUrl)}/runs/${encodeURIComponent(runId)}/approval`, {
       method: 'POST',
       headers: hermesHeaders(cfg),
       body: JSON.stringify(approvalId ? { choice, request_id: approvalId } : { choice })
@@ -421,7 +424,7 @@ const hermes = {
     if (!res.ok) throw await hermesError(res);
     return true;
   }
-};
+});
 
 // ---- Anthropic (Claude) ----------------------------------------------------
 
@@ -509,7 +512,7 @@ const anthropic = {
 const PROVIDERS = {
   ollama: { label: 'Ollama (local)', impl: ollama },
   openaiCompatible: { label: 'LM Studio / OpenAI-compatible (local)', impl: openaiLike({ sendSampling: true }) },
-  hermes: { label: 'Hermes Agent', impl: hermes },
+  hermes: { label: 'Hermes Agent', impl: hermesProvider() },
   anthropic: { label: 'Anthropic Claude', impl: anthropic },
   openai: { label: 'OpenAI', impl: openaiLike({ sendSampling: false }) }
 };
@@ -536,4 +539,4 @@ function normalizeMessages(messages) {
   return out;
 }
 
-module.exports = { PROVIDERS, normalizeMessages, ANTHROPIC_DEFAULT_MODELS, readLines, readSse };
+module.exports = { PROVIDERS, hermesProvider, normalizeMessages, ANTHROPIC_DEFAULT_MODELS, readLines, readSse };
