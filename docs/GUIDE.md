@@ -151,7 +151,7 @@ While Hermes works, each tool it runs appears above its answer (for example "ðŸ’
 
 **Memory:** Hermes has its own memory, so Balimda's memory and earlier-chat excerpts aren't sent to it, and Balimda doesn't learn facts from Hermes chats. To send them anyway, turn on **Also give Hermes my Balimda memory and earlier chats** in the Hermes card. Chat titles for Hermes chats are made with one of your local models, if you have one.
 
-**On your phone:** turn on **Let my phone use this computer's models** on the computer that has Hermes set up. On the phone, pick **hermes-agent (your computer, Hermes Agent)** under **On your computer**. Hermes stays private on the computer, and approvals work from the phone too. To connect the phone to Hermes directly instead, also set `API_SERVER_HOST=0.0.0.0` and `API_SERVER_CORS_ORIGINS=https://localhost` in `~/.hermes/.env`, and enter `http://<computer IP>:8642/v1` and the key in the phone's Hermes card. Only do this on a network you trust.
+**On your phone:** turn on **Let my phone use this computer's models** on the computer that has Hermes set up. On the phone, pick **hermes-agent (your computer, Hermes Agent)** under **On your computer**. Hermes stays private on the computer, and approvals work from the phone too. To connect the phone to Hermes directly instead, also set `API_SERVER_HOST=0.0.0.0` in `~/.hermes/.env` (and allow port 8642 through the computer's firewall), and enter `http://<computer IP>:8642/v1` and the key in the phone's Hermes card. Only do this on a network you trust.
 
 ### Using it away from home
 

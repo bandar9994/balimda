@@ -5,7 +5,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
-const { PROVIDERS } = require('../src/providers');
+const { PROVIDERS, hermesProvider } = require('../src/providers');
+const { makeNativeFetch } = require('../src/native-fetch');
 const { linkKey, remoteComputers } = require('../src/remote');
 const { startRemoteServer } = require('../src/remote-server');
 const { toBase64 } = require('../src/sync');
@@ -21,6 +22,13 @@ function fakeHermes({ script = 'full' } = {}) {
   const seen = { chats: [], approvals: [], auth: [] };
   let resolveApproval;
   const server = http.createServer((req, res) => {
+    // Like Hermes' CORS middleware: a web page's request (it has an Origin)
+    // is refused unless API_SERVER_CORS_ORIGINS lists that origin.
+    seen.origins = [...(seen.origins || []), req.headers.origin];
+    if (req.headers.origin) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: { message: 'Origin not allowed' } }));
+    }
     seen.auth.push(req.headers.authorization);
     if (req.headers.authorization !== `Bearer ${KEY}`) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -147,5 +155,131 @@ test('Hermes through "On your computer": the phone sees the steps and answers ap
   } finally {
     await pc.close();
     h.server.close();
+  }
+});
+
+// The phone's "Net" plugin (NetPlugin.java / NetPlugin.swift), played by
+// Node's own http: no Origin header, the answer passed on piece by piece.
+// `early` sends the whole answer before request() returns, which the phone's
+// bridge may also do.
+function fakeNet({ early = false } = {}) {
+  const listeners = new Set();
+  const running = new Map();
+  const emit = (evt) => setImmediate(() => { for (const l of listeners) l(evt); });
+  const net = {
+    calls: [],
+    cancelled: [],
+    async addListener(name, fn) {
+      assert.strictEqual(name, 'net');
+      listeners.add(fn);
+      return { remove: async () => listeners.delete(fn) };
+    },
+    request({ id, url, method, headers, body }) {
+      net.calls.push({ id, url, method, headers, body });
+      return new Promise((resolve, reject) => {
+        let answered = false;
+        const req = http.request(url, { method, headers }, (res) => {
+          answered = true;
+          const head = { status: res.statusCode, headers: res.headers };
+          const pieces = [];
+          res.on('data', (b) => (early ? pieces.push(b) : emit({ id, data: b.toString('base64') })));
+          res.on('end', () => {
+            if (early) {
+              for (const b of pieces) emit({ id, data: b.toString('base64') });
+              emit({ id, done: true });
+              setTimeout(() => resolve(head), 20);
+            } else {
+              emit({ id, done: true });
+            }
+          });
+          res.on('error', (err) => emit({ id, error: err.message }));
+          if (!early) resolve(head);
+        });
+        running.set(id, req);
+        req.on('error', (err) => (answered ? emit({ id, error: err.message }) : reject(new Error(`Couldn't connect to the server (${err.code})`))));
+        if (body != null) req.write(body);
+        req.end();
+      });
+    },
+    async cancel({ id }) {
+      net.cancelled.push(id);
+      const req = running.get(id);
+      if (req) req.destroy();
+    }
+  };
+  return net;
+}
+
+test('Hermes from the phone directly: refused through the web view, works through the phone\'s own network code', async () => {
+  const h = await fakeHermes();
+  try {
+    const cfg = { baseUrl: h.url, apiKey: KEY };
+    // The web view adds the app's Origin to every request.
+    const webView = hermesProvider((url, init = {}) => fetch(url, { ...init, headers: { ...(init.headers || {}), Origin: 'https://localhost' } }));
+    await assert.rejects(webView.listModels(cfg), /didn't accept|HTTP 403/);
+
+    const net = fakeNet();
+    const phone = hermesProvider(makeNativeFetch(net));
+    assert.deepStrictEqual(await phone.listModels(cfg), ['hermes-agent']);
+    const kinds = [];
+    let text = '';
+    const result = await phone.streamChat(cfg, { model: 'hermes-agent', messages: [{ role: 'user', content: 'Clean up and list my project — مرحبا' }] },
+      (piece) => { text += piece; }, undefined,
+      (info) => {
+        kinds.push(info.kind);
+        if (info.kind === 'approval') phone.approve(cfg, { runId: info.runId, choice: 'once', approvalId: info.approvalId });
+      });
+    assert.strictEqual(text, '<think>I should look at the files.</think>\n\nCleaned the build folder. Your project has src/ and tests/.');
+    assert.strictEqual(result.stopReason, 'end_turn');
+    assert.deepStrictEqual(kinds, ['tool', 'tool', 'status', 'approval', 'tool', 'tool']);
+    assert.deepStrictEqual(h.seen.approvals, [{ choice: 'once' }]);
+    assert.strictEqual(h.seen.chats[0].messages[0].content, 'Clean up and list my project — مرحبا');
+    // What the plugin was asked to do.
+    const chat = net.calls.find((c) => c.url.endsWith('/chat/completions'));
+    assert.strictEqual(chat.method, 'POST');
+    assert.strictEqual(chat.headers.authorization, `Bearer ${KEY}`);
+    assert.strictEqual(chat.headers['content-type'], 'application/json');
+    assert.strictEqual(typeof chat.body, 'string');
+    assert.ok(h.seen.origins.slice(1).every((o) => o === undefined), 'no Origin from the phone\'s own requests');
+
+    // A wrong key still gets Hermes' own answer.
+    await assert.rejects(phone.listModels({ ...cfg, apiKey: 'wrong' }), /didn't accept the API key/);
+  } finally {
+    h.server.close();
+  }
+});
+
+test('Phone network code: an answer that arrives before request() returns, Stop, and no server', async () => {
+  const h = await fakeHermes();
+  try {
+    const cfg = { baseUrl: h.url, apiKey: KEY };
+    // The whole answer comes in before request() resolves.
+    const early = hermesProvider(makeNativeFetch(fakeNet({ early: true })));
+    assert.deepStrictEqual(await early.listModels(cfg), ['hermes-agent']);
+
+    // Stop while Hermes waits for an approval: the request is cancelled.
+    const net = fakeNet();
+    const phone = hermesProvider(makeNativeFetch(net));
+    const controller = new AbortController();
+    const reply = phone.streamChat(cfg, { model: 'hermes-agent', messages: [{ role: 'user', content: 'go' }] }, () => {}, controller.signal,
+      (info) => { if (info.kind === 'approval') controller.abort(); });
+    await assert.rejects(reply, (err) => err.name === 'AbortError');
+    await sleep(20);
+    assert.strictEqual(net.cancelled.length, 1);
+
+    // Already stopped: nothing is sent.
+    const calls = net.calls.length;
+    await assert.rejects(makeNativeFetch(net)(`${h.url}/models`, { signal: AbortSignal.abort() }), (err) => err.name === 'AbortError');
+    assert.strictEqual(net.calls.length, calls);
+
+    // No server: a network error, like fetch's.
+    const port = h.server.address().port;
+    await new Promise((r) => {
+      h.server.close(r);
+      h.server.closeAllConnections();
+    });
+    await assert.rejects(makeNativeFetch(fakeNet())(`http://127.0.0.1:${port}/v1/models`), (err) => err instanceof TypeError && err.explained && /Couldn't connect/.test(err.message));
+  } finally {
+    if (h.server.listening) h.server.close();
   }
 });

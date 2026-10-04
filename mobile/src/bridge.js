@@ -11,7 +11,8 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { App } from '@capacitor/app';
 import { Share } from '@capacitor/share';
 import { Storage } from '../../src/storage.js';
-import { PROVIDERS, normalizeMessages } from '../../src/providers.js';
+import { PROVIDERS, hermesProvider, normalizeMessages } from '../../src/providers.js';
+import { makeNativeFetch } from '../../src/native-fetch.js';
 import { Sync, SyncError } from '../../src/sync.js';
 import { remoteComputers } from '../../src/remote.js';
 import * as local from './on-device.js';
@@ -143,6 +144,12 @@ const computers = remoteComputers({
   getComputers: async () => (await (await ready).getSettings()).computers
 });
 
+// Hermes Agent through the phone's own network code: Hermes refuses the web
+// view's requests unless its API_SERVER_CORS_ORIGINS lists the app.
+const hermes = isNative && Capacitor.isPluginAvailable('Net')
+  ? { ...PROVIDERS.hermes, impl: hermesProvider(makeNativeFetch(registerPlugin('Net'))) }
+  : PROVIDERS.hermes;
+
 const providers = {
   onDevice: {
     label: 'On this device (offline)',
@@ -155,7 +162,8 @@ const providers = {
     label: 'On your computer',
     impl: computers
   },
-  ...PROVIDERS
+  ...PROVIDERS,
+  hermes
 };
 
 // ---- helpers ---------------------------------------------------------------
@@ -326,7 +334,7 @@ window.balimda = {
       } catch (err) {
         if (controller.signal.aborted) return { ok: true, aborted: true };
         let message = err.message || String(err);
-        if (err instanceof TypeError && /fetch|network|load failed/i.test(message)) {
+        if (err instanceof TypeError && !err.explained && /fetch|network|load failed/i.test(message)) {
           message = `Couldn't reach the server (${message}). Check the address in Settings, and that the server allows connections from other devices.`;
         }
         return { ok: false, error: message };
