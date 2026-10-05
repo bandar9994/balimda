@@ -85,4 +85,14 @@ jobs:
           fi
           gh release upload android-latest Balimda-android.apk --clobber
           gh release delete-asset android-latest Pal-android.apk --yes 2>/dev/null || true
+          # The same APK with its version in the name (the app's versionName,
+          # 1.0.<run number>), for app stores that track releases, like Orion
+          # Store and Obtainium: they read the version from the file name.
+          # Older copies are removed, so the release keeps one.
+          VERSIONED="Balimda-v1.0.${GITHUB_RUN_NUMBER}.apk"
+          cp Balimda-android.apk "$VERSIONED"
+          gh release upload android-latest "$VERSIONED" --clobber
+          gh release view android-latest --json assets --jq '.assets[].name' | grep -E '^Balimda-v[0-9.]+\.apk$' | grep -vxF "$VERSIONED" | while read -r old; do
+            gh release delete-asset android-latest "$old" --yes || true
+          done
           gh release edit android-latest --title "Balimda for Android (latest build)" --notes "Newest Android build (from ${GITHUB_SHA::7}, $(date -u '+%Y-%m-%d %H:%M UTC')). Download Balimda-android.apk and open it on your phone; it installs over the previous version and keeps your chats."
