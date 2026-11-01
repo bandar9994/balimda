@@ -55,6 +55,15 @@ test('uploads the bundle to the internal track with release notes, then commits'
   assert.deepStrictEqual(track, { track: 'internal', releases: [{ versionCodes: ['7'], status: 'completed', releaseNotes: [{ language: 'en-US', text: 'Replies keep going in the background.' }] }] });
 });
 
+test('no access to the app: the error names the account and the app', async () => {
+  const { uploadBundle } = await import('../scripts/play-upload.mjs');
+  const fetch = async (url, opts) => (url === account.token_uri
+    ? new Response(JSON.stringify({ access_token: 'tok' }), { status: 200 })
+    : new Response(JSON.stringify({ error: { message: 'The caller does not have permission' } }), { status: 403 }));
+  await assert.rejects(uploadBundle({ account, packageName: PKG, aab: Buffer.from('b'), fetch }),
+    /The caller does not have permission \(signed in as play@najwa\.iam\.gserviceaccount\.com, app com\.bandaraltariqi\.najwa\)\. In the Play Console, Users and permissions must list exactly this email/);
+});
+
 test('no release notes: none are sent; a refusal from Google is reported clearly', async () => {
   const { uploadBundle, args } = await import('../scripts/play-upload.mjs');
   // The workflow passes an empty --notes when none are given.

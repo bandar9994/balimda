@@ -63,7 +63,17 @@ export async function uploadBundle({ account, packageName, aab, track = 'interna
     return data;
   };
   const app = `${API}/${encodeURIComponent(packageName)}`;
-  const edit = await call('POST', `${app}/edits`, { body: '{}' });
+  let edit;
+  try {
+    edit = await call('POST', `${app}/edits`, { body: '{}' });
+  } catch (err) {
+    // The first call that needs access to the app: say which account and app,
+    // since a mismatch is the usual cause.
+    if (/permission|not found|403|404/i.test(err.message)) {
+      throw new Error(`${err.message} (signed in as ${account.client_email}, app ${packageName}). In the Play Console, Users and permissions must list exactly this email, with permission to release, and the app's package name must be ${packageName}.`);
+    }
+    throw err;
+  }
   const e = encodeURIComponent(edit.id);
   const bundle = await call('POST', `${UPLOAD}/${encodeURIComponent(packageName)}/edits/${e}/bundles?uploadType=media`, { body: aab, type: 'application/octet-stream' });
   const versionCode = String(bundle.versionCode);
@@ -93,6 +103,7 @@ async function main() {
     throw new Error('PLAY_SERVICE_ACCOUNT_JSON is not valid JSON: paste the whole key file into the secret.');
   }
   if (!account.client_email || !account.private_key) throw new Error('PLAY_SERVICE_ACCOUNT_JSON is not a service account key (no client_email or private_key).');
+  console.log(`Signing in to Google Play as ${account.client_email}`);
   const { versionCode, track } = await uploadBundle({
     account,
     packageName: a.package,
