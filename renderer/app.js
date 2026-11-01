@@ -4119,10 +4119,10 @@ async function init() {
   if (last) await openChat(last.id);
   else newChat();
 
+  askLanguageOnce();
   loadModels();
   // Messages left in the queue when the app closed go now, under the usual rules.
   flushAllQueued();
-  askLanguageOnce();
 }
 
 init();
