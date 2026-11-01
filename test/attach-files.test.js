@@ -38,3 +38,16 @@ test('what the model reads: each file in its own block, shorter when asked', () 
   assert.strictEqual(formatSize(900), '900 B');
   assert.strictEqual(formatSize(4300), '4 KB');
 });
+
+test('the reply says when a model read only part of a file', () => {
+  const { capFor, shortenedNotice, ON_DEVICE_CHARS } = require('../renderer/attach-files.js');
+  assert.strictEqual(capFor({ provider: 'onDevice' }), ON_DEVICE_CHARS);
+  assert.strictEqual(capFor({ provider: 'deepseek' }), MAX_CHARS);
+  assert.strictEqual(capFor(null), MAX_CHARS);
+  const prompt = { name: 'Prompt.md', text: 'x'.repeat(47000) };
+  const small = { name: 'a.txt', text: 'hi' };
+  assert.match(shortenedNotice([prompt, small], ON_DEVICE_CHARS), /^This model could read only the first 6,000 of 47,000 characters of Prompt\.md, so/);
+  assert.strictEqual(shortenedNotice([prompt, small], MAX_CHARS), '');
+  assert.match(shortenedNotice([{ name: 'log.txt', text: 'a', cut: true }]), /^Only the first 150,000 characters of log\.txt were attached/);
+  assert.strictEqual(shortenedNotice([]), '');
+});

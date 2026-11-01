@@ -2288,7 +2288,7 @@ function historyFor(chat, uptoIndex, model) {
   const shown = chat.messages.slice(0, uptoIndex).filter((m) => !m.error && (m.content || picturesOf(m).length || AttachFiles.filesOf(m).length));
   // Attached files go in whole, each in its own <file> block (less on the
   // phone's own small models, which have little room).
-  const fileCap = model && model.provider === 'onDevice' ? 6000 : AttachFiles.MAX_CHARS;
+  const fileCap = AttachFiles.capFor(model);
   // Pages read for the last two messages with links go in whole; earlier ones as a note.
   const withLinks = shown.filter((m) => m.role === 'user' && m.links && m.links.length).slice(-2);
   const linksOn = readsLinks(model);
@@ -2592,6 +2592,12 @@ async function runCompletion(chat, entry, resume = null) {
   if (!res.ok) msg.error = `Error: ${res.error}`;
   if (res.stats) msg.stats = res.stats;
   if (res.ok && res.stopReason === 'max_tokens') msg.notice = 'The reply was cut off at the length limit. Ask it to continue, or raise "Max tokens" in Settings.';
+  // The model read only part of a file attached to the message it answers: say so.
+  if (res.ok && !res.aborted && !msg.notice) {
+    const asker = chat.messages.slice(0, chat.messages.indexOf(msg)).reverse().find((m) => m.role === 'user');
+    const note = asker ? AttachFiles.shortenedNotice(AttachFiles.filesOf(asker), AttachFiles.capFor(model)) : '';
+    if (note) msg.notice = note;
+  }
   if (request.interrupted) {
     msg.notice = 'Stopped here to answer your next message.';
     // Interrupted before it wrote anything: no need to keep an empty reply.

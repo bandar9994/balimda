@@ -14,6 +14,7 @@
   const MAX_FILES = 5;               // per message
   const MAX_BYTES = 2 * 1024 * 1024; // a bigger file isn't read at all
   const MAX_CHARS = 150000;          // kept per file (about 40,000 words)
+  const ON_DEVICE_CHARS = 6000;      // what the phone's own small models read per file
 
   // A file's bytes as text, or null when they aren't text.
   function decodeText(bytes) {
@@ -69,12 +70,30 @@
     return `<file name="${name}">\n${text}${note}\n</file>`;
   }
 
+  // How much of each file a model reads.
+  function capFor(model) {
+    return model && model.provider === 'onDevice' ? ON_DEVICE_CHARS : MAX_CHARS;
+  }
+
+  // A note for the reply when the model read only part of a file, or '' when
+  // it read them all.
+  function shortenedNotice(files, cap = MAX_CHARS) {
+    const n = (x) => Number(x).toLocaleString('en-US');
+    const parts = files.filter((f) => String(f.text || '').length > cap).map((f) => `${n(cap)} of ${n(String(f.text).length)} characters of ${f.name}`);
+    if (parts.length) {
+      return `This model could read only the first ${parts.join(', and the first ')}, so its answer is based on part of the file. For the whole file, use a bigger model: your computer's, or one with an API key (such as Claude or DeepSeek).`;
+    }
+    const cut = files.filter((f) => f.cut).map((f) => f.name);
+    if (cut.length) return `Only the first ${n(MAX_CHARS)} characters of ${cut.join(' and ')} were attached: the file is too long to attach whole.`;
+    return '';
+  }
+
   // The files a message holds (whatever a synced chat contains, only well-formed ones).
   function filesOf(msg) {
     return (msg && Array.isArray(msg.files) ? msg.files : []).filter((f) => f && typeof f.name === 'string' && typeof f.text === 'string');
   }
 
-  const api = { MAX_FILES, MAX_BYTES, MAX_CHARS, decodeText, readTextFile, formatSize, fileBlock, filesOf };
+  const api = { MAX_FILES, MAX_BYTES, MAX_CHARS, ON_DEVICE_CHARS, decodeText, readTextFile, formatSize, fileBlock, capFor, shortenedNotice, filesOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.AttachFiles = api;
 })(typeof window !== 'undefined' ? window : globalThis);
