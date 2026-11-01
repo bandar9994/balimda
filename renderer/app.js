@@ -2,10 +2,14 @@
 // Licensed under the Najwa AI License (see LICENSE): non-commercial use only;
 // keep the Najwa AI name and the "Najwa AI by Bandar Altariqi" credit; no rebranding.
 
-/* global marked, DOMPurify, SpeechText */
+/* global marked, DOMPurify, SpeechText, I18n */
 'use strict';
 
 const api = window.balimda;
+
+// The app's language (see i18n.js): the one used last, until settings are read.
+I18n.setLanguage(I18n.resolve(I18n.remembered()), { store: false });
+I18n.watch(document.body);
 
 const S = {
   settings: null,
@@ -147,7 +151,8 @@ function splitThinking(text) {
 
 function renderMarkdown(text) {
   const html = DOMPurify.sanitize(marked.parse(text || ''), REPLY_HTML);
-  const wrap = h('div');
+  // What a model wrote: never translated (see i18n.js).
+  const wrap = h('div', { translate: 'no' });
   wrap.innerHTML = html;
   // Arabic (and other right-to-left) paragraphs read right to left, each on
   // its own, so a mixed reply lays out naturally. Code stays left to right.
@@ -182,11 +187,12 @@ function renderMarkdown(text) {
   }
   for (const pre of wrap.querySelectorAll('pre')) {
     pre.setAttribute('dir', 'ltr');
-    const btn = h('button', { class: 'copy-code', text: 'Copy' });
+    // (Inside the reply, which isn't translated: in the app's language here.)
+    const btn = h('button', { class: 'copy-code', text: I18n.t('Copy') });
     btn.addEventListener('click', () => {
-      navigator.clipboard.writeText(pre.querySelector('code')?.innerText ?? pre.innerText.replace(/Copy$/, ''));
-      btn.textContent = 'Copied';
-      setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+      navigator.clipboard.writeText(pre.querySelector('code')?.innerText ?? pre.innerText.slice(0, -btn.textContent.length));
+      btn.textContent = I18n.t('Copied');
+      setTimeout(() => { btn.textContent = I18n.t('Copy'); }, 1200);
     });
     pre.append(btn);
   }
@@ -407,7 +413,7 @@ function groupLabel(ts) {
   if (ts >= startOfToday - day) return 'Yesterday';
   if (ts >= startOfToday - 7 * day) return 'Previous 7 days';
   if (ts >= startOfToday - 30 * day) return 'Previous 30 days';
-  return new Date(ts).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  return new Date(ts).toLocaleDateString(I18n.locale(), { month: 'long', year: 'numeric' });
 }
 
 function renderSidebar() {
@@ -434,7 +440,7 @@ function renderSidebar() {
     },
     h('div', { class: 'ci-body' },
       h('div', { class: 'ci-title', dir: 'auto', text: c.title }),
-      c.preview ? h('div', { class: 'ci-preview', dir: 'auto', text: c.preview }) : null),
+      c.preview ? h('div', { class: 'ci-preview', dir: 'auto', translate: 'no', text: c.preview }) : null),
     cached && (isStreaming(cached) || Lease.replyInProgress(cached)) ? h('span', { class: 'ci-dot', title: 'Replying…' }) : null,
     h('button', {
       class: 'ci-del',
@@ -758,7 +764,7 @@ function renderWelcome() {
 function renderMessage(chat, msg, index) {
   const isUser = msg.role === 'user';
   const assistant = getAssistant(chat.assistantId);
-  const content = h('div', { class: 'content', dir: isUser ? 'auto' : null });
+  const content = h('div', { class: 'content', dir: isUser ? 'auto' : null, translate: isUser ? 'no' : null });
   fillContent(content, msg);
 
   const actions = h('div', { class: 'actions' });
@@ -790,7 +796,7 @@ function renderMessage(chat, msg, index) {
     actions.append(h('button', { text: 'Delete', onclick: () => { const now = liveChat(chat); deleteMessage(now, liveMessage(now, msg)); } }));
   }
 
-  const when = msg.createdAt ? new Date(msg.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  const when = msg.createdAt ? new Date(msg.createdAt).toLocaleString(I18n.locale(), { dateStyle: 'medium', timeStyle: 'short' }) : '';
   const node = h('div', { class: `msg ${msg.role}`, 'data-id': msg.id },
     h('div', { class: 'avatar', text: isUser ? 'You' : (assistant.emoji || '🤖') }),
     h('div', { class: 'body' },
@@ -952,7 +958,7 @@ function fillContent(container, msg) {
         // Remember the reader's choice so redraws don't reopen or close it.
         onclick: () => thinkingOpen.set(msg, !details.open)
       }),
-      h('div', { style: 'white-space: pre-wrap', text: thinking }));
+      h('div', { style: 'white-space: pre-wrap', translate: 'no', text: thinking }));
     // Collapsed unless the reader opens it.
     details.open = thinkingOpen.get(msg) === true;
     container.append(details);
@@ -1071,7 +1077,7 @@ function agentSteps(msg) {
   };
   const toolLine = (t) => h('div', { class: `agent-step ${t.status}${t.steer ? ' steer' : ''}` },
     h('span', { class: 'agent-icon', text: t.emoji || '🔧' }),
-    h('span', { class: 'agent-label', dir: 'auto', text: t.label }),
+    h('span', { class: 'agent-label', dir: 'auto', translate: 'no', text: t.label }),
     h('span', { class: 'agent-state', text: stateOf(t) }));
   const used = tools.filter((t) => !t.steer).length;
   const said = tools.length - used;
@@ -1567,7 +1573,7 @@ function fileChip(f, onRemove) {
   return h('span', { class: 'file-chip' },
     h('button', { class: 'file-open', title: 'Show the file', onclick: () => showFile(f) },
       h('span', { class: 'file-icon', text: '📄' }),
-      h('span', { class: 'file-name', dir: 'ltr', text: f.name }),
+      h('span', { class: 'file-name', dir: 'ltr', translate: 'no', text: f.name }),
       h('span', { class: 'file-size', text: AttachFiles.formatSize(f.size || f.text.length) })),
     onRemove ? h('button', { class: 'file-remove', title: 'Remove', 'aria-label': `Remove ${f.name}`, text: '×', onclick: onRemove }) : null);
 }
@@ -2195,7 +2201,7 @@ function buildSystemPrompt(chat, recalled = [], model = null) {
     parts.push(`Things to remember about the user (from previous sessions):\n${S.settings.memory.trim()}`);
   }
   if (recalled.length) {
-    const when = (t) => (t ? new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
+    const when = (t) => (t ? new Date(t).toLocaleDateString(I18n.locale(), { day: 'numeric', month: 'short' }) : '');
     parts.push([
       'Excerpts from the user\'s earlier chats that may be relevant. Use them only if they help; don\'t mention them otherwise:',
       ...recalled.map((r) => `- [${r.title}${r.updatedAt ? `, ${when(r.updatedAt)}` : ''}] ${r.role === 'user' ? 'User' : 'Assistant'}: ${r.text}`)
@@ -2773,7 +2779,7 @@ function timeAgo(ts) {
   if (min < 60) return `${min} min ago`;
   const hours = Math.round(min / 60);
   if (hours < 24) return `${hours} h ago`;
-  return new Date(ts).toLocaleDateString();
+  return new Date(ts).toLocaleDateString(I18n.locale());
 }
 
 function syncLabel(st = S.sync) {
@@ -3161,7 +3167,7 @@ function desktopVoiceView(onCleanup, field, check, lang, rate, s) {
     field('Speech recognition', list, 'Whisper turns what you say into text on this computer: nothing is sent anywhere. It\'s downloaded once. The large model understands Arabic best, but without a Mac\'s GPU or a fast processor it can take several seconds per sentence.'),
     field('The language you talk in', lang, 'Choosing the language makes Whisper more accurate. Replies are read in the language they\'re written in.'),
     check('Read replies aloud', s, 'readAloud'),
-    h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: V.avail && V.avail.tts
+    h('div', { class: 'help', style: 'margin-block: -4px 14px; margin-inline-start: 26px', text: V.avail && V.avail.tts
       ? 'Every reply is read aloud as it\'s written, with this computer\'s own voices. You can also click "Read aloud" under any reply.'
       : 'This computer has no voices for reading aloud. On Linux, install speech-dispatcher (e.g. "sudo apt install speech-dispatcher espeak-ng"), then restart Najwa AI.' }),
     field('Reading speed', rate)
@@ -3197,6 +3203,7 @@ function openSettings(tab = 'general') {
       obj[key] = transform(input.type === 'checkbox' ? input.checked : input.value);
       changed();
       if (key === 'theme') applyTheme();
+      if (key === 'language') applyLanguage();
       if (key === 'sendOnEnter') updateComposer();
     });
     return input;
@@ -3219,7 +3226,14 @@ function openSettings(tab = 'general') {
         h('option', { value: 'words', text: 'Word by word' }),
         h('option', { value: 'whole', text: 'All at once, when finished' })), s, 'replyStyle');
       replyStyle.value = s.replyStyle || 'sentences';
+      // Each language's name in itself, so it can be found in either.
+      const language = bind(h('select', { class: 'select' },
+        h('option', { value: '', text: 'Device language' }),
+        h('option', { value: 'en', translate: 'no', text: 'English' }),
+        h('option', { value: 'ar', translate: 'no', text: 'العربية' })), s, 'language');
+      language.value = s.language || '';
       return [
+        field('Language', language),
         field('Theme', theme),
         field('How replies appear', replyStyle, 'How a reply shows up while it\'s being written.'),
         check('Read links in my messages: the app opens the page and gives the model its text (not for Hermes, which browses itself)', s, 'readLinks'),
@@ -3352,12 +3366,12 @@ function openSettings(tab = 'general') {
       return [
         check('Use memory in every chat', s, 'memoryEnabled'),
         check('Remember things about me automatically', s, 'autoMemory'),
-        h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: S.info.mobile
+        h('div', { class: 'help', style: 'margin-block: -4px 14px; margin-inline-start: 26px', text: S.info.mobile
           ? 'After a reply, lasting facts you mention (your name, work, family, preferences…) are added below, using the chat\'s model, when a message says something about you. Memory syncs between your devices.'
           : 'After a reply, lasting facts you mention (your name, work, family, preferences…) are added below, using the chat\'s model, when a message says something about you. Memory syncs between your devices.' }),
         memoryBox(onCleanup, field, bind, s),
         check('Look through my earlier chats for relevant details', s, 'recallChats'),
-        h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: 'Before each reply, the best-matching bits of your other chats are given to the model (a little less for phone models, to stay fast). Replies that used them say so underneath, with links to those chats.' })
+        h('div', { class: 'help', style: 'margin-block: -4px 14px; margin-inline-start: 26px', text: 'Before each reply, the best-matching bits of your other chats are given to the model (a little less for phone models, to stay fast). Replies that used them say so underneath, with links to those chats.' })
       ];
     },
 
@@ -3446,7 +3460,7 @@ function openSettings(tab = 'general') {
         h('option', { value: '1', text: 'Normal' }),
         h('option', { value: '1.2', text: 'Faster' })), s, 'voiceRate', Number);
       rate.value = String(Number(s.voiceRate) || 1);
-      const privateNote = h('div', { class: 'help', style: 'margin: -4px 0 14px 26px' });
+      const privateNote = h('div', { class: 'help', style: 'margin-block: -4px 14px; margin-inline-start: 26px' });
       const describePrivate = async () => {
         const a = await api.voice.available({ lang: voiceLang() }).catch(() => null);
         privateNote.textContent = 'Without it, what you say is sent to ' + (S.info.platform === 'ios' ? 'Apple' : 'Google') +
@@ -3463,7 +3477,7 @@ function openSettings(tab = 'general') {
         check('Private voice: understand speech only on this phone', s, 'voicePrivate'),
         privateNote,
         check('Read replies aloud', s, 'readAloud'),
-        h('div', { class: 'help', style: 'margin: -4px 0 14px 26px', text: 'Every reply is read aloud as it\'s written. You can also tap "Read aloud" under any reply. Replies are read by the phone\'s own voices, on the phone.' }),
+        h('div', { class: 'help', style: 'margin-block: -4px 14px; margin-inline-start: 26px', text: 'Every reply is read aloud as it\'s written. You can also tap "Read aloud" under any reply. Replies are read by the phone\'s own voices, on the phone.' }),
         field('Reading speed', rate)
       ];
     },
@@ -3829,6 +3843,19 @@ function exportCurrent() {
   if (S.current) api.chats.exportMarkdown(S.current.id).then((r) => r && toast('Chat exported'));
 }
 
+// Arabic or English, as Settings → General says ('' = the device's language).
+// What's on screen switches at once; the parts drawn from a language's own
+// strings (Lease, Report) are drawn again.
+function applyLanguage({ redraw = true } = {}) {
+  const changed = I18n.setLanguage(I18n.resolve(S.settings.language));
+  // The desktop app's menus and dialogs follow it too.
+  if (api.app.language) api.app.language(I18n.lang());
+  if (!changed || !redraw) return;
+  renderSidebar();
+  if (S.current) renderChat();
+  updateComposer();
+}
+
 function applyTheme() {
   const t = S.settings.theme;
   if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
@@ -4048,6 +4075,7 @@ async function init() {
   if (S.info.mobile) el.search.placeholder = 'Search all chats';
   document.body.classList.toggle('is-mobile', !!S.info.mobile);
   applyTheme();
+  applyLanguage({ redraw: false });
   if (S.state.sidebarCollapsed) el.app.classList.add('sidebar-collapsed');
   bindEvents();
   initVoice();

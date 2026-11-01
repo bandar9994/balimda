@@ -101,6 +101,13 @@ public class NetPlugin extends Plugin {
      * the app and its network going in the background meanwhile (with a
      * notification), so leaving the app doesn't cut the reply off.
      */
+    /** { lang } The app's language ("en" or "ar"), for the notifications. */
+    @PluginMethod
+    public void language(PluginCall call) {
+        DownloadService.arabic = "ar".equals(call.getString("lang", "en"));
+        call.resolve();
+    }
+
     @PluginMethod
     public void replying(PluginCall call) {
         DownloadService.replying(getContext().getApplicationContext(), Boolean.TRUE.equals(call.getBoolean("on", false)));

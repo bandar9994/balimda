@@ -343,6 +343,14 @@ window.balimda = {
     })
   },
   app: {
+    // The app's language, for Android's notifications (older app: no such method).
+    async language(lang) {
+      try {
+        if (NetPlugin) await NetPlugin.language({ lang });
+      } catch {
+        // keep English notifications
+      }
+    },
     async info() {
       let version = '1.0.0';
       if (isNative) {

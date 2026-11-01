@@ -103,12 +103,12 @@ button { font: inherit; color: inherit; }
   width: 272px;
   flex-shrink: 0;
   background: var(--bg-side);
-  border-right: 1px solid var(--border);
+  border-inline-end: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  transition: margin-left 0.18s ease;
+  transition: margin-inline-start 0.18s ease;
 }
-#app.sidebar-collapsed #sidebar { margin-left: -272px; }
+#app.sidebar-collapsed #sidebar { margin-inline-start: -272px; }
 
 .sidebar-head { padding: 14px 12px 8px; display: grid; gap: 10px; }
 .brand { font-weight: 650; font-size: 15px; display: flex; align-items: center; gap: 8px; padding: 2px 4px; }
@@ -127,7 +127,7 @@ button { font: inherit; color: inherit; }
   align-items: center;
   gap: 6px;
   width: 100%;
-  text-align: left;
+  text-align: start;
   border: 0;
   background: transparent;
   border-radius: 8px;
@@ -275,7 +275,7 @@ details.thinking summary { cursor: pointer; }
 .welcome { max-width: 680px; margin: 8vh auto 0; text-align: center; }
 .welcome h2 { font-size: 26px; margin: 0 0 6px; }
 .welcome p { color: var(--text-dim); margin: 0 0 22px; }
-.assistant-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; text-align: left; }
+.assistant-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; text-align: start; }
 .assistant-card {
   border: 1px solid var(--border);
   background: var(--bg-elev);
@@ -296,7 +296,7 @@ details.thinking summary { cursor: pointer; }
 }
 .notice {
   margin-top: 20px;
-  text-align: left;
+  text-align: start;
   border: 1px dashed var(--border);
   border-radius: var(--radius);
   padding: 12px 14px;
@@ -376,12 +376,12 @@ details.thinking summary { cursor: pointer; }
 .file-open:hover { background: var(--bg-hover); }
 .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 .file-size { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
-.file-remove { border: 0; border-left: 1px solid var(--border); background: none; color: var(--text-dim); font-size: 16px; padding: 4px 10px; cursor: pointer; }
+.file-remove { border: 0; border-inline-start: 1px solid var(--border); background: none; color: var(--text-dim); font-size: 16px; padding: 4px 10px; cursor: pointer; }
 .file-remove:hover { color: var(--text); background: var(--bg-hover); }
 .msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
 .file-view { margin: 0; max-height: 70vh; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; background: var(--bg-code); padding: 12px; border-radius: 8px; }
 .composer.dropping .composer-box, #composer.dropping .composer-box { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.18); }
-.attachment-remove { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; line-height: 1; cursor: pointer; display: grid; place-items: center; padding: 0; }
+.attachment-remove { position: absolute; top: -6px; inset-inline-end: -6px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; line-height: 1; cursor: pointer; display: grid; place-items: center; padding: 0; }
 .msg-pictures { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 6px; }
 .msg-pictures img { max-width: min(240px, 100%); max-height: 200px; border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; object-fit: contain; }
 .picture-full { display: block; max-width: 100%; max-height: 75vh; margin: 0 auto; border-radius: 8px; }
@@ -399,7 +399,7 @@ details.thinking summary { cursor: pointer; }
 .voice-model-info { flex: 1; min-width: 0; }
 .voice-model .progress { width: 100%; margin-top: 6px; }
 .voice-model-state { font-size: 12px; font-weight: 600; color: var(--accent); }
-.voice-model-tag { margin-left: 8px; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--bg-user); color: var(--accent); }
+.voice-model-tag { margin-inline-start: 8px; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--bg-user); color: var(--accent); }
 
 /* ---------- controls ---------- */
 
@@ -417,7 +417,7 @@ a.btn { display: inline-block; text-decoration: none; color: inherit; }
 .btn.danger { color: var(--danger); }
 /* The send button while a reply is being written: a clear red Stop button. */
 .btn.primary.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
-.btn.ghost { background: transparent; border-color: transparent; text-align: left; }
+.btn.ghost { background: transparent; border-color: transparent; text-align: start; }
 .btn.ghost:hover { background: var(--bg-hover); }
 .btn.block { width: 100%; }
 .btn:disabled { opacity: 0.5; cursor: default; }
@@ -462,7 +462,7 @@ textarea.input { resize: vertical; }
   padding: 4px;
   display: grid;
 }
-.menu button { border: 0; background: transparent; text-align: left; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
+.menu button { border: 0; background: transparent; text-align: start; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
 .menu button:hover { background: var(--bg-hover); }
 .menu .danger { color: var(--danger); }
 
@@ -496,8 +496,8 @@ textarea.input { resize: vertical; }
 .modal-foot { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
 
 .settings { display: flex; height: 100%; min-height: 0; }
-.settings-tabs { width: 160px; border-right: 1px solid var(--border); padding: 10px 8px; display: grid; align-content: start; gap: 2px; }
-.settings-tabs button { border: 0; background: transparent; text-align: left; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
+.settings-tabs { width: 160px; border-inline-end: 1px solid var(--border); padding: 10px 8px; display: grid; align-content: start; gap: 2px; }
+.settings-tabs button { border: 0; background: transparent; text-align: start; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
 .settings-tabs button.active { background: var(--bg-active); font-weight: 600; }
 .settings-pane { flex: 1; min-width: 0; padding: 16px 20px; overflow-y: auto; }
 .field { margin-bottom: 16px; }
@@ -585,16 +585,18 @@ textarea.input { resize: vertical; }
     position: fixed;
     top: 0;
     bottom: 0;
-    left: 0;
+    inset-inline-start: 0;
     z-index: 40;
     width: min(84vw, 320px);
-    margin-left: 0 !important;
+    margin-inline-start: 0 !important;
     transform: translateX(-102%);
     transition: transform 0.2s ease;
     padding-top: var(--safe-area-inset-top, env(safe-area-inset-top));
     padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom));
     box-shadow: var(--shadow);
   }
+  /* In Arabic the drawer comes in from the right. */
+  [dir="rtl"] #sidebar { transform: translateX(102%); }
   #app.drawer-open #sidebar { transform: none; }
   #app.drawer-open #drawerBackdrop {
     display: block;
@@ -642,7 +644,7 @@ textarea.input { resize: vertical; }
     width: auto;
     display: flex;
     overflow-x: auto;
-    border-right: 0;
+    border-inline-end: 0;
     border-bottom: 1px solid var(--border);
     padding: 6px;
   }
@@ -679,7 +681,7 @@ textarea.input { resize: vertical; }
   background: transparent;
   color: var(--text-dim);
   font-size: 11px;
-  text-align: left;
+  text-align: start;
   padding: 2px 12px;
   cursor: pointer;
 }
@@ -692,7 +694,7 @@ textarea.input { resize: vertical; }
   background: transparent;
   color: var(--text-dim);
   font-size: 12px;
-  text-align: left;
+  text-align: start;
   padding: 2px 12px;
   cursor: pointer;
   white-space: nowrap;
@@ -702,13 +704,13 @@ textarea.input { resize: vertical; }
 .sync-status.ok { color: #2f9e5b; }
 .sync-status.bad { color: var(--danger); }
 .sync-status:hover { text-decoration: underline; }
-.steps { margin: 8px 0 16px; padding-left: 20px; line-height: 1.55; }
+.steps { margin: 8px 0 16px; padding-inline-start: 20px; line-height: 1.55; }
 .choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 4px 0 14px; }
 .choice {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  text-align: left;
+  text-align: start;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -798,3 +800,10 @@ textarea.input { resize: vertical; }
 .report-form .error { margin: 0 0 10px; }
 .report-form textarea { width: 100%; box-sizing: border-box; resize: vertical; }
 .report-form label[for] { display: block; font-size: 13px; margin-bottom: 4px; }
+
+/* Arabic: notes shown in a code font (the reasons models can't be reached)
+   read better in the app's own font. */
+:lang(ar) p.mono { font-family: inherit; font-size: 13px; word-break: normal; overflow-wrap: anywhere; }
+/* The empty message box shows its Arabic placeholder right to left (the box
+   itself follows what's typed in it). */
+:lang(ar) #input:placeholder-shown { direction: rtl; unicode-bidi: normal; }

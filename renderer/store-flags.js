@@ -15,6 +15,8 @@
   'use strict';
 
   const DONATION = { url: 'https://ko-fi.com/bandaraltariqi', label: '☕ Support on Ko-fi' };
+  // Its name in Arabic (kept here with it, not in i18n-ar.js).
+  const LABEL_AR = '☕ الدعم عبر Ko-fi';
 
   // Stores that must not link to outside donation pages.
   const NO_DONATIONS = new Set(['play', 'unknown']);
@@ -22,7 +24,9 @@
   // The donation link ({ url, label }), or null when this build must not show it.
   function support(info) {
     const store = String((info && info.store) || '').trim().toLowerCase();
-    return NO_DONATIONS.has(store) ? null : { ...DONATION };
+    if (NO_DONATIONS.has(store)) return null;
+    const ar = root.I18n && root.I18n.lang() === 'ar';
+    return { ...DONATION, ...(ar ? { label: LABEL_AR } : {}) };
   }
 
   const api = { support };

@@ -12,6 +12,10 @@ const { Sync } = require('./src/sync');
 const { createReplyHub } = require('./src/reply-hub');
 const Lease = require('./src/lease');
 const { isAllowedExternal } = require('./renderer/report');
+// The app's language (Settings → General) for the menus, dialogs and
+// notifications here; the window tells it (app:language).
+const I18n = require('./renderer/i18n');
+const tr = (text) => I18n.t(text);
 const { desktopGoogleAuth } = require('./src/google-auth-desktop');
 const { linkKey } = require('./src/remote');
 const { startRemoteServer, localAddresses } = require('./src/remote-server');
@@ -467,37 +471,37 @@ function buildMenu() {
     ...(isMac ? [{
       label: APP_NAME,
       submenu: [
-        { role: 'about', label: `About ${APP_NAME}` },
+        { role: 'about', label: tr(`About ${APP_NAME}`) },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
-        { role: 'hide', label: `Hide ${APP_NAME}` },
+        { role: 'hide', label: tr(`Hide ${APP_NAME}`) },
         { role: 'hideOthers' },
         { role: 'unhide' },
         { type: 'separator' },
-        { role: 'quit', label: `Quit ${APP_NAME}` }
+        { role: 'quit', label: tr(`Quit ${APP_NAME}`) }
       ]
     }] : []),
     {
-      label: 'File',
+      label: tr('File'),
       submenu: [
-        { label: 'New Chat', accelerator: 'CmdOrCtrl+N', click: () => send('menu', 'new-chat') },
-        { label: 'Search Chats', accelerator: 'CmdOrCtrl+K', click: () => send('menu', 'search') },
-        { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => send('menu', 'settings') },
+        { label: tr('New Chat'), accelerator: 'CmdOrCtrl+N', click: () => send('menu', 'new-chat') },
+        { label: tr('Search Chats'), accelerator: 'CmdOrCtrl+K', click: () => send('menu', 'search') },
+        { label: tr('Settings'), accelerator: 'CmdOrCtrl+,', click: () => send('menu', 'settings') },
         { type: 'separator' },
-        { label: 'Export All Chats…', click: () => send('menu', 'export') },
-        { label: 'Import Chats…', click: () => send('menu', 'import') },
-        { label: 'Sync Now', click: () => sync.run() },
-        { label: 'Open Data Folder', click: () => shell.openPath(dataDir) },
+        { label: tr('Export All Chats…'), click: () => send('menu', 'export') },
+        { label: tr('Import Chats…'), click: () => send('menu', 'import') },
+        { label: tr('Sync Now'), click: () => sync.run() },
+        { label: tr('Open Data Folder'), click: () => shell.openPath(dataDir) },
         { type: 'separator' },
         isMac ? { role: 'close' } : { role: 'quit' }
       ]
     },
     { role: 'editMenu' },
     {
-      label: 'View',
+      label: tr('View'),
       submenu: [
-        { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+B', click: () => send('menu', 'toggle-sidebar') },
+        { label: tr('Toggle Sidebar'), accelerator: 'CmdOrCtrl+B', click: () => send('menu', 'toggle-sidebar') },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },
@@ -552,6 +556,9 @@ function registerIpc() {
     mobile: false,
     providers: Object.fromEntries(Object.entries(PROVIDERS).map(([k, v]) => [k, v.label]))
   }));
+  ipcMain.handle('app:language', (_e, lang) => {
+    if (I18n.setLanguage(lang, { doc: null, store: false })) buildMenu();
+  });
   ipcMain.handle('app:openDataDir', () => shell.openPath(dataDir));
   // LICENSE / THIRD-PARTY-NOTICES.md for the About page.
   ipcMain.handle('app:legal', (_e, which) => {
@@ -562,7 +569,7 @@ function registerIpc() {
   ipcMain.handle('backup:export', async () => {
     const stamp = new Date().toISOString().slice(0, 10);
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
-      title: 'Export all chats',
+      title: tr('Export all chats'),
       defaultPath: `balimda-backup-${stamp}.json`,
       filters: [{ name: 'JSON', extensions: ['json'] }]
     });
@@ -574,7 +581,7 @@ function registerIpc() {
 
   ipcMain.handle('backup:import', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      title: 'Import chats',
+      title: tr('Import chats'),
       properties: ['openFile'],
       filters: [{ name: 'JSON', extensions: ['json'] }]
     });
@@ -583,7 +590,7 @@ function registerIpc() {
     try {
       data = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
     } catch {
-      throw new Error('This file isn\'t a Najwa AI backup (it can\'t be read as one).');
+      throw new Error(tr('This file isn\'t a Najwa AI backup (it can\'t be read as one).'));
     }
     return { count: await storage.importAll(data) };
   });
@@ -593,7 +600,7 @@ function registerIpc() {
     if (!chat) return null;
     const safe = safeFileName(chat.title);
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
-      title: 'Export chat',
+      title: tr('Export chat'),
       defaultPath: `${safe}.md`,
       filters: [{ name: 'Markdown', extensions: ['md'] }]
     });
@@ -729,7 +736,7 @@ app.whenReady().then(async () => {
     onAsk: (chatId, a) => {
       try {
         if (!Notification.isSupported()) return;
-        const n = new Notification({ title: `${a.title ? 'A connector' : 'Hermes'} is asking for permission`, body: String(a.title || a.command || a.description || '').slice(0, 160) });
+        const n = new Notification({ title: tr(`${a.title ? 'A connector' : 'Hermes'} is asking for permission`), body: String(a.title || a.command || a.description || '').slice(0, 160) });
         n.on('click', () => {
           if (!mainWindow || mainWindow.isDestroyed()) return;
           if (mainWindow.isMinimized()) mainWindow.restore();

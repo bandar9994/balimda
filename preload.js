@@ -197,6 +197,7 @@ contextBridge.exposeInMainWorld('balimda', {
   },
   app: {
     info: invoke('app:info'),
+    language: invoke('app:language'),
     openDataDir: invoke('app:openDataDir'),
     legal: invoke('app:legal')
   },

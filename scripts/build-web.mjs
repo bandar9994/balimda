@@ -24,6 +24,8 @@ await fs.mkdir(path.join(out, 'fonts'), { recursive: true });
 
 await Promise.all([
   fs.copyFile(r('renderer/app.js'), path.join(out, 'app.js')),
+  fs.copyFile(r('renderer/i18n.js'), path.join(out, 'i18n.js')),
+  fs.copyFile(r('renderer/i18n-ar.js'), path.join(out, 'i18n-ar.js')),
   fs.copyFile(r('renderer/store-flags.js'), path.join(out, 'store-flags.js')),
   fs.copyFile(r('renderer/report.js'), path.join(out, 'report.js')),
   fs.copyFile(r('renderer/speech-text.js'), path.join(out, 'speech-text.js')),

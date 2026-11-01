@@ -73,7 +73,8 @@
       useNote: () => 'لا تستخدم نجوى AI لإنشاء محتوى غير قانوني أو ضار. النماذج التي تنزّلها من أطراف أخرى لا تصنعها نجوى AI ولا تتحكم بها.'
     }
   };
-  const language = () => (typeof navigator !== 'undefined' && /^ar/i.test(navigator.language || '') ? 'ar' : 'en');
+  // The app's language (Settings → General), else the device's.
+  const language = () => (root.I18n ? root.I18n.lang() : typeof navigator !== 'undefined' && /^ar/i.test(navigator.language || '') ? 'ar' : 'en');
   const text = (key, arg, lang = language()) => (STRINGS[lang] || STRINGS.en)[key](arg);
 
   // ---- the email ----------------------------------------------------------------

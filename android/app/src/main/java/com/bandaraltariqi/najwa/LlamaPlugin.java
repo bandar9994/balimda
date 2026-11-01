@@ -385,10 +385,13 @@ public class LlamaPlugin extends Plugin {
             else known = false;
         }
         int count = progress.size();
-        String what = count == 1 ? "Downloading a model" : "Downloading " + count + " models";
+        boolean ar = DownloadService.arabic;
+        String what = ar
+            ? (count == 1 ? "جارٍ تنزيل نموذج" : "جارٍ تنزيل " + count + " نماذج")
+            : (count == 1 ? "Downloading a model" : "Downloading " + count + " models");
         int pct = known && total > 0 ? (int) (done * 100 / total) : -1;
         String size = String.format(java.util.Locale.US, "%.1f", done / 1e9) + (known && total > 0
-            ? " of " + String.format(java.util.Locale.US, "%.1f", total / 1e9) : "") + " GB";
+            ? (ar ? " من " : " of ") + String.format(java.util.Locale.US, "%.1f", total / 1e9) : "") + (ar ? " غيغابايت" : " GB");
         DownloadService.progress(app(), what + " · " + size, pct);
     }
 

@@ -172,7 +172,8 @@
       busy: () => 'يُكتب ردٌّ في هذه المحادثة الآن. انتظر حتى ينتهي، أو أوقفه أولاً. رسالتك محفوظة.'
     }
   };
-  const language = () => (typeof navigator !== 'undefined' && /^ar/i.test(navigator.language || '') ? 'ar' : 'en');
+  // The app's language (Settings → General), else the device's.
+  const language = () => (root.I18n ? root.I18n.lang() : typeof navigator !== 'undefined' && /^ar/i.test(navigator.language || '') ? 'ar' : 'en');
   const text = (key, name, lang = language()) => (STRINGS[lang] || STRINGS.en)[key](name || 'another device');
 
   const api = { text, runningOn, replyingLabel, STRINGS, LEASE_MS, HEARTBEAT_MS, SKEW_MS, INTERRUPTED_NOTICE, INTERRUPTED_ERROR, keepNewerReplies, leaseLive, liveReply, isReplyInProgress, replyInProgress, foreignReply, foreignInChat, newOwner, touch, interrupt };
