@@ -2,8 +2,8 @@
 // Licensed under the Najwa AI License (see LICENSE): non-commercial use only;
 // keep the Najwa AI name and the "Najwa AI by Bandar Altariqi" credit; no rebranding.
 
-// The bundled Readex Pro font: the files exist, the CSS loads them from the
-// app itself (no network), for Arabic and Latin, and the licence is shipped.
+// The bundled Readex Pro font: the file exists, the CSS loads it from the app
+// itself (no network), only for Arabic, and the licence is shipped.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -13,9 +13,9 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
 const css = read('renderer', 'styles.css');
-const FILES = ['ReadexPro-Arabic.woff2', 'ReadexPro-Latin.woff2', 'ReadexPro-LatinExt.woff2'];
+const FILES = ['ReadexPro-Arabic.woff2'];
 
-test('the Readex Pro files are real WOFF2 fonts', () => {
+test('the Readex Pro file is a real WOFF2 font', () => {
   for (const name of FILES) {
     const buf = fs.readFileSync(path.join(root, 'renderer', 'fonts', name));
     assert.strictEqual(buf.subarray(0, 4).toString('latin1'), 'wOF2', name);
@@ -23,22 +23,19 @@ test('the Readex Pro files are real WOFF2 fonts', () => {
   }
 });
 
-test('@font-face for Readex Pro: every weight, swap, relative urls, one script each', () => {
+test('@font-face for Readex Pro: every weight, swap, a relative url, Arabic only', () => {
   const faces = css.match(/@font-face\s*\{[^}]*\}/g) || [];
-  assert.strictEqual(faces.length, 3);
-  for (const f of faces) {
-    assert.match(f, /font-family:\s*"Readex Pro"/);
-    assert.match(f, /font-weight:\s*160 700/);
-    assert.match(f, /font-display:\s*swap/);
-    assert.match(f, /src:\s*url\("fonts\/ReadexPro-(Arabic|Latin|LatinExt)\.woff2"\)\s*format\("woff2"\)/);
-    assert.ok(!/https?:|\/\//.test(f.replace(/\/\*[\s\S]*?\*\//g, '')), 'no absolute urls');
-  }
-  const range = (file) => /unicode-range:\s*([^;]+);/.exec(faces.find((f) => f.includes(file)))[1];
-  for (const r of ['U+0600-06FF', 'U+0750-077F', 'U+FB50-FDFF']) assert.ok(range('ReadexPro-Arabic').includes(r), r);
-  assert.ok(range('ReadexPro-Latin.').startsWith('U+0000-00FF'));
-  // Arabic letters only come from the Arabic file.
-  assert.ok(!range('ReadexPro-Latin.').includes('U+06'));
-  for (const f of FILES) assert.ok(fs.existsSync(path.join(root, 'renderer', 'fonts', f)), f);
+  assert.strictEqual(faces.length, 1);
+  const f = faces[0];
+  assert.match(f, /font-family:\s*"Readex Pro"/);
+  assert.match(f, /font-weight:\s*160 700/);
+  assert.match(f, /font-display:\s*swap/);
+  assert.match(f, /src:\s*url\("fonts\/ReadexPro-Arabic\.woff2"\)\s*format\("woff2"\)/);
+  assert.ok(!/https?:|\/\//.test(f.replace(/\/\*[\s\S]*?\*\//g, '')), 'no absolute urls');
+  const range = /unicode-range:\s*([^;]+);/.exec(f)[1];
+  for (const r of ['U+0600-06FF', 'U+0750-077F', 'U+08A0-08FF'.replace('08A0', '08E3'), 'U+FB50-FDFF']) assert.ok(range.includes(r), r);
+  // English letters, digits and punctuation keep the system font.
+  for (const token of range.split(',')) assert.ok(parseInt(token.trim().slice(2), 16) >= 0x0600, `${token} is not Latin`);
 });
 
 test('Readex Pro is first in the text font stack and code fonts are untouched', () => {

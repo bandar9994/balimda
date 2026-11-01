@@ -34,8 +34,6 @@ await Promise.all([
   fs.copyFile(r('src/lease.js'), path.join(out, 'lease.js')),
   fs.copyFile(r('renderer/styles.css'), path.join(out, 'styles.css')),
   fs.copyFile(r('renderer/fonts/ReadexPro-Arabic.woff2'), path.join(out, 'fonts/ReadexPro-Arabic.woff2')),
-  fs.copyFile(r('renderer/fonts/ReadexPro-Latin.woff2'), path.join(out, 'fonts/ReadexPro-Latin.woff2')),
-  fs.copyFile(r('renderer/fonts/ReadexPro-LatinExt.woff2'), path.join(out, 'fonts/ReadexPro-LatinExt.woff2')),
   fs.copyFile(r('renderer/fonts/OFL.txt'), path.join(out, 'fonts/OFL.txt')),
   fs.copyFile(r('build/icon.png'), path.join(out, 'icon.png')),
   fs.copyFile(r('LICENSE'), path.join(out, 'LICENSE.txt')),
