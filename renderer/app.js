@@ -3856,6 +3856,38 @@ function applyLanguage({ redraw = true } = {}) {
   updateComposer();
 }
 
+// The first time the app opens (also the first time after the update that
+// brought Arabic), it asks which language to use, the phone's own first. The
+// choice is kept, and can be changed any time in Settings → General. Closing
+// it without choosing keeps the device's language.
+function askLanguageOnce() {
+  if (S.settings.language !== undefined) return;
+  const device = I18n.resolve('');
+  const options = [['ar', 'العربية', 'استخدم التطبيق بالعربية'], ['en', 'English', 'Use the app in English']];
+  if (device === 'en') options.reverse();
+  const choose = (lang) => {
+    S.settings.language = lang;
+    saveSettings();
+    applyLanguage();
+  };
+  let chosen = false;
+  const close = openModal({
+    title: 'اختر اللغة · Choose your language',
+    dir: device === 'ar' ? 'rtl' : 'ltr',
+    closeLabel: device === 'ar' ? 'إغلاق' : 'Close',
+    body: h('div', { translate: 'no' },
+      h('div', { class: 'choices' }, options.map(([lang, name, note]) => h('button', {
+        class: `choice ${lang === device ? 'active' : ''}`,
+        dir: lang === 'ar' ? 'rtl' : 'ltr',
+        onclick: () => { chosen = true; choose(lang); close(); }
+      }, h('strong', { text: name }), h('span', { text: note })))),
+      h('p', { class: 'help', dir: 'rtl', text: 'يمكنك تغيير اللغة في أي وقت من الإعدادات ← عام.' }),
+      h('p', { class: 'help', dir: 'ltr', text: 'You can change it any time in Settings → General.' })),
+    // Closed without a choice: the device's language, without asking again.
+    onClose: () => { if (!chosen) choose(''); }
+  });
+}
+
 function applyTheme() {
   const t = S.settings.theme;
   if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
@@ -4090,6 +4122,7 @@ async function init() {
   loadModels();
   // Messages left in the queue when the app closed go now, under the usual rules.
   flushAllQueued();
+  askLanguageOnce();
 }
 
 init();
