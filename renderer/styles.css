@@ -370,6 +370,17 @@ details.thinking summary { cursor: pointer; }
 .attachments[hidden] { display: none; }
 .attachment { position: relative; }
 .attachment img { display: block; width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+/* Text and code files attached to a message: a chip with the name and size. */
+.file-chip { display: inline-flex; align-items: center; max-width: 100%; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elev); overflow: hidden; }
+.file-open { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 6px 10px; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.file-open:hover { background: var(--bg-hover); }
+.file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.file-size { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+.file-remove { border: 0; border-left: 1px solid var(--border); background: none; color: var(--text-dim); font-size: 16px; padding: 4px 10px; cursor: pointer; }
+.file-remove:hover { color: var(--text); background: var(--bg-hover); }
+.msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.file-view { margin: 0; max-height: 70vh; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; background: var(--bg-code); padding: 12px; border-radius: 8px; }
+.composer.dropping .composer-box, #composer.dropping .composer-box { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.18); }
 .attachment-remove { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; line-height: 1; cursor: pointer; display: grid; place-items: center; padding: 0; }
 .msg-pictures { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 6px; }
 .msg-pictures img { max-width: min(240px, 100%); max-height: 200px; border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; object-fit: contain; }

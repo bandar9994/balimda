@@ -190,6 +190,10 @@ Tokens stay on the device (encrypted on computers) and aren't synced. When your 
 
 **On your other devices:** connectors and tokens are set up on each device; chats sync as usual, with each step and your answers. A question is answered on the device that asked it. If a computer asks while you're away, your phone can answer it too (the computer must be sharing its models: **Let my phone use this computer's models**). On other devices the card says where it's waiting, for example "Waiting for your answer on Desk".
 
+### Pictures and files
+
+Tap 📎 next to the message box (or drop files on it in the desktop app) to add up to 4 pictures and 5 text or code files to a message: `.txt`, `.md`, `.js`, `.py`, `.json`, `.csv`, `.html` and any other plain-text file, up to 2 MB each. Pictures go to models that can see; a file is read on your device and its contents go to the model with your message (and stay part of the chat, so later questions can refer to it). Tap a file on a sent message to read it. Files that aren't text, like PDFs or zips, can't be attached yet.
+
 ### How replies appear
 
 In **Settings → General → How replies appear**: **A sentence at a time** (the default, easy to read), **Word by word**, or **All at once, when finished**. Either way, the page stays still while a reply is written: your message moves to the top and the reply appears below it. The ↓ button jumps to the end.

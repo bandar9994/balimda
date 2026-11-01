@@ -22,7 +22,7 @@ const take = (head) => {
 };
 const parts = [
   'const isAgent = ',
-  'const queuedByChat = ', 'const queued = {', 'const inflightQueued = ', 'const MAX_QUEUED = ', 'const MAX_QUEUED_CHATS = ', 'const MAX_QUEUED_TEXT = ', 'const queueEntry = ',
+  'const queuedByChat = ', 'const queued = {', 'const inflightQueued = ', 'const MAX_QUEUED = ', 'const MAX_QUEUED_CHATS = ', 'const MAX_QUEUED_TEXT = ', 'const queueEntry = ', 'const hasAttachments = ',
   'function queueSnapshot(', 'function readQueue(', 'let queueSaved = ', 'function persistQueue(', 'function restoreQueue(', 'const alreadySent = ', 'function dropQueue(', 'function acceptQueued(', 'const retryAt = ', 'const fromQueue = ',
   'function interruptFor(', 'function midReplyAction(', 'async function sendWhileReplying(',
   'function canSendQueued(', 'function sendQueued(', 'function flushQueued(', 'function flushAllQueued('

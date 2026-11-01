@@ -27,6 +27,7 @@ await Promise.all([
   fs.copyFile(r('renderer/store-flags.js'), path.join(out, 'store-flags.js')),
   fs.copyFile(r('renderer/report.js'), path.join(out, 'report.js')),
   fs.copyFile(r('renderer/speech-text.js'), path.join(out, 'speech-text.js')),
+  fs.copyFile(r('renderer/attach-files.js'), path.join(out, 'attach-files.js')),
   fs.copyFile(r('renderer/save-queue.js'), path.join(out, 'save-queue.js')),
   fs.copyFile(r('src/lease.js'), path.join(out, 'lease.js')),
   fs.copyFile(r('renderer/styles.css'), path.join(out, 'styles.css')),

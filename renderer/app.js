@@ -804,7 +804,8 @@ function renderMessage(chat, msg, index) {
         ...msg.shots.map((sh) => h('img', { src: sh.src, alt: sh.label || 'Browser screenshot', title: `${sh.label || 'What the model saw'} (show larger)`, onclick: () => showPicture(sh.src) }))) : null,
       picturesOf(msg).length ? h('div', { class: 'msg-pictures' },
         ...picturesOf(msg).map((src) => h('img', { src, alt: 'Picture', title: 'Show larger', onclick: () => showPicture(src) }))) : null,
-      msg.content || !picturesOf(msg).length ? content : null,
+      AttachFiles.filesOf(msg).length ? h('div', { class: 'msg-files' }, ...AttachFiles.filesOf(msg).map((f) => fileChip(f))) : null,
+      msg.content || (!picturesOf(msg).length && !AttachFiles.filesOf(msg).length) ? content : null,
       isUser && msg.links && msg.links.length ? h('div', { class: 'link-chips' }, ...msg.links.map((l) => h('a', {
         class: `link-chip${l.error ? ' failed' : ''}`, href: l.url, target: '_blank', rel: 'noopener noreferrer', title: l.error || l.url,
         text: l.error ? `⚠️ Couldn't read ${siteOf(l.url)}` : `🔗 Read ${siteOf(l.url)}${l.title ? ` · ${l.title}` : ''}`
@@ -1258,21 +1259,22 @@ const MAX_QUEUED = 20;        // per chat
 const MAX_QUEUED_CHATS = 50;
 const MAX_QUEUED_TEXT = 20000;
 
-const queueEntry = (text, images) => ({ id: uid(), text, images, createdAt: Date.now() });
+const queueEntry = (text, images, files = []) => ({ id: uid(), text, images, files, createdAt: Date.now() });
+const hasAttachments = (q) => !!((q.images && q.images.length) || (q.files && q.files.length));
 
 // What goes on disk: text-only messages, the one being sent first.
 function queueSnapshot(byChat, inflight) {
   const out = {};
   for (const [id, list] of byChat) {
     const items = [...(inflight.has(id) ? [inflight.get(id)] : []), ...list]
-      .filter((q) => q && q.text && !(q.images && q.images.length))
+      .filter((q) => q && q.text && !hasAttachments(q))
       .slice(0, MAX_QUEUED)
       .map((q) => ({ id: q.id, text: String(q.text).slice(0, MAX_QUEUED_TEXT), createdAt: q.createdAt }));
     if (items.length) out[id] = items;
     if (Object.keys(out).length >= MAX_QUEUED_CHATS) break;
   }
   for (const [id, q] of inflight) {
-    if (!out[id] && q && q.text && !(q.images && q.images.length)) out[id] = [{ id: q.id, text: String(q.text).slice(0, MAX_QUEUED_TEXT), createdAt: q.createdAt }];
+    if (!out[id] && q && q.text && !hasAttachments(q)) out[id] = [{ id: q.id, text: String(q.text).slice(0, MAX_QUEUED_TEXT), createdAt: q.createdAt }];
   }
   return out;
 }
@@ -1291,7 +1293,7 @@ function readQueue(raw) {
     for (const q of list) {
       if (!q || typeof q.id !== 'string' || typeof q.text !== 'string' || !q.text || !Number.isFinite(q.createdAt) || seen.has(q.id)) { bad = true; continue; }
       seen.add(q.id);
-      items.push({ id: q.id, text: q.text.slice(0, MAX_QUEUED_TEXT), images: [], createdAt: q.createdAt, restored: true });
+      items.push({ id: q.id, text: q.text.slice(0, MAX_QUEUED_TEXT), images: [], files: [], createdAt: q.createdAt, restored: true });
     }
     if (items.length && map.size < MAX_QUEUED_CHATS) map.set(id, items.slice(0, MAX_QUEUED));
   }
@@ -1345,7 +1347,7 @@ function drawQueued() {
   el.queued.replaceChildren(...list.map((q, i) => h('div', { class: 'queued-item' },
     h('div', { class: 'queued-body' },
       h('span', { class: 'queued-label', text: Lease.text('queued') }),
-      h('span', { class: 'queued-text', dir: 'auto', text: q.text || (q.images.length === 1 ? '1 picture' : `${q.images.length} pictures`) })),
+      h('span', { class: 'queued-text', dir: 'auto', text: q.text || attachmentLabel(q.images.length, (q.files || []).length) })),
     h('button', {
       class: 'icon-btn queued-remove',
       title: Lease.text('removeQueued'),
@@ -1382,6 +1384,7 @@ function putBack(chat, list) {
   if (S.current === chat) {
     el.input.value = [text, el.input.value.trim()].filter(Boolean).join('\n\n');
     pictures = [...list.flatMap((q) => q.images), ...pictures].slice(0, MAX_PICTURES);
+    attached = [...list.flatMap((q) => q.files || []), ...attached].slice(0, AttachFiles.MAX_FILES);
     drawPictures();
     autoGrow();
     saveDraft(chat.id, el.input.value);
@@ -1406,10 +1409,10 @@ function midReplyAction(model) {
 }
 
 // A message sent while a reply is written (see midReplyAction).
-async function sendWhileReplying(chat, text, images) {
+async function sendWhileReplying(chat, text, images, files = []) {
   const found = [...S.requests].find(([, r]) => r.chat === chat);
   const action = found ? midReplyAction(found[1].msg.model) : 'queue';
-  if (found && action === 'steer' && text && !images.length && api.ai.steer) {
+  if (found && action === 'steer' && text && !images.length && !files.length && api.ai.steer) {
     const [requestId, r] = found;
     const step = { id: uid(), emoji: '💬', label: `You: ${text.replace(/\s+/g, ' ')}`.slice(0, 500), text: text.slice(0, 8000), steer: true, status: 'sending' };
     (r.msg.tools = r.msg.tools || []).push(step);
@@ -1426,7 +1429,7 @@ async function sendWhileReplying(chat, text, images) {
     r.msg.tools.splice(r.msg.tools.indexOf(step), 1);
     scheduleMessageRender(chat, r.msg);
   }
-  queued.set(chat, [...(queued.get(chat) || []), queueEntry(text, images)]);
+  queued.set(chat, [...(queued.get(chat) || []), queueEntry(text, images, files)]);
   if (isStreaming(chat)) {
     // Plain text: the reply stops here (what it wrote is kept) and this goes next.
     if (action === 'steer') interruptFor(chat);
@@ -1477,7 +1480,7 @@ function sendQueued(chat, res) {
   const [first, ...rest] = list;
   inflightQueued.set(chat.id, first);
   if (rest.length) queued.set(chat, rest); else queued.delete(chat);
-  const message = { id: uid(), role: 'user', content: first.text, ...(first.images.length ? { images: first.images } : {}), createdAt: Date.now() };
+  const message = { id: uid(), role: 'user', content: first.text, ...(first.images.length ? { images: first.images } : {}), ...((first.files || []).length ? { files: first.files } : {}), createdAt: Date.now() };
   fromQueue.set(message, first);
   chat.messages.push(message);
   runCompletion(chat, first);
@@ -1506,6 +1509,12 @@ function flushAllQueued() {
 const MAX_PICTURES = 4;     // per message
 const PICTURE_SIDE = 1024;  // longest side after scaling down, in pixels
 let pictures = [];          // picked for the next message
+let attached = [];          // text and code files picked for it (see attach-files.js)
+
+const attachmentLabel = (pics, files) => [
+  pics ? (pics === 1 ? '1 picture' : `${pics} pictures`) : '',
+  files ? (files === 1 ? '1 file' : `${files} files`) : ''
+].filter(Boolean).join(', ');
 
 // A picture file, scaled down (bigger ones cost a model far more time) as JPEG.
 async function readPicture(file) {
@@ -1522,24 +1531,57 @@ async function readPicture(file) {
   return canvas.toDataURL('image/jpeg', 0.85);
 }
 
+// Pictures and files the person picked (or dropped): pictures as pictures,
+// anything else read as a text or code file.
 async function addPictures(files) {
-  for (const file of [...files].filter((f) => f.type.startsWith('image/'))) {
-    if (pictures.length >= MAX_PICTURES) {
-      toast(`Up to ${MAX_PICTURES} pictures per message.`);
-      break;
+  for (const file of [...files]) {
+    if (file.type.startsWith('image/') && !/svg/.test(file.type)) {
+      if (pictures.length >= MAX_PICTURES) {
+        toast(`Up to ${MAX_PICTURES} pictures per message.`);
+        continue;
+      }
+      try {
+        pictures.push(await readPicture(file));
+      } catch {
+        toast(`Couldn't open ${file.name || 'that picture'}. Try a JPEG or PNG.`);
+      }
+      continue;
     }
-    try {
-      pictures.push(await readPicture(file));
-    } catch {
-      toast(`Couldn't open ${file.name || 'that picture'}. Try a JPEG or PNG.`);
+    if (attached.length >= AttachFiles.MAX_FILES) {
+      toast(`Up to ${AttachFiles.MAX_FILES} files per message.`);
+      continue;
     }
+    const r = await AttachFiles.readTextFile(file).catch(() => ({ error: `Couldn't read ${file.name || 'that file'}.` }));
+    if (r.error) {
+      toast(r.error, 6000);
+      continue;
+    }
+    attached.push(r.file);
+    if (r.file.cut) toast(`${r.file.name} is long: only its first ${AttachFiles.MAX_CHARS.toLocaleString()} characters are attached.`, 6000);
   }
   drawPictures();
 }
 
+// A file chip: name and size; tapping it shows the file.
+function fileChip(f, onRemove) {
+  return h('span', { class: 'file-chip' },
+    h('button', { class: 'file-open', title: 'Show the file', onclick: () => showFile(f) },
+      h('span', { class: 'file-icon', text: '📄' }),
+      h('span', { class: 'file-name', dir: 'ltr', text: f.name }),
+      h('span', { class: 'file-size', text: AttachFiles.formatSize(f.size || f.text.length) })),
+    onRemove ? h('button', { class: 'file-remove', title: 'Remove', 'aria-label': `Remove ${f.name}`, text: '×', onclick: onRemove }) : null);
+}
+
+function showFile(f) {
+  openModal({ title: f.name, wide: true, body: h('pre', { class: 'file-view', dir: 'ltr', text: f.text + (f.cut ? '\n\n[… the rest of the file was too long to attach]' : '') }) });
+}
+
 function drawPictures() {
-  el.attachments.hidden = !pictures.length;
-  el.attachments.replaceChildren(...pictures.map((src, i) => h('div', { class: 'attachment' },
+  el.attachments.hidden = !pictures.length && !attached.length;
+  el.attachments.replaceChildren(...attached.map((f, i) => fileChip(f, () => {
+    attached.splice(i, 1);
+    drawPictures();
+  })), ...pictures.map((src, i) => h('div', { class: 'attachment' },
     h('img', { src, alt: 'Picture to send' }),
     h('button', {
       class: 'attachment-remove',
@@ -2243,7 +2285,10 @@ async function readLinksFor(chat, asker, msg, model) {
 }
 
 function historyFor(chat, uptoIndex, model) {
-  const shown = chat.messages.slice(0, uptoIndex).filter((m) => !m.error && (m.content || picturesOf(m).length));
+  const shown = chat.messages.slice(0, uptoIndex).filter((m) => !m.error && (m.content || picturesOf(m).length || AttachFiles.filesOf(m).length));
+  // Attached files go in whole, each in its own <file> block (less on the
+  // phone's own small models, which have little room).
+  const fileCap = model && model.provider === 'onDevice' ? 6000 : AttachFiles.MAX_CHARS;
   // Pages read for the last two messages with links go in whole; earlier ones as a note.
   const withLinks = shown.filter((m) => m.role === 'user' && m.links && m.links.length).slice(-2);
   const linksOn = readsLinks(model);
@@ -2254,7 +2299,8 @@ function historyFor(chat, uptoIndex, model) {
     // What the user added while the reply was written (and it read).
     const next = shown[i + 1];
     const added = next && next.role === 'assistant' ? (next.tools || []).filter((t) => t.steer && t.status === 'read').map((t) => t.text) : [];
-    const content = [m.content, ...added, pages].filter(Boolean).join('\n\n');
+    const files = m.role === 'user' ? AttachFiles.filesOf(m).map((f) => AttachFiles.fileBlock(f, fileCap)) : [];
+    const content = [...files, m.content, ...added, pages].filter(Boolean).join('\n\n');
     return images.length ? { role: m.role, content, images } : { role: m.role, content };
   });
   const limit = Number(S.settings.historyLimit) || 0;
@@ -2265,7 +2311,8 @@ function historyFor(chat, uptoIndex, model) {
 async function send() {
   const text = el.input.value.trim();
   const images = pictures.slice();
-  if (!text && !images.length) return;
+  const files = attached.slice();
+  if (!text && !images.length && !files.length) return;
   dropDictation();
   // Another device is writing a reply here, or messages are already waiting:
   // this one waits too, and goes in order when the chat is free.
@@ -2278,11 +2325,12 @@ async function send() {
         return;
       }
       pictures = [];
+      attached = [];
       drawPictures();
       el.input.value = '';
       autoGrow();
       saveDraft(chat.id, '');
-      queued.set(chat, [...(queued.get(chat) || []), queueEntry(text, images)]);
+      queued.set(chat, [...(queued.get(chat) || []), queueEntry(text, images, files)]);
       flushQueued(chat);
       updateSendButton();
       return;
@@ -2293,11 +2341,12 @@ async function send() {
   if (isStreaming(S.current)) {
     const chat = S.current;
     pictures = [];
+    attached = [];
     drawPictures();
     el.input.value = '';
     autoGrow();
     saveDraft(chat.id, '');
-    await sendWhileReplying(chat, text, images);
+    await sendWhileReplying(chat, text, images, files);
     updateSendButton();
     return;
   }
@@ -2319,9 +2368,10 @@ async function send() {
     saveDraft('__new__', '');
   }
 
-  if (!chat.messages.length) chat.title = (text || 'Picture').replace(/\s+/g, ' ').slice(0, 60);
-  chat.messages.push({ id: uid(), role: 'user', content: text, ...(images.length ? { images } : {}), createdAt: Date.now() });
+  if (!chat.messages.length) chat.title = (text || (files.length ? files[0].name : 'Picture')).replace(/\s+/g, ' ').slice(0, 60);
+  chat.messages.push({ id: uid(), role: 'user', content: text, ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), createdAt: Date.now() });
   pictures = [];
+  attached = [];
   drawPictures();
   el.input.value = '';
   autoGrow();
@@ -2670,7 +2720,7 @@ function startEdit(chat, msg, node) {
         text: 'Save & resend',
         onclick: async () => {
           const text = area.value.trim();
-          if (!text && !picturesOf(msg).length) return;
+          if (!text && !picturesOf(msg).length && !AttachFiles.filesOf(msg).length) return;
           const i = chat.messages.indexOf(msg);
           msg.content = text;
           chat.messages = chat.messages.slice(0, i + 1);
@@ -3839,6 +3889,19 @@ function bindEvents() {
   new ResizeObserver(() => { fitReplySpace(); updateJumpButton(); }).observe(el.messages);
   el.micBtn.addEventListener('click', toggleDictation);
   el.attachBtn.addEventListener('click', () => el.attachInput.click());
+  // Files dropped on the message box (the desktop app) are attached too.
+  el.composer.addEventListener('dragover', (e) => {
+    if (![...(e.dataTransfer && e.dataTransfer.types) || []].includes('Files')) return;
+    e.preventDefault();
+    el.composer.classList.add('dropping');
+  });
+  el.composer.addEventListener('dragleave', () => el.composer.classList.remove('dropping'));
+  el.composer.addEventListener('drop', (e) => {
+    el.composer.classList.remove('dropping');
+    if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    addPictures(e.dataTransfer.files);
+  });
   el.attachInput.addEventListener('change', () => {
     addPictures(el.attachInput.files);
     el.attachInput.value = '';
