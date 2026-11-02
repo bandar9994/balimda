@@ -52,17 +52,50 @@
   }
 
   // The Arabic for one piece of the app's text, or null when there is none.
-  function lookup(text, depth = 0) {
+  function lookup(text, depth = 0, split = true) {
     if (exact.has(text)) return exact.get(text);
     if (depth > 2 || text.length > 4000) return null;
+    const multi = text.includes(' · ');
+    // A pattern for the whole line, unless it would swallow several pieces
+    // of a line made of pieces into one part ("{} MB" for "Fastest · … · 490 MB").
+    const whole = matchPattern(text, depth, multi);
+    if (whole != null) return whole;
+    if (multi && split) {
+      // Each piece on its own, the longest that has an Arabic first.
+      const joined = pieces(text.split(' · '), depth);
+      if (joined != null) return joined;
+    }
+    return multi && split ? matchPattern(text, depth, false) : null;
+  }
+
+  function matchPattern(text, depth, singlePieces) {
     for (const p of patterns) {
       const m = p.re.exec(text);
       if (!m) continue;
+      if (singlePieces && m.slice(1).some((v) => v && v.includes(' · '))) continue;
       // The changing parts can be the app's text too ("Error: Couldn't reach…").
       const parts = m.slice(1).map((v) => (v && /[A-Za-z]/.test(v) ? spaced(v, depth + 1) ?? v : v));
       return fill(p.ar, parts);
     }
     return null;
+  }
+
+  function pieces(segs, depth) {
+    const out = [];
+    let found = false;
+    for (let i = 0; i < segs.length;) {
+      let j = segs.length;
+      let ar = null;
+      // (The whole line was already tried by the caller.)
+      for (; j > i; j--) {
+        if (i === 0 && j === segs.length) continue;
+        // (Several pieces together only as one known text, not split again.)
+        ar = lookup(segs.slice(i, j).join(' · '), depth + 1, j - i === 1);
+        if (ar != null) break;
+      }
+      if (ar != null) { out.push(ar); found = true; i = j; } else { out.push(segs[i]); i += 1; }
+    }
+    return found ? out.join(' · ') : null;
   }
 
   // lookup() for text with spaces around it, which stay.

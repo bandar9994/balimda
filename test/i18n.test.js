@@ -28,13 +28,17 @@ test('English stays English; Arabic swaps the app\'s text, keeping what changes'
     // Spaces around it stay.
     assert.strictEqual(I18n.t('  Settings '), '  الإعدادات ');
     // A part that changes is kept as it is.
-    assert.strictEqual(I18n.t('Connected · 12 models'), 'متصل · النماذج: 12');
+    assert.strictEqual(I18n.t('Connected · 12 models'), 'متصل · عدد النماذج: 12');
     assert.strictEqual(I18n.t('Remove notes.md'), 'إزالة notes.md');
     // A plural "s" isn't carried over.
     assert.strictEqual(I18n.t('Used 3 tools'), 'الأدوات المستخدمة: 3');
     // The changing part can be the app's text too.
-    assert.strictEqual(I18n.t('Error: Hermes didn\'t start the run.'), 'خطأ: لم يبدأ Hermes التشغيل.');
-    assert.strictEqual(I18n.t('Thinking… (40 words)'), 'جارٍ التفكير… (40 كلمة)');
+    assert.strictEqual(I18n.t('Error: Hermes didn\'t start the run.'), 'خطأ: Hermes لم يبدأ التنفيذ.');
+    assert.strictEqual(I18n.t('Thinking… (40 words)'), 'يفكر… (40 كلمة)');
+    // A line made of pieces: each piece on its own, names and sizes kept.
+    assert.strictEqual(I18n.t('Fastest · good for quick questions · 490 MB'), 'الأسرع · مناسب للأسئلة السريعة · 490 ميجابايت');
+    assert.strictEqual(I18n.t('Old download · 1.2 GB'), 'تحميل قديم · 1.2 جيجابايت');
+    assert.strictEqual(I18n.t('Qwen 2.5 · 0.5B'), 'Qwen 2.5 · 0.5B');
     // What isn't the app's text is left alone.
     assert.strictEqual(I18n.t('How do I bake bread?'), 'How do I bake bread?');
     assert.strictEqual(I18n.t('مرحبا'), 'مرحبا');

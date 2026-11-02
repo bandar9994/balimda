@@ -98,7 +98,7 @@ public class DownloadService extends Service {
             return new NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_notify_chat)
                 .setContentTitle("Najwa AI")
-                .setContentText(arabic ? "جارٍ كتابة رد…" : "Writing a reply…")
+                .setContentText(arabic ? "جارٍ كتابة الرد…" : "Writing a reply…")
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setSilent(true)
@@ -120,7 +120,7 @@ public class DownloadService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel channel = new NotificationChannel(CHANNEL, arabic ? "التنزيلات والردود" : "Downloads and replies", NotificationManager.IMPORTANCE_LOW);
+            NotificationChannel channel = new NotificationChannel(CHANNEL, arabic ? "التحميلات والردود" : "Downloads and replies", NotificationManager.IMPORTANCE_LOW);
             ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(channel);
         }
         try {

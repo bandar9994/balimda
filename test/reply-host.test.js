@@ -66,7 +66,7 @@ test('replies that do not use a computer\'s model are named after their owner, a
 
 test('the Arabic text is there for both new lines', () => {
   assert.match(Lease.replyingLabel(mirrored(), PHONE, 'ar'), /BandarPC/);
-  assert.match(Lease.replyingLabel(mirrored(), PC, 'ar'), /^جارٍ الرد… · طُلب من Android phone$/);
+  assert.match(Lease.replyingLabel(mirrored(), PC, 'ar'), /^جارٍ الرد… · بطلب من Android phone$/);
   assert.strictEqual(Lease.text('replyingHere', null, 'en'), 'Replying…');
   for (const key of Object.keys(Lease.STRINGS.en)) assert.ok(Lease.STRINGS.ar[key], `Arabic text for ${key}`);
 });

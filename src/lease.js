@@ -161,15 +161,15 @@
       busy: () => 'A reply is already being written in this chat. Wait for it to finish, or stop it first. Your message is kept.'
     },
     ar: {
-      replyingOn: (name) => `جارٍ الرد على ${name}…`,
+      replyingOn: (name) => `${name} يكتب الرد…`,
       replyingHere: () => 'جارٍ الرد…',
-      askedFrom: (name) => `· طُلب من ${name}`,
-      busyElsewhere: (name) => `يُكتب ردٌّ في هذه المحادثة الآن (على ${name}). انتظر حتى ينتهي، أو أوقفه هناك أولاً.`,
-      stopThere: (name) => `يعمل على ${name}: أوقفه هناك.`,
-      stopFailed: (name) => `تعذّر الإيقاف من هنا: الردّ يعمل على ${name}. أوقفه هناك.`,
-      queued: () => 'في الانتظار',
-      removeQueued: () => 'إزالة من الانتظار',
-      busy: () => 'يُكتب ردٌّ في هذه المحادثة الآن. انتظر حتى ينتهي، أو أوقفه أولاً. رسالتك محفوظة.'
+      askedFrom: (name) => `· بطلب من ${name}`,
+      busyElsewhere: (name) => `يوجد رد قيد الكتابة في هذه المحادثة (على ${name}). انتظر حتى ينتهي، أو أوقفه من هناك أولًا.`,
+      stopThere: (name) => `الرد يعمل على ${name}، أوقفه من هناك.`,
+      stopFailed: (name) => `تعذّر الإيقاف من هنا لأن الرد يعمل على ${name}. أوقفه من هناك.`,
+      queued: () => 'بالانتظار',
+      removeQueued: () => 'إزالة من قائمة الانتظار',
+      busy: () => 'يوجد رد قيد الكتابة في هذه المحادثة. انتظر حتى ينتهي أو أوقفه أولًا، ورسالتك محفوظة.'
     }
   };
   // The app's language (Settings → General), else the device's.
