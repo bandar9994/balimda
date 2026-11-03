@@ -32,12 +32,12 @@
     "marked": "^18.1.1"
   },
   "devDependencies": {
-    "@capacitor/android": "^8.5.3",
+    "@capacitor/android": "^8.6.0",
     "@capacitor/app": "^8.1.2",
-    "@capacitor/cli": "^8.5.2",
+    "@capacitor/cli": "^8.6.0",
     "@capacitor/core": "^8.5.3",
     "@capacitor/filesystem": "^8.1.5",
-    "@capacitor/ios": "^8.5.3",
+    "@capacitor/ios": "^8.6.0",
     "@capacitor/share": "^8.0.3",
     "@resvg/resvg-js": "^2.6.2",
     "@wllama/wllama": "^3.8.1",
