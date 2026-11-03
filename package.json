@@ -43,7 +43,7 @@
     "@wllama/wllama": "^3.8.1",
     "balimda-llama": "file:native/llama",
     "electron": "^45.0.0",
-    "electron-builder": "^26.0.0",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2"
   },
   "build": {
