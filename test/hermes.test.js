@@ -519,3 +519,66 @@ test('Hermes runs: finished while away (status only), failed, and Stop', async (
     h.server.close();
   }
 });
+
+// Newer Hermes (its session runtime, gateway/platforms/api_server_authority_runs.py):
+// an answer must be exactly { request_id, execution_generation, choice }, and
+// GET /v1/runs/{id} reports the turn's generation and the questions it waits on.
+function fakeAuthorityHermes({ strict = true } = {}) {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const json = (status, data) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
+      if (req.method === 'GET' && req.url === '/v1/runs/run_1') {
+        return json(200, { run_id: 'run_1', status: 'waiting_for_approval', execution_generation: 7,
+          pending_controls: [{ kind: 'approval', prompt_id: 'req_9', execution_generation: 7, choices: ['once', 'deny'] }] });
+      }
+      if (req.method === 'POST' && req.url === '/v1/runs/run_1/approval') {
+        const b = JSON.parse(body);
+        seen.push(b);
+        const keys = Object.keys(b).sort().join(',');
+        if (strict && keys !== 'choice,execution_generation,request_id') return json(400, { error: { message: 'invalid_params', code: 'invalid_params' } });
+        if (!strict && 'execution_generation' in b) return json(400, { error: { message: 'Unexpected field' } });
+        if (strict && (b.execution_generation !== 7 || b.request_id !== 'req_9')) return json(409, { error: { message: 'stale_generation' } });
+        return json(200, { run_id: 'run_1', choice: b.choice });
+      }
+      json(404, { error: { message: 'not found' } });
+    });
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, seen, url: `http://127.0.0.1:${server.address().port}/v1` })));
+}
+
+test('Hermes approvals: newer Hermes gets the turn\'s generation; an answer without it looks it up; older Hermes keeps the old form', async () => {
+  const hermes = hermesProvider();
+  const strict = await fakeAuthorityHermes();
+  try {
+    const cfg = { baseUrl: strict.url, apiKey: KEY };
+    // The generation came with the question.
+    assert.strictEqual(await hermes.approve(cfg, { runId: 'run_1', choice: 'once', approvalId: 'req_9', generation: 7 }), true);
+    assert.deepStrictEqual(strict.seen.at(-1), { request_id: 'req_9', execution_generation: 7, choice: 'once' });
+    // Asked before the app kept it (or passed on without it): refused, read from the run, sent again.
+    assert.strictEqual(await hermes.approve(cfg, { runId: 'run_1', choice: 'deny', approvalId: 'req_9' }), true);
+    assert.deepStrictEqual(strict.seen.slice(-2), [{ choice: 'deny', request_id: 'req_9' }, { request_id: 'req_9', execution_generation: 7, choice: 'deny' }]);
+    // No question id either: the only one waiting.
+    assert.strictEqual(await hermes.approve(cfg, { runId: 'run_1', choice: 'once' }), true);
+    assert.deepStrictEqual(strict.seen.at(-1), { request_id: 'req_9', execution_generation: 7, choice: 'once' });
+    // A question that isn't waiting any more: the error is Hermes's own.
+    await assert.rejects(hermes.approve(cfg, { runId: 'run_1', choice: 'once', approvalId: 'req_8' }), /HTTP 400: invalid_params/);
+  } finally {
+    strict.server.close();
+  }
+  const old = await fakeAuthorityHermes({ strict: false });
+  try {
+    assert.strictEqual(await hermes.approve({ baseUrl: old.url, apiKey: KEY }, { runId: 'run_1', choice: 'once', approvalId: 'req_9' }), true);
+    assert.deepStrictEqual(old.seen, [{ choice: 'once', request_id: 'req_9' }]);
+  } finally {
+    old.server.close();
+  }
+});
+
+test('Hermes approvals: the turn\'s generation is read from the question', async () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'providers.js'), 'utf8');
+  // Both ways Hermes asks (runs and the chat stream) keep it.
+  assert.strictEqual((src.match(/generation: Number\.isInteger\(evt\.execution_generation\) \? evt\.execution_generation : null/g) || []).length, 2);
+});

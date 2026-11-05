@@ -20,19 +20,25 @@ function trimSlash(url) {
 }
 
 async function httpError(res) {
-  let detail = '';
+  let body = '';
   try {
-    const body = await res.text();
-    try {
-      const j = JSON.parse(body);
-      detail = (j.error && (j.error.message || j.error)) || j.message || body;
-    } catch {
-      detail = body;
-    }
+    body = await res.text();
   } catch {
     // ignore
   }
-  return new Error(`HTTP ${res.status}${detail ? `: ${String(detail).slice(0, 500)}` : ''}`);
+  return httpErrorFrom(res.status, body);
+}
+
+// The same, from a body already read.
+function httpErrorFrom(status, body) {
+  let detail = body || '';
+  try {
+    const j = JSON.parse(body);
+    detail = (j.error && (j.error.message || j.error)) || j.message || body;
+  } catch {
+    // not JSON: the text itself
+  }
+  return new Error(`HTTP ${status}${detail ? `: ${String(detail).slice(0, 500)}` : ''}`);
 }
 
 // Read a fetch body line by line. Uses getReader() so it works in Node,
@@ -414,6 +420,20 @@ const isNetworkError = (err) => err instanceof TypeError || (err && err.cause in
 // src/native-fetch.js): Hermes only answers web pages from origins it lists,
 // and the app's web view always sends one.
 const hermesProvider = (doFetch = (...args) => fetch(...args)) => {
+  // The approval a run is waiting on, as newer Hermes reports it: the turn's
+  // generation and the question's id (the one asked for, or the only one), or
+  // null when there's none to answer.
+  async function currentApproval(cfg, runUrl, approvalId) {
+    const res = await doFetch(runUrl, { headers: hermesHeaders(cfg) });
+    if (!res.ok) return null;
+    const run = await res.json();
+    if (!run || !Number.isInteger(run.execution_generation)) return null;
+    const asking = (Array.isArray(run.pending_controls) ? run.pending_controls : []).filter((p) => p && p.kind === 'approval' && p.prompt_id);
+    const prompt = approvalId ? asking.find((p) => p.prompt_id === approvalId) : asking.length === 1 ? asking[0] : null;
+    if (!prompt) return null;
+    return { generation: Number.isInteger(prompt.execution_generation) ? prompt.execution_generation : run.execution_generation, id: prompt.prompt_id };
+  }
+
   // Starts a run; null if this Hermes has no runs (an older version).
   async function startRun(cfg, req, signal) {
     const messages = textOnly(req.messages).map((m) => ({ role: m.role, content: String(m.content || '') }));
@@ -496,6 +516,8 @@ const hermesProvider = (doFetch = (...args) => fetch(...args)) => {
             kind: 'approval',
             runId: evt.run_id || runId,
             approvalId: evt.request_id || null,
+            // Newer Hermes answers only the exact turn that asked (see approve()).
+            generation: Number.isInteger(evt.execution_generation) ? evt.execution_generation : null,
             command: evt.command || '',
             description: evt.description || '',
             choices: Array.isArray(evt.choices) && evt.choices.length ? evt.choices : ['once', 'deny']
@@ -612,6 +634,8 @@ const hermesProvider = (doFetch = (...args) => fetch(...args)) => {
           kind: 'approval',
           runId: evt.run_id,
           approvalId: evt.request_id || null,
+          // Newer Hermes answers only the exact turn that asked (see approve()).
+          generation: Number.isInteger(evt.execution_generation) ? evt.execution_generation : null,
           command: evt.command || '',
           description: evt.description || '',
           choices: Array.isArray(evt.choices) && evt.choices.length ? evt.choices : ['once', 'deny']
@@ -693,14 +717,32 @@ const hermesProvider = (doFetch = (...args) => fetch(...args)) => {
     },
 
     // choice: 'once' | 'session' | 'always' | 'deny'
-    async approve(cfg, { runId, choice, approvalId }) {
-      const res = await doFetch(`${trimSlash(cfg.baseUrl)}/runs/${encodeURIComponent(runId)}/approval`, {
-        method: 'POST',
-        headers: hermesHeaders(cfg),
-        body: JSON.stringify(approvalId ? { choice, request_id: approvalId } : { choice })
-      });
-      if (!res.ok) throw await hermesError(res);
-      return true;
+    //
+    // Newer Hermes (its session runtime) takes exactly { request_id,
+    // execution_generation, choice }: the question and the turn that asked
+    // it, which its approval.request carries. Older Hermes takes { choice,
+    // request_id } and refuses the extra field. An approval asked before the
+    // turn's generation was kept (or passed on without it) is answered with
+    // the run's current generation, read from Hermes, on newer Hermes.
+    async approve(cfg, { runId, choice, approvalId, generation }) {
+      const base = trimSlash(cfg.baseUrl);
+      const run = `${base}/runs/${encodeURIComponent(runId)}`;
+      const send = (body) => doFetch(`${run}/approval`, { method: 'POST', headers: hermesHeaders(cfg), body: JSON.stringify(body) });
+      const fenced = (gen, id) => ({ request_id: id, execution_generation: gen, choice });
+      const exact = Number.isInteger(generation) && approvalId;
+      let res = await send(exact ? fenced(generation, approvalId) : approvalId ? { choice, request_id: approvalId } : { choice });
+      if (res.ok) return true;
+      if (res.status === 401 || res.status === 403) throw await hermesError(res);
+      const body = await res.text().catch(() => '');
+      if (!exact && res.status === 400 && /invalid_params/.test(body)) {
+        const now = await currentApproval(cfg, run, approvalId).catch(() => null);
+        if (now) {
+          res = await send(fenced(now.generation, now.id));
+          if (res.ok) return true;
+          throw await hermesError(res);
+        }
+      }
+      throw httpErrorFrom(res.status, body);
     }
   };
 };

@@ -1003,7 +1003,7 @@ function agentEvent(chat, msg, evt) {
   } else if (evt.kind === 'approval') {
     msg.approvals = msg.approvals || [];
     const origin = evt.origin && evt.origin.id ? { id: String(evt.origin.id), name: String(evt.origin.name || 'another device').slice(0, 60), computer: !!evt.origin.computer } : null;
-    msg.approvals.push({ runId: evt.runId, approvalId: evt.approvalId || null, connectorId: evt.connectorId ? String(evt.connectorId) : null, origin, title: evt.title ? String(evt.title).slice(0, 200) : null, command: String(evt.command || '').slice(0, 2000), description: String(evt.description || '').slice(0, 500), choices: Array.isArray(evt.choices) && evt.choices.length ? evt.choices : ['once', 'deny'], state: 'pending' });
+    msg.approvals.push({ runId: evt.runId, approvalId: evt.approvalId || null, generation: Number.isInteger(evt.generation) ? evt.generation : null, connectorId: evt.connectorId ? String(evt.connectorId) : null, origin, title: evt.title ? String(evt.title).slice(0, 200) : null, command: String(evt.command || '').slice(0, 2000), description: String(evt.description || '').slice(0, 500), choices: Array.isArray(evt.choices) && evt.choices.length ? evt.choices : ['once', 'deny'], state: 'pending' });
     if (S.current !== chat || document.hidden) toast(`${evt.title ? 'A connector' : 'Hermes'} is asking for permission. Open the chat to answer.`, 5000);
   } else if (evt.kind === 'status') {
     msg.agentStatus = String(evt.text).slice(0, 200);
@@ -1042,7 +1042,7 @@ async function answerApproval(chat, msg, approval, choice) {
   approval.state = 'sending';
   scheduleMessageRender(chat, msg);
   try {
-    const payload = { runId: approval.runId, choice, approvalId: approval.approvalId };
+    const payload = { runId: approval.runId, choice, approvalId: approval.approvalId, ...(Number.isInteger(approval.generation) ? { generation: approval.generation } : {}) };
     // A phone's reply that runs on this computer (its copy here): the
     // question goes to the model here, not back through "On your computer".
     const provider = approval.provider && msg.model && msg.model.provider === 'computer' && replyHost(msg).here ? approval.provider : msg.model.provider;

@@ -235,6 +235,7 @@ function createReplyHub({ storage, name = () => 'this computer', notify = () => 
           const a = {
             runId: String(evt.runId),
             approvalId: evt.approvalId || null,
+            generation: Number.isInteger(evt.generation) ? evt.generation : null,
             provider: t.provider,
             origin: evt.origin && evt.origin.id ? evt.origin : null,
             connectorId: evt.connectorId || null,
