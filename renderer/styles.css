@@ -469,7 +469,13 @@ textarea.input { resize: vertical; }
   grid-template-columns: minmax(0, 1fr);
   place-items: center;
   z-index: 50;
-  padding: 16px;
+  /* Clear of the phone's own bars (status bar, Android's navigation buttons),
+     which the app draws under. */
+  padding:
+    max(16px, var(--safe-area-inset-top, env(safe-area-inset-top)))
+    max(16px, var(--safe-area-inset-right, env(safe-area-inset-right)))
+    max(16px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom)))
+    max(16px, var(--safe-area-inset-left, env(safe-area-inset-left)));
 }
 .modal {
   background: var(--bg-elev);
@@ -512,7 +518,7 @@ textarea.input { resize: vertical; }
 
 #toast {
   position: fixed;
-  bottom: 90px;
+  bottom: calc(90px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
   left: 50%;
   transform: translateX(-50%);
   background: var(--text);
@@ -629,8 +635,14 @@ textarea.input { resize: vertical; }
   #input { font-size: 16px; }
   .hint { display: none; }
 
-  .modal-backdrop { padding: 0; align-items: end; }
-  .modal, .modal.wide { width: 100%; max-height: 92dvh; border-radius: 16px 16px 0 0; }
+  /* A sheet from the bottom of the screen: its buttons stay above Android's
+     navigation buttons (the sheet's background goes on underneath them). */
+  .modal-backdrop {
+    padding: var(--safe-area-inset-top, env(safe-area-inset-top)) var(--safe-area-inset-right, env(safe-area-inset-right))
+      0 var(--safe-area-inset-left, env(safe-area-inset-left));
+    align-items: end;
+  }
+  .modal, .modal.wide { width: 100%; max-height: 92dvh; border-radius: 16px 16px 0 0; padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom)); }
   .modal.wide { height: 92dvh; }
   .settings { flex-direction: column; }
   .settings-tabs {
