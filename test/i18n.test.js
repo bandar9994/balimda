@@ -39,6 +39,9 @@ test('English stays English; Arabic swaps the app\'s text, keeping what changes'
     assert.strictEqual(I18n.t('Fastest · good for quick questions · 490 MB'), 'الأسرع · مناسب للأسئلة السريعة · 490 ميجابايت');
     assert.strictEqual(I18n.t('Old download · 1.2 GB'), 'تحميل قديم · 1.2 جيجابايت');
     assert.strictEqual(I18n.t('Qwen 2.5 · 0.5B'), 'Qwen 2.5 · 0.5B');
+    // The language setting names what "Device language" is on this device.
+    assert.strictEqual(I18n.t('Device language (English)'), 'لغة الجهاز (الإنجليزية)');
+    assert.strictEqual(I18n.t('Device language (Arabic)'), 'لغة الجهاز (العربية)');
     // What isn't the app's text is left alone.
     assert.strictEqual(I18n.t('How do I bake bread?'), 'How do I bake bread?');
     assert.strictEqual(I18n.t('مرحبا'), 'مرحبا');

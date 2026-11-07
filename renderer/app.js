@@ -3228,7 +3228,8 @@ function openSettings(tab = 'general') {
       replyStyle.value = s.replyStyle || 'sentences';
       // Each language's name in itself, so it can be found in either.
       const language = bind(h('select', { class: 'select' },
-        h('option', { value: '', text: 'Device language' }),
+        // Which one that is on this device, so "Device language" isn't a guess.
+        h('option', { value: '', text: `Device language (${I18n.resolve('') === 'ar' ? 'Arabic' : 'English'})` }),
         h('option', { value: 'en', translate: 'no', text: 'English' }),
         h('option', { value: 'ar', translate: 'no', text: 'العربية' })), s, 'language');
       language.value = s.language || '';

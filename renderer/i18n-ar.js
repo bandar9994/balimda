@@ -387,7 +387,7 @@
     'Data & backup': 'البيانات والنسخ الاحتياطي',
     'About': 'حول التطبيق',
     'Language': 'اللغة',
-    'Device language': 'لغة الجهاز',
+    'Device language ({})': 'لغة الجهاز ({})',
     'Theme': 'المظهر',
     'Match system': 'حسب النظام',
     'Light': 'فاتح',
