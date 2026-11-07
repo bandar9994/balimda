@@ -108,7 +108,7 @@ function parseRepo(input) {
     .replace(/\.git$/i, '')
     .replace(/\/+$/, '')
     .match(/^([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)$/);
-  if (!m) throw new SyncError('Enter the repository as owner/name, for example bandar9994/balimda-sync.');
+  if (!m) throw new SyncError('Enter the repository as owner/name, for example your-name/najwa-ai-sync.');
   return `${m[1]}/${m[2]}`;
 }
 

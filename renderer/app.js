@@ -3021,13 +3021,13 @@ function syncView(onCleanup, field) {
   };
 
   const githubForm = () => {
-    const repo = h('input', { class: 'input', placeholder: 'your-name/balimda-sync', autocapitalize: 'off', spellcheck: 'false' });
+    const repo = h('input', { class: 'input', placeholder: 'your-name/najwa-ai-sync', autocapitalize: 'off', spellcheck: 'false' });
     const token = h('input', { class: 'input', type: 'password', placeholder: 'github_pat_…', autocomplete: 'off' });
     const { pass, node } = passField();
     return [
       h('p', { text: 'Your chats are kept in a private GitHub repository that only you can access. They are encrypted on this device with your sync passphrase first, so not even GitHub can read them.' }),
       h('ol', { class: 'steps' },
-        h('li', {}, 'Create a private repository, for example "balimda-sync": ', link('github.com/new', 'https://github.com/new'), '. Set it to Private.'),
+        h('li', {}, 'Create a private repository, for example "najwa-ai-sync": ', link('github.com/new', 'https://github.com/new'), '. Set it to Private.'),
         h('li', {}, 'Create an access token: ', link('new fine-grained token', 'https://github.com/settings/personal-access-tokens/new'),
           '. Under Repository access choose "Only select repositories" and pick that repository. Under Permissions set Contents to "Read and write".'),
         h('li', {}, 'Enter them here with a sync passphrase. On your other devices use the same repository and passphrase (a token made on that device works too).')),

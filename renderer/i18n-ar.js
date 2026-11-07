@@ -321,7 +321,7 @@
     'Finish signing in in your browser…': 'أكمل تسجيل الدخول من المتصفح…',
     'Google sign-in failed.': 'فشل تسجيل الدخول بحساب Google.',
     'Your chats are kept in a private GitHub repository that only you can access. They are encrypted on this device with your sync passphrase first, so not even GitHub can read them.': 'تُحفظ محادثاتك في مستودع خاص على GitHub لا يصل إليه أحد غيرك، وتُشفَّر على هذا الجهاز بكلمة مرور المزامنة قبل رفعها، فحتى GitHub لا يستطيع قراءتها.',
-    'Create a private repository, for example "balimda-sync": ': 'أنشئ مستودعًا خاصًا، مثلًا "balimda-sync": ',
+    'Create a private repository, for example "najwa-ai-sync": ': 'أنشئ مستودعًا خاصًا، مثلًا "najwa-ai-sync": ',
     '. Set it to Private.': '. واجعله خاصًا (Private).',
     '. Under Repository access choose "Only select repositories" and pick that repository. Under Permissions set Contents to "Read and write".': '. من Repository access اختر "Only select repositories" ثم اختر ذلك المستودع، ومن Permissions اجعل Contents على "Read and write".',
     'Create an access token: ': 'أنشئ رمز وصول: ',

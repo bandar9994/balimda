@@ -570,7 +570,7 @@ function registerIpc() {
     const stamp = new Date().toISOString().slice(0, 10);
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
       title: tr('Export all chats'),
-      defaultPath: `balimda-backup-${stamp}.json`,
+      defaultPath: `najwa-ai-backup-${stamp}.json`,
       filters: [{ name: 'JSON', extensions: ['json'] }]
     });
     if (canceled || !filePath) return null;

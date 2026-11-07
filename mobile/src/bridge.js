@@ -327,7 +327,7 @@ window.balimda = {
     exportAll: withStorage(async (s) => {
       const data = await s.exportAll();
       const stamp = new Date().toISOString().slice(0, 10);
-      await shareFile(`balimda-backup-${stamp}.json`, JSON.stringify(data, null, 2), 'application/json');
+      await shareFile(`najwa-ai-backup-${stamp}.json`, JSON.stringify(data, null, 2), 'application/json');
       return { count: data.chats.length };
     }),
     importAll: withStorage(async (s) => {

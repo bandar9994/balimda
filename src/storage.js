@@ -514,7 +514,7 @@ class Storage {
       const chat = await this.getChat(m.id);
       if (chat) chats.push(chat);
     }
-    return { app: 'balimda', version: 1, exportedAt: new Date().toISOString(), chats };
+    return { app: 'najwa-ai', version: 1, exportedAt: new Date().toISOString(), chats };
   }
 
   // Adds the chats of a backup. A chat that's also on this device is merged
